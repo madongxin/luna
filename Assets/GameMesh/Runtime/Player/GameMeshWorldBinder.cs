@@ -35,23 +35,40 @@ namespace GameMesh.Player
                 _health = _local.GetComponent<Health>();
 
             var attrs = client.Session.Attributes;
-            if (_health != null)
+            if (attrs.FromServer)
             {
-                _health.MaxHealth = attrs.MaxHp;
-                _health.CurrentHealth = attrs.Hp;
+                if (_health != null)
+                {
+                    _health.MaxHealth = attrs.MaxHp;
+                    _health.CurrentHealth = attrs.Hp;
+                }
+
+                if (attrs.MoveSpeed > 0f)
+                    _local.MaxSpeedOnGround = attrs.MoveSpeed;
             }
 
             if (client.Config.disableSprint)
                 _local.SprintSpeedModifier = 1f;
-            if (attrs.MoveSpeed > 0f)
-                _local.MaxSpeedOnGround = attrs.MoveSpeed;
+            if (client.HasPendingSpawn)
+            {
+                _local.transform.position = client.PendingSpawn;
+                _local.transform.rotation = Quaternion.Euler(0f, client.PendingSpawnYaw, 0f);
+                client.HasPendingSpawn = false;
+            }
+
+            if (client.HasPendingCorrection)
+            {
+                _local.transform.position = client.PendingCorrection;
+                _local.transform.rotation = Quaternion.Euler(0f, client.PendingCorrectionYaw, 0f);
+                client.HasPendingCorrection = false;
+            }
         }
 
         void MaybeReportMove(GameMeshClient client)
         {
             if (_local == null || client.Connection == null)
                 return;
-            if (client.Connection.State != ConnectionState.InWorld)
+            if (client.MovesFrozen)
                 return;
             if (client.MoveCorrector.ShouldSuppress(Time.unscaledTime))
                 return;
@@ -64,9 +81,7 @@ namespace GameMesh.Player
                 return;
             }
 
-            if (!ProtocolCapabilities.HasMove)
-                return;
-            client.MoveSampler.MarkSent(pos, yaw, Time.unscaledTime);
+            _ = client.SendMoveAsync(pos, yaw, default);
         }
 
         void SyncRemotes(GameMeshClient client)

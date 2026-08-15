@@ -16,12 +16,14 @@ namespace GameMesh.Mail
         public MailDetail Selected;
         public string LastError = "";
         public int UnreadTotal;
+        public ulong LastSentMailId;
+        public bool LastIdempotentHit;
     }
 
     public sealed class MailClient
     {
         readonly GameSession _session;
-        readonly Func<GameRequest, Task<GameResponse>> _request;
+        readonly Func<GameRequest, CancellationToken, Task<GameResponse>> _request;
         int _generation;
         float _debounceUntil;
         string _pendingSendOpId;
@@ -29,8 +31,9 @@ namespace GameMesh.Mail
         public MailListPage Page { get; } = new MailListPage();
         public float PollIntervalSeconds = 10f;
         public float DebounceSeconds = 0.4f;
+        public bool PanelOpen;
 
-        public MailClient(GameSession session, Func<GameRequest, Task<GameResponse>> request)
+        public MailClient(GameSession session, Func<GameRequest, CancellationToken, Task<GameResponse>> request)
         {
             _session = session;
             _request = request;
@@ -44,7 +47,10 @@ namespace GameMesh.Mail
             Page.Selected = null;
             Page.LastError = "";
             Page.UnreadTotal = 0;
+            Page.LastSentMailId = 0;
+            Page.LastIdempotentHit = false;
             _pendingSendOpId = null;
+            _debounceUntil = 0f;
         }
 
         public void NotifyMailboxChanged(float now)
@@ -54,8 +60,14 @@ namespace GameMesh.Mail
 
         public bool ShouldPoll(float now, float lastPoll, bool panelOpen)
         {
-            if (panelOpen && now < _debounceUntil && _debounceUntil > 0f)
-                return now >= _debounceUntil;
+            if (_debounceUntil > 0f && now >= _debounceUntil)
+            {
+                _debounceUntil = 0f;
+                return true;
+            }
+
+            if (!panelOpen)
+                return false;
             return now - lastPoll >= PollIntervalSeconds;
         }
 
@@ -70,8 +82,9 @@ namespace GameMesh.Mail
             {
                 MailList = new MailListReq { PlayerId = _session.PlayerId, Limit = 50 }
             };
-            var summary = await _request(summaryReq).ConfigureAwait(false);
-            var list = await _request(listReq).ConfigureAwait(false);
+            var summary = await _request(summaryReq, ct).ConfigureAwait(false);
+            ct.ThrowIfCancellationRequested();
+            var list = await _request(listReq, ct).ConfigureAwait(false);
             if (gen != _generation)
                 return;
             Page.Generation = gen;
@@ -86,9 +99,9 @@ namespace GameMesh.Mail
             if (list.MailList != null)
                 Page.Mails.AddRange(list.MailList.Mails);
             if (!summary.Ok)
-                Page.LastError = summary.Message;
+                Page.LastError = GameErrorCatalog.FormatUi(summary.MailboxSummary?.ErrorCode, summary.Message);
             else if (!list.Ok)
-                Page.LastError = list.Message;
+                Page.LastError = GameErrorCatalog.FormatUi(list.MailList?.ErrorCode, list.Message);
             else
                 Page.LastError = "";
         }
@@ -99,7 +112,7 @@ namespace GameMesh.Mail
             var rsp = await _request(new GameRequest
             {
                 MailGet = new MailGetReq { PlayerId = _session.PlayerId, MailId = mailId }
-            }).ConfigureAwait(false);
+            }, ct).ConfigureAwait(false);
             if (gen != _generation)
                 return null;
             if (rsp.MailGet?.Mail != null)
@@ -116,20 +129,44 @@ namespace GameMesh.Mail
 
         public void ClearSendOpId() => _pendingSendOpId = null;
 
-        public Task<string> SendAsync(ulong receiverId, string title, string body, CancellationToken ct)
+        public async Task<string> SendAsync(ulong receiverId, string title, string body, CancellationToken ct)
         {
             if (receiverId == 0 || string.IsNullOrWhiteSpace(title) || string.IsNullOrWhiteSpace(body))
-                return Task.FromResult("title/body/receiver required");
+                return "title/body/receiver required";
             if (title.Length > 64 || body.Length > 2000)
-                return Task.FromResult("title or body too long");
-            if (!ProtocolCapabilities.HasPlayerMailSend)
+                return "title or body too long";
+            if (receiverId == _session.PlayerId)
+                return GameErrorCatalog.FormatUi("ERR_MAIL_SELF");
+
+            var opId = PeekOrCreateSendOpId();
+            var rsp = await _request(new GameRequest
             {
-                return Task.FromResult(
-                    "current server game.proto has no PlayerMailSendReq; client will not invent MailDeliver");
+                PlayerMailSend = new PlayerMailSendReq
+                {
+                    SenderPlayerId = _session.PlayerId,
+                    ReceiverPlayerId = receiverId,
+                    Title = title,
+                    Body = body,
+                    OperationId = opId
+                }
+            }, ct).ConfigureAwait(false);
+
+            var send = rsp.PlayerMailSend;
+            if (send != null && (send.Ok || send.IdempotentHit))
+            {
+                Page.LastSentMailId = send.MailId;
+                Page.LastIdempotentHit = send.IdempotentHit;
+                ClearSendOpId();
+                return "";
             }
 
-            PeekOrCreateSendOpId();
-            return Task.FromResult("PlayerMailSendReq present but request mapping is not compiled into this proto snapshot");
+            var code = send?.ErrorCode ?? ProtocolMapper.ExtractErrorCode(rsp);
+            if (code == "ERR_MAIL_RATE_LIMIT")
+                return GameErrorCatalog.FormatUi(code, send?.Message ?? rsp.Message);
+            ClearSendOpId();
+            return GameErrorCatalog.FormatUi(
+                string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code,
+                send?.Message ?? rsp.Message);
         }
     }
 }

@@ -16,6 +16,7 @@ namespace GameMesh.Player
         public float CritDamage;
         public float MoveSpeed = 10f;
         public float AttackSpeed = 1f;
+        public ulong StatsVersion;
         public bool FromServer;
     }
 }

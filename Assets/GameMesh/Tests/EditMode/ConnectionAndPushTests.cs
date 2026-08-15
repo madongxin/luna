@@ -147,7 +147,9 @@ namespace GameMesh.Tests.EditMode
                 try
                 {
                     conn.ConnectAsync("127.0.0.1", server.Port, CancellationToken.None).GetAwaiter().GetResult();
-                    conn.DisconnectAsync(DisconnectReason.ClientRequest, CancellationToken.None).GetAwaiter().GetResult();
+                    Assert.AreEqual(ConnectionState.Connected, conn.State);
+                    server.SendRawAsync(new byte[] { 0xff, 0x00, 0xab, 0xcd, 0x12, 0x34 }).GetAwaiter().GetResult();
+                    SpinPump(dispatcher, () => conn.State == ConnectionState.Disconnected, 3000);
                     Assert.AreEqual(ConnectionState.Disconnected, conn.State);
                 }
                 finally

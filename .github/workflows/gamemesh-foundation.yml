@@ -1,0 +1,104 @@
+name: GameMesh Foundation
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: gamemesh-foundation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  protocol-check:
+    name: Protocol contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check protocol contract
+        run: |
+          chmod +x Tools/GameMesh/check_protocol_contract.sh
+          Tools/GameMesh/check_protocol_contract.sh
+      - name: Verify Google.Protobuf plugin
+        run: |
+          test -f Assets/GameMesh/Plugins/Google.Protobuf.dll
+          test -f Assets/GameMesh/Plugins/System.Runtime.CompilerServices.Unsafe.dll
+          grep -q 'Google.Protobuf.dll' Assets/GameMesh/GameMesh.Runtime.asmdef
+
+  unity-tests:
+    name: GameMesh Unity tests
+    runs-on: ubuntu-latest
+    needs: protocol-check
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - name: Strip CI-incompatible videos
+        run: find Assets -type f \( -iname '*.mov' -o -iname '*.mp4' \) -print -delete || true
+      - name: Read Unity version
+        id: uv
+        run: |
+          ver=$(tr -d '\r' < ProjectSettings/ProjectVersion.txt | awk -F: '/m_EditorVersion:/{print $2}' | xargs)
+          echo "project=$ver"
+          echo "unity=2022.3.62f1" >> "$GITHUB_OUTPUT"
+      - name: EditMode
+        if: ${{ secrets.UNITY_LICENSE != '' }}
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: .
+          unityVersion: 2022.3.62f1
+          testMode: EditMode
+          customParameters: -testFilter GameMesh
+          artifactsPath: TestResults
+      - name: PlayMode
+        if: ${{ secrets.UNITY_LICENSE != '' }}
+        uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: .
+          unityVersion: 2022.3.62f1
+          testMode: PlayMode
+          customParameters: -testFilter GameMesh
+          artifactsPath: TestResults
+      - name: License missing
+        if: ${{ secrets.UNITY_LICENSE == '' }}
+        run: |
+          echo "Unity EditMode/PlayMode NOT RUN: UNITY_LICENSE secret is not configured"
+          exit 0
+      - name: Upload test artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamemesh-test-results
+          path: |
+            TestResults/
+            Logs/
+          if-no-files-found: ignore
+
+  e2e:
+    name: Dual client E2E
+    runs-on: ubuntu-latest
+    needs: protocol-check
+    steps:
+      - uses: actions/checkout@v4
+      - name: E2E requires live Gateway
+        run: |
+          chmod +x Tools/GameMesh/run_two_clients_e2e.sh
+          set +e
+          Tools/GameMesh/run_two_clients_e2e.sh
+          code=$?
+          if [ "$code" -eq 2 ]; then
+            echo "E2E NOT RUN: no GAMEMESH_E2E_GATEWAY / client binary / live Gateway"
+            exit 0
+          fi
+          exit "$code"

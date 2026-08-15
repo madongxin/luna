@@ -1,3 +1,4 @@
+using System.IO;
 using UnityEngine;
 
 namespace GameMesh.Bootstrap
@@ -25,7 +26,25 @@ namespace GameMesh.Bootstrap
         public static GameMeshClientConfig LoadOrCreate()
         {
             var loaded = Resources.Load<GameMeshClientConfig>("GameMeshClientConfig");
-            return loaded != null ? loaded : CreateInstance<GameMeshClientConfig>();
+            var cfg = loaded != null ? loaded : CreateInstance<GameMeshClientConfig>();
+            cfg.ResolveMapContract();
+            return cfg;
+        }
+
+        public void ResolveMapContract()
+        {
+            if (string.IsNullOrEmpty(mapDataHash))
+            {
+                var hashPath = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "maps",
+                    mapTemplateId + ".grid.json.sha256"));
+                if (File.Exists(hashPath))
+                    mapDataHash = File.ReadAllText(hashPath).Trim().ToLowerInvariant();
+                else
+                    mapDataHash = "ceef56586c5281dca4ce45340f511d0d577fd724b14131ae5a21d01ea7f41317";
+            }
+
+            if (dataVersion == 0)
+                dataVersion = 1;
         }
 
         public void ApplyCommandLine(string[] args)
@@ -47,6 +66,12 @@ namespace GameMesh.Bootstrap
                     case "-gamemeshMapTemplate":
                         ulong.TryParse(value, out mapTemplateId);
                         break;
+                    case "-gamemeshMapHash":
+                        mapDataHash = value ?? "";
+                        break;
+                    case "-gamemeshMapVersion":
+                        uint.TryParse(value, out dataVersion);
+                        break;
                 }
             }
         }
@@ -59,6 +84,12 @@ namespace GameMesh.Bootstrap
         public string DisplayName = "Luna";
         public string AutoScenario = "";
         public ulong PeerPlayerId;
+        public string ResultDir = "";
+        public string CoordDir = "";
+        public string Role = "a";
+        public float MoveX = -26f;
+        public float MoveY = -0.2f;
+        public float MoveZ = -5f;
 
         public static GameMeshLaunchArgs Parse(string[] args)
         {
@@ -84,6 +115,24 @@ namespace GameMesh.Bootstrap
                         break;
                     case "-gamemeshName":
                         parsed.DisplayName = value;
+                        break;
+                    case "-gamemeshResultDir":
+                        parsed.ResultDir = value;
+                        break;
+                    case "-gamemeshCoordDir":
+                        parsed.CoordDir = value;
+                        break;
+                    case "-gamemeshRole":
+                        parsed.Role = value;
+                        break;
+                    case "-gamemeshMoveX":
+                        float.TryParse(value, out parsed.MoveX);
+                        break;
+                    case "-gamemeshMoveY":
+                        float.TryParse(value, out parsed.MoveY);
+                        break;
+                    case "-gamemeshMoveZ":
+                        float.TryParse(value, out parsed.MoveZ);
                         break;
                 }
             }

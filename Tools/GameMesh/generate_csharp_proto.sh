@@ -5,7 +5,7 @@ SCHEMA="$ROOT/Assets/GameMesh/Protocol/Schema/game.proto"
 OUT="$ROOT/Assets/GameMesh/Protocol/Generated"
 DESC="$ROOT/Assets/GameMesh/Protocol/game.desc"
 CACHE="$ROOT/Tools/GameMesh/cache"
-VERSION="${PROTOC_VERSION:-25.3}"
+VERSION="${PROTOC_VERSION:-$(python3 -c "import json; print(json.load(open('$ROOT/Tools/GameMesh/versions.json'))['protoc'])")}"
 PROTOC="${PROTOC_PATH:-}"
 
 if [[ -z "$PROTOC" ]]; then

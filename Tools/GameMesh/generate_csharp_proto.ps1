@@ -6,7 +6,8 @@ if (-not (Test-Path (Join-Path $Root "Assets"))) {
 }
 Set-Location $Root
 
-$Version = "25.3"
+$versions = Get-Content -Raw (Join-Path $PSScriptRoot "versions.json") | ConvertFrom-Json
+$Version = [string]$versions.protoc
 $Cache = Join-Path $PSScriptRoot "cache"
 $ProtocZip = Join-Path $Cache "protoc-$Version-win64.zip"
 $ProtocDir = Join-Path $Cache "protoc-$Version"

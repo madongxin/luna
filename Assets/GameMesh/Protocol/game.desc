@@ -1,5 +1,5 @@
 
-Ÿc
+Èy
 
 game.protogame"∆
 LoginReq
@@ -10,7 +10,7 @@ game.protogame"∆
 kick_other_device (RkickOtherDevice
 
 credential (	R
-credential"ı
+credential"ß
 LoginRsp
 ok (Rok
 message (	Rmessage
@@ -22,7 +22,8 @@ credential"ı
 session_id (	R	sessionId
 
 generation (R
-generation"ù
+generation0
+profile	 (2.game.PlayerAttributesRprofile"ù
 ReconnectReq
 	player_id (RplayerId
 
@@ -348,12 +349,15 @@ senderName
 error_code (	R	errorCode
 mail_id (RmailId%
 idempotent_hit (RidempotentHit&
-server_time_utc (RserverTimeUtc"ï
+server_time_utc (RserverTimeUtc"ä
 EnterMapReq
 	player_id (RplayerId
 realm_id (RrealmId&
 map_template_id (RmapTemplateId&
-map_instance_id (RmapInstanceId"Å
+map_instance_id (RmapInstanceId(
+map_data_version (RmapDataVersion&
+map_data_sha256 (	RmapDataSha256!
+operation_id (	RoperationId"Ü
 EnterMapRsp
 ok (Rok
 message (	Rmessage&
@@ -362,7 +366,15 @@ error_code (	R	errorCode
 gamelogic_instance_id (	RgamelogicInstanceId
 owner_epoch (R
 ownerEpoch#
-route_version (RrouteVersion"R
+route_version (RrouteVersion1
+spawn_position (2
+.game.Vec3RspawnPosition
+	spawn_yaw	 (RspawnYaw(
+map_data_version
+ (RmapDataVersion&
+map_data_sha256 (	RmapDataSha256(
+self (2.game.EntitySnapshotRself7
+aoi_snapshot (2.game.EntitySnapshotRaoiSnapshot"R
 LeaveMapReq
 	player_id (RplayerId&
 map_instance_id (RmapInstanceId"7
@@ -396,7 +408,91 @@ error_code (	R	errorCode",
 ok (Rok
 message (	Rmessage
 
-error_code (	R	errorCode"Ê
+error_code (	R	errorCode"0
+Vec3
+x (Rx
+y (Ry
+z (Rz"≈
+PlayerAttributes
+	player_id (RplayerId
+player_name (	R
+playerName
+hp (Rhp
+max_hp (RmaxHp
+mp (Rmp
+max_mp (RmaxMp
+attack (Rattack
+spell_power (R
+spellPower
+defense	 (Rdefense)
+magic_resistance
+ (RmagicResistance
+crit_chance (R
+critChance
+crit_damage (R
+critDamage
+
+move_speed (R	moveSpeed!
+attack_speed (RattackSpeed#
+stats_version (RstatsVersion"Ã
+EntitySnapshot
+	player_id (RplayerId
+player_name (	R
+playerName&
+position (2
+.game.Vec3Rposition
+yaw (Ryaw
+hp (Rhp
+max_hp (RmaxHp
+	state_seq (RstateSeq"0
+GetSelfProfileReq
+	player_id (RplayerId"é
+GetSelfProfileRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode0
+profile (2.game.PlayerAttributesRprofile"Æ
+MoveReq
+	player_id (RplayerId&
+map_instance_id (RmapInstanceId&
+position (2
+.game.Vec3Rposition
+yaw (Ryaw$
+client_time_ms (RclientTimeMs"œ
+MoveRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode&
+position (2
+.game.Vec3Rposition
+yaw (Ryaw
+	state_seq (RstateSeq$
+server_time_ms (RserverTimeMs"H
+AoiEvent
+op (Rop,
+entity (2.game.EntitySnapshotRentity"Z
+AoiDelta&
+map_instance_id (RmapInstanceId&
+events (2.game.AoiEventRevents"∏
+PlayerMailSendReq(
+sender_player_id (RsenderPlayerId,
+receiver_player_id (RreceiverPlayerId
+title (	Rtitle
+body (	Rbody!
+operation_id (	RoperationId"ú
+PlayerMailSendRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode
+mail_id (RmailId%
+idempotent_hit (RidempotentHit"
+MailboxChangedNotify
+	player_id (RplayerId'
+mailbox_version (RmailboxVersion!
+unread_count (RunreadCount"ï
 GameRequest
 seq (Rseq#
 session_token (	RsessionToken9
@@ -429,8 +525,11 @@ mail_claim" (2.game.MailClaimReqH R	mailClaimC
 	chat_send2 (2.game.ChatSendReqH RchatSend6
 friend_list3 (2.game.FriendListReqH R
 friendList-
-push_ack4 (2.game.PushAckReqH RpushAckB
-body"Ï
+push_ack4 (2.game.PushAckReqH RpushAckC
+get_self_profile< (2.game.GetSelfProfileReqH RgetSelfProfile#
+move= (2.game.MoveReqH RmoveC
+player_mail_send? (2.game.PlayerMailSendReqH RplayerMailSendB
+body"ë
 GameResponse
 seq (Rseq
 ok (Rok
@@ -467,5 +566,10 @@ friendList-
 push_ack4 (2.game.PushAckRspH RpushAck;
 server_push5 (2.game.ServerPushEnvelopeH R
 serverPushA
-full_snapshot6 (2.game.FullStateSnapshotRspH RfullSnapshotB
+full_snapshot6 (2.game.FullStateSnapshotRspH RfullSnapshotC
+get_self_profile< (2.game.GetSelfProfileRspH RgetSelfProfile#
+move= (2.game.MoveRspH Rmove-
+	aoi_delta> (2.game.AoiDeltaH RaoiDeltaC
+player_mail_send? (2.game.PlayerMailSendRspH RplayerMailSendE
+mailbox_changed@ (2.game.MailboxChangedNotifyH RmailboxChangedB
 bodyB™GameMesh.Protocolbproto3

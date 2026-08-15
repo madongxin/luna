@@ -18,6 +18,7 @@ namespace GameMesh.Network
         public Func<GameRequest, GameResponse> Handler;
         public bool SplitWrites;
         public bool DropConnectionAfterFirstFrame;
+        public bool SendIllegalProtobufAfterConnect;
 
         public FakeGatewayServer(int port = 0)
         {
@@ -36,6 +37,11 @@ namespace GameMesh.Network
                 {
                     var client = await _listener.AcceptTcpClientAsync().ConfigureAwait(false);
                     lock (_clients) _clients.Add(client);
+                    if (SendIllegalProtobufAfterConnect)
+                    {
+                        _ = Task.Run(() => SendIllegalThenClose(client));
+                        continue;
+                    }
                     _ = Task.Run(() => Serve(client));
                 }
             }
@@ -96,6 +102,33 @@ namespace GameMesh.Network
             }
         }
 
+        async Task SendIllegalThenClose(TcpClient client)
+        {
+            try
+            {
+                var garbage = new byte[] { 0xff, 0x00, 0xab, 0xcd, 0x12, 0x34, 0x56, 0x78 };
+                var frame = FrameCodec.Encode(garbage);
+                await client.GetStream().WriteAsync(frame, 0, frame.Length, _cts.Token).ConfigureAwait(false);
+            }
+            catch
+            {
+                /* test server */
+            }
+        }
+
+        public async Task SendRawAsync(byte[] payload)
+        {
+            var frame = FrameCodec.Encode(payload ?? Array.Empty<byte>());
+            List<TcpClient> snapshot;
+            lock (_clients) snapshot = new List<TcpClient>(_clients);
+            foreach (var c in snapshot)
+            {
+                if (!c.Connected)
+                    continue;
+                await c.GetStream().WriteAsync(frame, 0, frame.Length).ConfigureAwait(false);
+            }
+        }
+
         public async Task PushAsync(GameResponse response)
         {
             var frame = FrameCodec.Encode(response.ToByteArray());
@@ -120,7 +153,8 @@ namespace GameMesh.Network
                 case GameRequest.BodyOneofCase.Login:
                     rsp.Login = new LoginRsp
                     {
-                        Ok = true, Token = "tok", SessionId = "sess-1", Generation = 1, Message = "ok"
+                        Ok = true, Token = "tok", SessionId = "sess-1", Generation = 1, Message = "ok",
+                        Profile = SampleProfile(req.Login.PlayerId != 0 ? req.Login.PlayerId : 10001)
                     };
                     break;
                 case GameRequest.BodyOneofCase.Logout:
@@ -137,9 +171,48 @@ namespace GameMesh.Network
                     {
                         Ok = true,
                         MapTemplateId = req.EnterMap.MapTemplateId,
-                        MapInstanceId = 5001,
+                        MapInstanceId = req.EnterMap.MapInstanceId != 0 ? req.EnterMap.MapInstanceId : 5001UL,
                         OwnerEpoch = 1,
-                        RouteVersion = 1
+                        RouteVersion = 1,
+                        MapDataVersion = req.EnterMap.MapDataVersion,
+                        MapDataSha256 = req.EnterMap.MapDataSha256,
+                        SpawnPosition = new Vec3 { X = -28.5f, Y = -0.244f, Z = -7.25f },
+                        SpawnYaw = 76.022f,
+                        Self = new EntitySnapshot
+                        {
+                            PlayerId = req.EnterMap.PlayerId,
+                            PlayerName = "self",
+                            Position = new Vec3 { X = -28.5f, Y = -0.244f, Z = -7.25f },
+                            Yaw = 76.022f,
+                            Hp = 100,
+                            MaxHp = 100,
+                            StateSeq = 1
+                        }
+                    };
+                    break;
+                case GameRequest.BodyOneofCase.Move:
+                    rsp.Move = new MoveRsp
+                    {
+                        Ok = true,
+                        Position = req.Move.Position,
+                        Yaw = req.Move.Yaw,
+                        StateSeq = 1,
+                        ServerTimeMs = 1
+                    };
+                    break;
+                case GameRequest.BodyOneofCase.GetSelfProfile:
+                    rsp.GetSelfProfile = new GetSelfProfileRsp
+                    {
+                        Ok = true,
+                        Profile = SampleProfile(req.GetSelfProfile.PlayerId)
+                    };
+                    break;
+                case GameRequest.BodyOneofCase.PlayerMailSend:
+                    rsp.PlayerMailSend = new PlayerMailSendRsp
+                    {
+                        Ok = true,
+                        MailId = 88,
+                        IdempotentHit = req.PlayerMailSend.OperationId == "retry-op"
                     };
                     break;
                 case GameRequest.BodyOneofCase.MapPing:
@@ -175,6 +248,28 @@ namespace GameMesh.Network
             }
 
             return rsp;
+        }
+
+        static PlayerAttributes SampleProfile(ulong playerId)
+        {
+            return new PlayerAttributes
+            {
+                PlayerId = playerId,
+                PlayerName = "Luna",
+                Hp = 80,
+                MaxHp = 100,
+                Mp = 30,
+                MaxMp = 50,
+                Attack = 12,
+                SpellPower = 8,
+                Defense = 6,
+                MagicResistance = 4,
+                CritChance = 0.1f,
+                CritDamage = 1.5f,
+                MoveSpeed = 6f,
+                AttackSpeed = 1.1f,
+                StatsVersion = 3
+            };
         }
 
         public void Dispose()

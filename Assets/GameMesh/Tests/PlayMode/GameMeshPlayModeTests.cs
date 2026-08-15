@@ -47,6 +47,29 @@ namespace GameMesh.Tests.PlayMode
         }
 
         [UnityTest]
+        public IEnumerator BadProtobuf_FromFakeGateway_FailClosed()
+        {
+            using var server = new FakeGatewayServer();
+            var go = new GameObject("gm-bad-proto");
+            var dispatcher = go.AddComponent<GameMeshMainThreadDispatcher>();
+            var conn = new GameConnection(dispatcher);
+            var connect = conn.ConnectAsync("127.0.0.1", server.Port, default);
+            yield return WaitTask(connect, 3f);
+            Assert.AreEqual(ConnectionState.Connected, conn.State);
+            var send = server.SendRawAsync(new byte[] { 0xff, 0x00, 0xab, 0xcd, 0x12, 0x34, 0x56 });
+            yield return WaitTask(send, 2f);
+            var t = 0f;
+            while (conn.State != ConnectionState.Disconnected && t < 3f)
+            {
+                t += Time.unscaledDeltaTime;
+                yield return null;
+            }
+
+            Assert.AreEqual(ConnectionState.Disconnected, conn.State);
+            UnityEngine.Object.Destroy(go);
+        }
+
+        [UnityTest]
         public IEnumerator Aoi_CreatesMovesAndDestroysRemoteView()
         {
             var host = new GameObject("aoi-host");

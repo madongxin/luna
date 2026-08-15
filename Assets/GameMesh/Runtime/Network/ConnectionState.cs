@@ -13,7 +13,8 @@ namespace GameMesh.Network
         EnteringWorld = 5,
         InWorld = 6,
         Reconnecting = 7,
-        Closing = 8
+        Closing = 8,
+        Resyncing = 9
     }
 
     public enum DisconnectReason
@@ -55,7 +56,8 @@ namespace GameMesh.Network
                 [ConnectionState.Authenticated] = new HashSet<ConnectionState>
                 {
                     ConnectionState.EnteringWorld, ConnectionState.Closing,
-                    ConnectionState.Disconnected, ConnectionState.Reconnecting
+                    ConnectionState.Disconnected, ConnectionState.Reconnecting,
+                    ConnectionState.Resyncing
                 },
                 [ConnectionState.EnteringWorld] = new HashSet<ConnectionState>
                 {
@@ -65,13 +67,18 @@ namespace GameMesh.Network
                 [ConnectionState.InWorld] = new HashSet<ConnectionState>
                 {
                     ConnectionState.Authenticated, ConnectionState.Reconnecting,
-                    ConnectionState.Closing, ConnectionState.Disconnected
+                    ConnectionState.Resyncing, ConnectionState.Closing, ConnectionState.Disconnected
+                },
+                [ConnectionState.Resyncing] = new HashSet<ConnectionState>
+                {
+                    ConnectionState.InWorld, ConnectionState.Authenticated,
+                    ConnectionState.Reconnecting, ConnectionState.Closing, ConnectionState.Disconnected
                 },
                 [ConnectionState.Reconnecting] = new HashSet<ConnectionState>
                 {
                     ConnectionState.Connecting, ConnectionState.Connected,
                     ConnectionState.Authenticated, ConnectionState.InWorld,
-                    ConnectionState.Closing, ConnectionState.Disconnected
+                    ConnectionState.Resyncing, ConnectionState.Closing, ConnectionState.Disconnected
                 },
                 [ConnectionState.Closing] = new HashSet<ConnectionState>
                 {
@@ -112,6 +119,8 @@ namespace GameMesh.Network
         public const string MapHashMismatch = "MAP_HASH_MISMATCH";
         public const string ProtocolMissing = "PROTOCOL_MISSING_TYPE";
         public const string ServerError = "SERVER_ERROR";
+        public const string HelloBlocked = "BLOCKED_BY_SERVER_HELLO";
+        public const string SnapshotBlocked = "BLOCKED_BY_SERVER_SNAPSHOT";
     }
 
     public sealed class GameMeshException : Exception

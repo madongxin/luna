@@ -10,33 +10,31 @@
 | protoc | 25.3 |
 | Google.Protobuf | 3.25.3（`Assets/GameMesh/Plugins/Google.Protobuf.dll`） |
 | System.Runtime.CompilerServices.Unsafe | 6.0.0 |
-| 协议来源 | [madongxin/webserver](https://github.com/madongxin/webserver) `proto/game.proto` @ `37b19773` |
+| 协议来源 | [madongxin/webserver](https://github.com/madongxin/webserver) `proto/game.proto` @ `145a64753aacd0d9e1dc7916edee81d15f183148` |
+| schema SHA-256 | `aed5c952a1aa817a13464af8ae05c14d14c19da0ceedd6b61663d2b39f255bcb` |
 
-恢复 DLL：
+版本只写在 `Tools/GameMesh/versions.json`。不要手改 `Assets/GameMesh/Protocol/Generated/Game.cs`。
 
-```powershell
-Invoke-WebRequest https://www.nuget.org/api/v2/package/Google.Protobuf/3.25.3 -OutFile Tools/GameMesh/cache/Google.Protobuf.3.25.3.nupkg
-# 解压后复制 lib/netstandard2.0/Google.Protobuf.dll 到 Assets/GameMesh/Plugins/
-```
+## 协议更新顺序
 
-## 导入协议并生成 C#
+1. 服务器修改 `proto/game.proto` 并提交。
+2. 从服务器仓库导出或直接指向仓库根目录。
+3. Unity 导入：`Tools/GameMesh/import_server_contract.ps1 -Source <server>`（Linux/macOS 用 `.sh`）。
+4. 脚本用固定 protoc 25.3 生成 C#；缺少必需类型时必须非零退出。
+5. 运行 `Tools/GameMesh/check_protocol_contract.*` 与 EditMode 测试。
+6. 两端用同一 schema hash 联调。
 
-```powershell
-.\Tools\GameMesh\import_server_contract.ps1 -Source <server-repo-or-export-dir>
-.\Tools\GameMesh\generate_csharp_proto.ps1
-```
+当前已导入的必需类型包括：`PlayerAttributes`、`Vec3`、`EntitySnapshot`、`MoveReq`、`AoiDelta`、`PlayerMailSendReq`、`MailboxChangedNotify`。
 
-不要手改 `Assets/GameMesh/Protocol/Generated/Game.cs`。
-
-当前服务器契约 **缺少** Unity 文档要求的：`PlayerAttributes`、`Vec3`、`EntitySnapshot`、`MoveReq`、`AoiDelta`、`PlayerMailSendReq`、`MailboxChangedNotify`。客户端不会自造字段号；这些能力以 DTO/能力探测实现，等服务器导出后再导入即可接线。
+服务器仍未提供、客户端不会自造的类型：`ClientHelloReq`、`Heartbeat`、`WorldSnapshotReq`、`RespawnReq`。这些在 UI 和状态文档中标记为 `BLOCKED BY SERVER`。
 
 ## 运行 Demo
 
 1. 打开项目，Play `IntroMenu` 或任意已进 Build Settings 的场景。
-2. `GameMeshClient` 会自动创建（`RuntimeInitializeOnLoadMethod`），左上角 IMGUI 面板可注册/登录。
-3. 可选菜单：`GameMesh/Demo/Install Into Built Scenes`。
-4. 登录成功后加载 `MainScene` 并发送 `EnterMap(realm=1, template=1001, instance=0)`。
-5. `Tab` 解锁鼠标以便点 UI。联调模式禁用 Sprint（`SprintSpeedModifier=1`）。
+2. `GameMeshClient` 会自动创建，左侧 IMGUI 面板可注册/登录/发邮件。
+3. 登录成功后加载 `MainScene`，发送带真实 `map_data_version/map_data_sha256` 的 `EnterMap`。
+4. `Tab` 或 `F1` 解锁鼠标。联调模式禁用 Sprint。
+5. 注册后的 `player_id` 会保留在内存和本地身份（不含密码/Token）。
 
 命令行：
 
@@ -46,7 +44,10 @@ Invoke-WebRequest https://www.nuget.org/api/v2/package/Google.Protobuf/3.25.3 -O
 -gamemeshDevice device-a
 -gamemeshPassword <not stored>
 -gamemeshName Alice
--gamemeshAutoScenario login-enter
+-gamemeshAutoScenario two-client
+-gamemeshRole a
+-gamemeshResultDir <dir>
+-gamemeshCoordDir <dir>
 -gamemeshPeerPlayerId 10002
 ```
 
@@ -55,22 +56,20 @@ Invoke-WebRequest https://www.nuget.org/api/v2/package/Google.Protobuf/3.25.3 -O
 ```
 菜单：GameMesh/Map/Export Current Scene
 Batch：-executeMethod GameMesh.Editor.MapExportBatch.ExportMainScene
-可选：-gamemeshCopyTo <server-maps-dir>
 ```
-
-输出（给服务器加载，不是 .unity / Prefab / NavMesh 二进制）：
 
 - `maps/1001.grid.json`
 - `maps/1001.grid.json.sha256`（当前 MainScene：`ceef56586c5281dca4ce45340f511d0d577fd724b14131ae5a21d01ea7f41317`）
 
-格式与服务器 S2 约定一致：`bounds_*` 为 `[x,y,z]`，`walkable_rle` 为 `[value, count, ...]`，出生点为 `{id, position, yaw}`。水平面 X/Z，Y 为高度。`aoi_cell_size=12`，`nav_sample_step=1`。进图 hash 必须与该 `.sha256` 一致，否则 `ERR_MAP_DATA_MISMATCH`。
+进图时客户端发送该 hash；与 `EnterMapRsp` 不一致则阻止进入 InWorld。
 
 ## 测试
 
 ```powershell
 $env:UNITY_PATH="C:\Program Files\Unity\Hub\Editor\2022.3.62f3c1\Editor\Unity.exe"
+.\Tools\GameMesh\check_protocol_contract.ps1 Tools\GameMesh\cache\server-export
 .\Tools\GameMesh\run_editmode_tests.ps1
 .\Tools\GameMesh\run_playmode_tests.ps1
 ```
 
-双客户端真实 E2E：先 `build_integration_client.ps1`，设置 `GAMEMESH_E2E_GATEWAY=1` 后运行 `run_two_clients_e2e.ps1`。未提供 Gateway 时脚本返回 2（未执行，不是通过）。
+双客户端真实 E2E：先 `build_integration_client.ps1`，设置 `GAMEMESH_E2E_GATEWAY=1` 后运行 `run_two_clients_e2e.ps1`。未提供 Gateway 时脚本返回 2（NOT RUN，不是通过）。

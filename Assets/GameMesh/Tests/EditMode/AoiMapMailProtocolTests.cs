@@ -23,15 +23,26 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
-        public void Protocol_ReportsMissingUnitySliceTypes()
+        public void Protocol_RequiredTypesPresent()
         {
             var missing = ProtocolCapabilities.MissingRequiredTypes();
-            CollectionAssert.Contains(missing, "PlayerAttributes");
-            CollectionAssert.Contains(missing, "MoveReq");
-            CollectionAssert.Contains(missing, "AoiDelta");
-            CollectionAssert.Contains(missing, "PlayerMailSendReq");
-            Assert.IsTrue(ProtocolCapabilities.HasType("RegisterReq"));
-            Assert.IsTrue(ProtocolCapabilities.HasType("ServerPushEnvelope"));
+            CollectionAssert.IsEmpty(missing);
+            Assert.IsTrue(ProtocolCapabilities.HasType("PlayerAttributes"));
+            Assert.IsTrue(ProtocolCapabilities.HasType("MoveReq"));
+            Assert.IsTrue(ProtocolCapabilities.HasType("AoiDelta"));
+            Assert.IsTrue(ProtocolCapabilities.HasType("PlayerMailSendReq"));
+            Assert.IsTrue(ProtocolCapabilities.HasType("MailboxChangedNotify"));
+            var req = new GameRequest { Move = new MoveReq() };
+            Assert.AreEqual(GameRequest.BodyOneofCase.Move, req.BodyCase);
+            var rsp = new GameResponse
+            {
+                AoiDelta = new AoiDelta(),
+            };
+            Assert.AreEqual(GameResponse.BodyOneofCase.AoiDelta, rsp.BodyCase);
+            rsp = new GameResponse { PlayerMailSend = new PlayerMailSendRsp() };
+            Assert.AreEqual(GameResponse.BodyOneofCase.PlayerMailSend, rsp.BodyCase);
+            rsp = new GameResponse { MailboxChanged = new MailboxChangedNotify() };
+            Assert.AreEqual(GameResponse.BodyOneofCase.MailboxChanged, rsp.BodyCase);
         }
 
         [Test]

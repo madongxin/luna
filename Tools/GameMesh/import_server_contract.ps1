@@ -1,7 +1,9 @@
 #Requires -Version 5.1
 param(
     [Parameter(Mandatory = $true)]
-    [string]$Source
+    [string]$Source,
+    [string]$ServerCommit = "",
+    [string]$SourceRepo = "https://github.com/madongxin/webserver"
 )
 
 $ErrorActionPreference = "Stop"
@@ -10,6 +12,9 @@ if (-not (Test-Path (Join-Path $Root "Assets"))) {
     $Root = Split-Path -Parent $PSScriptRoot
 }
 Set-Location $Root
+
+$versionsPath = Join-Path $PSScriptRoot "versions.json"
+$versions = Get-Content -Raw $versionsPath | ConvertFrom-Json
 
 function Find-Proto([string]$base) {
     $candidates = @(
@@ -36,8 +41,8 @@ $manifestSrc = @(
     (Join-Path $Source "Assets\GameMesh\Protocol\protocol_manifest.json")
 ) | Where-Object { Test-Path $_ } | Select-Object -First 1
 
-$frame = "uint32_be_length_prefixed"
-$maxBytes = 4194304
+$frame = $versions.frame_format
+$maxBytes = [int]$versions.max_frame_bytes
 if ($manifestSrc) {
     $m = Get-Content -Raw $manifestSrc | ConvertFrom-Json
     if ($m.schema_sha256 -and $m.schema_sha256.ToLower() -ne $sha) {
@@ -48,6 +53,14 @@ if ($manifestSrc) {
     }
     if ($m.max_frame_bytes -and [int]$m.max_frame_bytes -ne $maxBytes) {
         throw "unsupported max_frame_bytes: $($m.max_frame_bytes)"
+    }
+    if (-not $ServerCommit -and $m.source_commit) { $ServerCommit = [string]$m.source_commit }
+}
+
+if (-not $ServerCommit) {
+    $gitDir = $Source
+    if (Test-Path (Join-Path $gitDir ".git")) {
+        $ServerCommit = (& git -C $gitDir rev-parse HEAD).Trim()
     }
 }
 
@@ -65,28 +78,38 @@ foreach ($t in $required) {
     if ($protoText -match "message\s+$t\b") { $present += $t } else { $missing += $t }
 }
 
+if ($missing.Count -gt 0) {
+    throw ("Missing required types: " + ($missing -join ", "))
+}
+
+& (Join-Path $PSScriptRoot "generate_csharp_proto.ps1")
+if ($LASTEXITCODE -ne 0) { throw "generate_csharp_proto failed" }
+
+$desc = Join-Path $Root "Assets\GameMesh\Protocol\game.desc"
+$descSha = if (Test-Path $desc) { (Get-FileHash -Algorithm SHA256 $desc).Hash.ToLower() } else { "" }
+
 $manifest = [ordered]@{
     schema_file            = "Schema/game.proto"
     schema_sha256          = $sha
     generated_csharp       = "Generated/Game.cs"
     descriptor             = "game.desc"
+    descriptor_sha256      = $descSha
     frame_format           = $frame
     max_frame_bytes        = $maxBytes
-    csharp_namespace       = "GameMesh.Protocol"
-    protoc_version         = "25.3"
-    google_protobuf        = "3.25.3"
+    csharp_namespace       = $versions.csharp_namespace
+    protoc_version         = $versions.protoc
+    google_protobuf        = $versions.google_protobuf
+    source_repo            = $SourceRepo
+    source_path            = "proto/game.proto"
+    source_commit          = $ServerCommit
     source                 = $srcProto
     required_types_present = $present
-    required_types_missing = $missing
+    required_types_missing = @()
 }
 $manifestPath = Join-Path $Root "Assets\GameMesh\Protocol\protocol_manifest.json"
 ($manifest | ConvertTo-Json -Depth 6) + "`n" | Set-Content -Encoding utf8 $manifestPath
 
 Write-Host "Imported $srcProto"
 Write-Host "schema_sha256=$sha"
-if ($missing.Count -gt 0) {
-    Write-Warning ("Missing required types: " + ($missing -join ", "))
-}
-
-& (Join-Path $PSScriptRoot "generate_csharp_proto.ps1")
+Write-Host "source_commit=$ServerCommit"
 exit 0

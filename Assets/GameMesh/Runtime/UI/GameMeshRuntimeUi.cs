@@ -8,7 +8,8 @@ namespace GameMesh.UI
 {
     public sealed class GameMeshRuntimeUi : MonoBehaviour
     {
-        bool _showMail = true;
+        bool _showMail;
+        bool _showDebug;
         string _mailTitle = "hello";
         string _mailBody = "from luna";
         string _peerId = "";
@@ -93,15 +94,22 @@ namespace GameMesh.UI
                     : _statusWarn;
             GUILayout.Space(8);
             GUILayout.Label("连接  " + StateText(state), style);
+            if (client.IsBusy)
+                GUILayout.Label("阶段  " + client.BusyStage, _statusWarn);
             GUILayout.Label(
                 "玩家ID  " + client.Session.PlayerId +
+                "    模板  " + client.Session.MapTemplateId +
                 "    地图实例  " + client.Session.MapInstanceId +
-                "    人数  " + client.LastPlayerCount, _label);
+                "    AOI  " + client.Aoi.Entities.Count, _label);
             GUILayout.Label(
                 "client_seq  " + (client.Connection != null ? client.Connection.LastClientSeq.ToString() : "0") +
-                "    server_seq  " + client.Session.LastServerSeq, _label);
+                "    server_seq  " + client.Session.LastServerSeq +
+                "    协议  " + client.ProtocolSchemaShort, _label);
+            GUILayout.Label(client.ServerBlockedNotes, _hint);
 
-            if (!string.IsNullOrEmpty(client.LastError))
+            if (!string.IsNullOrEmpty(client.LastErrorUi))
+                GUILayout.Label(client.LastErrorUi, _statusErr);
+            else if (!string.IsNullOrEmpty(client.LastError))
                 GUILayout.Label("错误  " + client.LastErrorCode + "  " + client.LastError, _statusErr);
             if (client.MapBlocked)
                 GUILayout.Label("进图被阻止  " + client.MapBlockReason, _statusErr);
@@ -133,6 +141,8 @@ namespace GameMesh.UI
             if (GUILayout.Button("登  出", _logoutStyle, GUILayout.Height(48)))
                 _ = client.LogoutAsync();
             GUILayout.EndHorizontal();
+            if (GUILayout.Button("清除本地账号信息", _btnStyle, GUILayout.Height(36)))
+                client.ClearLocalAccount();
         }
 
         void DrawWorld(GameMeshClient client)
@@ -140,7 +150,7 @@ namespace GameMesh.UI
             GUILayout.Space(12);
             GUILayout.Label("角色属性", _section);
             var a = client.Session.Attributes;
-            GUILayout.Label(a.FromServer ? "来源：服务器权威值" : "来源：本地默认（协议尚无 PlayerAttributes）", _hint);
+            GUILayout.Label(a.FromServer ? "来源：服务器权威值  stats=" + a.StatsVersion : "来源：本地默认（尚未收到服务器资料）", _hint);
             GUILayout.Label("ID  " + a.PlayerId + "    名字  " + a.Name, _label);
             GUILayout.Label("HP  " + a.Hp + " / " + a.MaxHp + "    MP  " + a.Mp + " / " + a.MaxMp, _label);
             GUILayout.Label("攻击  " + a.Attack + "    法强  " + a.SpellPower + "    防御  " + a.Defense + "    魔抗  " + a.MagicResist, _label);
@@ -152,6 +162,7 @@ namespace GameMesh.UI
             GUILayout.Space(12);
             GUILayout.Label("邮箱", _section);
             _showMail = GUILayout.Toggle(_showMail, _showMail ? "  邮箱面板已打开" : "  点击打开邮箱", _btnStyle, GUILayout.Height(40));
+            client.Mail.PanelOpen = _showMail;
             if (!_showMail)
                 return;
 
@@ -189,9 +200,12 @@ namespace GameMesh.UI
             if (!string.IsNullOrEmpty(page.LastError))
                 GUILayout.Label(page.LastError, _statusErr);
 
-            var missing = ProtocolCapabilities.MissingRequiredTypes();
-            if (missing.Count > 0)
-                GUILayout.Label("当前服务器协议缺少：" + string.Join("、", missing.ToArray()), _hint);
+            _showDebug = GUILayout.Toggle(_showDebug, "显示调试信息", _hint);
+            if (_showDebug)
+            {
+                GUILayout.Label("map_hash  " + client.Config.mapDataHash, _hint);
+                GUILayout.Label(client.Session.DebugSummary(), _hint);
+            }
         }
 
         async System.Threading.Tasks.Task SendMail(GameMeshClient client, ulong to)
@@ -234,6 +248,7 @@ namespace GameMesh.UI
                 case ConnectionState.EnteringWorld: return "进图中";
                 case ConnectionState.InWorld: return "已在地图中";
                 case ConnectionState.Reconnecting: return "重连中";
+                case ConnectionState.Resyncing: return "同步世界中";
                 case ConnectionState.Closing: return "关闭中";
                 default: return state.ToString();
             }
