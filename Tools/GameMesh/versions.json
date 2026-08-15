@@ -1,0 +1,8 @@
+{
+  "protoc": "25.3",
+  "google_protobuf": "3.25.3",
+  "system_runtime_compilerservices_unsafe": "6.0.0",
+  "csharp_namespace": "GameMesh.Protocol",
+  "frame_format": "uint32_be_length_prefixed",
+  "max_frame_bytes": 4194304
+}

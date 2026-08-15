@@ -4,6 +4,8 @@
 [Bb]uild/
 [Bb]uilds/
 [Ll]ogs/
+TestResults/
+Tools/GameMesh/cache/
 [Uu]ser[Ss]ettings/
 
 .vs/

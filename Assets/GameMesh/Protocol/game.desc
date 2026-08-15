@@ -1,0 +1,471 @@
+
+Ÿc
+
+game.protogame"∆
+LoginReq
+	player_id (RplayerId
+	device_id (	RdeviceId
+	server_id (RserverId
+ttl_sec (RttlSec*
+kick_other_device (RkickOtherDevice
+
+credential (	R
+credential"ı
+LoginRsp
+ok (Rok
+message (	Rmessage
+token (	Rtoken
+	server_id (RserverId$
+login_time_sec (RloginTimeSec'
+kicked_previous (RkickedPrevious
+
+session_id (	R	sessionId
+
+generation (R
+generation"ù
+ReconnectReq
+	player_id (RplayerId
+
+session_id (	R	sessionId)
+reconnect_ticket (	RreconnectTicket&
+last_server_seq (RlastServerSeq"„
+ReconnectRsp
+ok (Rok
+message (	Rmessage
+token (	Rtoken
+
+session_id (	R	sessionId
+
+generation (R
+generation,
+need_full_snapshot (RneedFullSnapshot&
+replay_from_seq (RreplayFromSeq"Ø
+
+PushAckReq
+	player_id (RplayerId$
+ack_server_seq (RackServerSeq
+
+session_id (	R	sessionId
+fence_token (	R
+fenceToken
+
+generation (R
+generation"\
+
+PushAckRsp
+ok (Rok
+message (	Rmessage$
+trimmed_to_seq (RtrimmedToSeq"Æ
+ServerPushEnvelope
+
+server_seq (R	serverSeq!
+message_type (	RmessageType
+payload (Rpayload
+reliable (Rreliable 
+coalescable (Rcoalescable"Ó
+FullStateSnapshotRsp
+ok (Rok
+message (	Rmessage
+	player_id (RplayerId#
+asset_version (RassetVersion
+item_ids (RitemIds
+item_counts (R
+itemCounts.
+baseline_server_seq (RbaselineServerSeq"G
+ValidateSessionReq
+	player_id (RplayerId
+token (	Rtoken"Ã
+ValidateSessionRsp
+ok (Rok
+message (	Rmessage
+valid (Rvalid
+online (Ronline
+	server_id (RserverId
+	device_id (	RdeviceId$
+login_time_sec (RloginTimeSec"-
+CheckOnlineReq
+	player_id (RplayerId"R
+CheckOnlineRsp
+ok (Rok
+message (	Rmessage
+online (Ronline">
+	LogoutReq
+	player_id (RplayerId
+token (	Rtoken"5
+	LogoutRsp
+ok (Rok
+message (	Rmessage"i
+RegisterReq
+	device_id (	RdeviceId!
+display_name (	RdisplayName
+password (	Rpassword"T
+RegisterRsp
+ok (Rok
+message (	Rmessage
+	player_id (RplayerId"B
+FlushBagReq
+	player_id (RplayerId
+reason (	Rreason"7
+FlushBagRsp
+ok (Rok
+message (	Rmessage"\
+ConsumeItemReq
+	player_id (RplayerId
+item_id (RitemId
+count (Rcount"]
+ConsumeItemRsp
+ok (Rok
+message (	Rmessage!
+remain_count (RremainCount"
+ReleaseSkillReq
+	player_id (RplayerId
+skill_id (RskillId
+target_x (RtargetX
+target_y (RtargetY"\
+ReleaseSkillRsp
+ok (Rok
+message (	Rmessage
+cooldown_ms (R
+cooldownMs"°
+GrantItemReq
+	player_id (RplayerId
+item_id (RitemId
+count (Rcount
+
+extra_data (	R	extraData&
+expire_time_sec (RexpireTimeSec"v
+GrantItemRsp
+ok (Rok
+message (	Rmessage
+instance_id (R
+instanceId
+	bag_total (RbagTotal"⁄
+MailAttachmentDto
+
+slot_index (R	slotIndex
+
+asset_type (	R	assetType
+asset_id (RassetId
+count (Rcount
+	bind_type (	RbindType
+payload (	Rpayload
+claim_state (	R
+claimState"°
+	MailBrief
+mail_id (RmailId
+category (	Rcategory
+priority (Rpriority
+title (	Rtitle
+sender_name (	R
+senderName
+
+read_state (	R	readState#
+visible_state (	RvisibleState)
+attachment_state (	RattachmentState%
+has_attachment	 (RhasAttachment
+is_favorite
+ (R
+isFavorite
+sent_at (RsentAt
+	expire_at (RexpireAt
+row_version (R
+rowVersion"´
+
+MailDetail%
+brief (2.game.MailBriefRbrief
+body (	Rbody9
+attachments (2.game.MailAttachmentDtoRattachments'
+allowed_actions (	RallowedActions"0
+MailboxSummaryReq
+	player_id (RplayerId"„
+MailboxSummaryRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode#
+unread_system (RunreadSystem'
+unread_activity (RunreadActivity#
+unread_social (RunreadSocial!
+unread_trade (RunreadTrade1
+unclaimed_attachment (RunclaimedAttachment#
+expiring_soon	 (RexpiringSoon#
+current_count
+ (RcurrentCount!
+max_capacity (RmaxCapacity'
+mailbox_version (RmailboxVersion&
+server_time_utc (RserverTimeUtc"¨
+MailListReq
+	player_id (RplayerId
+category (	Rcategory
+unread (Runread%
+has_attachment (RhasAttachment
+	unclaimed (R	unclaimed#
+expiring_soon (RexpiringSoon
+favorite (Rfavorite
+keyword (	Rkeyword
+cursor	 (	Rcursor
+limit
+ (Rlimit"Ô
+MailListRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode%
+mails (2.game.MailBriefRmails
+next_cursor (	R
+nextCursor'
+mailbox_version (RmailboxVersion&
+server_time_utc (RserverTimeUtc"B
+
+MailGetReq
+	player_id (RplayerId
+mail_id (RmailId"Ã
+
+MailGetRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode$
+mail (2.game.MailDetailRmail'
+mailbox_version (RmailboxVersion&
+server_time_utc (RserverTimeUtc"l
+MailReadReq
+	player_id (RplayerId
+mail_id (RmailId'
+idempotency_key (	RidempotencyKey"¿
+MailReadRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode
+read_at (RreadAt'
+mailbox_version (RmailboxVersion&
+server_time_utc (RserverTimeUtc"à
+MailClaimReq
+	player_id (RplayerId
+mail_id (RmailId'
+idempotency_key (	RidempotencyKey
+trace_id (	RtraceId"û
+MailClaimResult
+mail_id (RmailId
+ok (Rok
+
+error_code (	R	errorCode
+message (	Rmessage)
+attachment_state (	RattachmentState"◊
+MailClaimRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode-
+result (2.game.MailClaimResultRresult'
+mailbox_version (RmailboxVersion&
+server_time_utc (RserverTimeUtc"ú
+MailBatchClaimReq
+	player_id (RplayerId
+mail_ids (RmailIds4
+idempotency_key_prefix (	RidempotencyKeyPrefix
+trace_id (	RtraceId"ﬁ
+MailBatchClaimRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode/
+results (2.game.MailClaimResultRresults'
+mailbox_version (RmailboxVersion&
+server_time_utc (RserverTimeUtc"å
+MailFavoriteReq
+	player_id (RplayerId
+mail_id (RmailId
+favorite (Rfavorite'
+idempotency_key (	RidempotencyKey"Ã
+MailFavoriteRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode
+is_favorite (R
+isFavorite'
+mailbox_version (RmailboxVersion&
+server_time_utc (RserverTimeUtc"s
+MailBatchReadReq
+	player_id (RplayerId
+mail_ids (RmailIds'
+idempotency_key (	RidempotencyKey"—
+MailBatchReadRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode#
+success_count (RsuccessCount'
+mailbox_version (RmailboxVersion&
+server_time_utc (RserverTimeUtc"u
+MailBatchDeleteReq
+	player_id (RplayerId
+mail_ids (RmailIds'
+idempotency_key (	RidempotencyKey"˚
+MailBatchDeleteRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode#
+success_count (RsuccessCount&
+failed_mail_ids (RfailedMailIds'
+mailbox_version (RmailboxVersion&
+server_time_utc (RserverTimeUtc"û
+MailDeliverAttachment
+
+asset_type (	R	assetType
+asset_id (RassetId
+count (Rcount
+	bind_type (	RbindType
+payload (	Rpayload"≥
+MailDeliverReq#
+source_system (	RsourceSystem!
+business_key (	RbusinessKey#
+receiver_type (	RreceiverType
+receiver_id (R
+receiverId
+template_id (	R
+templateId)
+template_version (RtemplateVersion
+category (	Rcategory
+priority (Rpriority
+sender_name	 (	R
+senderName
+title
+ (	Rtitle
+body (	Rbody=
+attachments (2.game.MailDeliverAttachmentRattachments
+send_at (RsendAt
+	expire_at (RexpireAt
+trace_id (	RtraceId4
+session_token_override (	RsessionTokenOverride"¡
+MailDeliverRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode
+mail_id (RmailId%
+idempotent_hit (RidempotentHit&
+server_time_utc (RserverTimeUtc"ï
+EnterMapReq
+	player_id (RplayerId
+realm_id (RrealmId&
+map_template_id (RmapTemplateId&
+map_instance_id (RmapInstanceId"Å
+EnterMapRsp
+ok (Rok
+message (	Rmessage&
+map_template_id (RmapTemplateId&
+map_instance_id (RmapInstanceId2
+gamelogic_instance_id (	RgamelogicInstanceId
+owner_epoch (R
+ownerEpoch#
+route_version (RrouteVersion"R
+LeaveMapReq
+	player_id (RplayerId&
+map_instance_id (RmapInstanceId"7
+LeaveMapRsp
+ok (Rok
+message (	Rmessage"Q
+
+MapPingReq
+	player_id (RplayerId&
+map_instance_id (RmapInstanceId"Æ
+
+MapPingRsp
+ok (Rok
+message (	Rmessage
+owner_epoch (R
+ownerEpoch!
+player_count (RplayerCount2
+gamelogic_instance_id (	RgamelogicInstanceId"X
+ChatSendReq
+	player_id (RplayerId
+channel (	Rchannel
+text (	Rtext"V
+ChatSendRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode",
+FriendListReq
+	player_id (RplayerId"X
+FriendListRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode"Ê
+GameRequest
+seq (Rseq#
+session_token (	RsessionToken9
+consume_item
+ (2.game.ConsumeItemReqH RconsumeItem<
+release_skill (2.game.ReleaseSkillReqH RreleaseSkill3
+
+grant_item (2.game.GrantItemReqH R	grantItem&
+login (2.game.LoginReqH RloginE
+validate_session (2.game.ValidateSessionReqH RvalidateSession9
+check_online (2.game.CheckOnlineReqH RcheckOnline)
+logout (2.game.LogoutReqH Rlogout2
+	reconnect (2.game.ReconnectReqH R	reconnect/
+register (2.game.RegisterReqH Rregister0
+	flush_bag (2.game.FlushBagReqH RflushBagB
+mailbox_summary (2.game.MailboxSummaryReqH RmailboxSummary0
+	mail_list (2.game.MailListReqH RmailList-
+mail_get  (2.game.MailGetReqH RmailGet0
+	mail_read! (2.game.MailReadReqH RmailRead3
+
+mail_claim" (2.game.MailClaimReqH R	mailClaimC
+mail_batch_claim# (2.game.MailBatchClaimReqH RmailBatchClaim<
+mail_favorite$ (2.game.MailFavoriteReqH RmailFavorite@
+mail_batch_read% (2.game.MailBatchReadReqH RmailBatchReadF
+mail_batch_delete& (2.game.MailBatchDeleteReqH RmailBatchDelete9
+mail_deliver' (2.game.MailDeliverReqH RmailDeliver0
+	enter_map( (2.game.EnterMapReqH RenterMap0
+	leave_map) (2.game.LeaveMapReqH RleaveMap-
+map_ping* (2.game.MapPingReqH RmapPing0
+	chat_send2 (2.game.ChatSendReqH RchatSend6
+friend_list3 (2.game.FriendListReqH R
+friendList-
+push_ack4 (2.game.PushAckReqH RpushAckB
+body"Ï
+GameResponse
+seq (Rseq
+ok (Rok
+message (	Rmessage9
+consume_item
+ (2.game.ConsumeItemRspH RconsumeItem<
+release_skill (2.game.ReleaseSkillRspH RreleaseSkill3
+
+grant_item (2.game.GrantItemRspH R	grantItem&
+login (2.game.LoginRspH RloginE
+validate_session (2.game.ValidateSessionRspH RvalidateSession9
+check_online (2.game.CheckOnlineRspH RcheckOnline)
+logout (2.game.LogoutRspH Rlogout2
+	reconnect (2.game.ReconnectRspH R	reconnect/
+register (2.game.RegisterRspH Rregister0
+	flush_bag (2.game.FlushBagRspH RflushBagB
+mailbox_summary (2.game.MailboxSummaryRspH RmailboxSummary0
+	mail_list (2.game.MailListRspH RmailList-
+mail_get  (2.game.MailGetRspH RmailGet0
+	mail_read! (2.game.MailReadRspH RmailRead3
+
+mail_claim" (2.game.MailClaimRspH R	mailClaimC
+mail_batch_claim# (2.game.MailBatchClaimRspH RmailBatchClaim<
+mail_favorite$ (2.game.MailFavoriteRspH RmailFavorite@
+mail_batch_read% (2.game.MailBatchReadRspH RmailBatchReadF
+mail_batch_delete& (2.game.MailBatchDeleteRspH RmailBatchDelete9
+mail_deliver' (2.game.MailDeliverRspH RmailDeliver0
+	enter_map( (2.game.EnterMapRspH RenterMap0
+	leave_map) (2.game.LeaveMapRspH RleaveMap-
+map_ping* (2.game.MapPingRspH RmapPing0
+	chat_send2 (2.game.ChatSendRspH RchatSend6
+friend_list3 (2.game.FriendListRspH R
+friendList-
+push_ack4 (2.game.PushAckRspH RpushAck;
+server_push5 (2.game.ServerPushEnvelopeH R
+serverPushA
+full_snapshot6 (2.game.FullStateSnapshotRspH RfullSnapshotB
+bodyB™GameMesh.Protocolbproto3

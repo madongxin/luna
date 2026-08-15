@@ -1,0 +1,38 @@
+{
+  "schema_file": "Schema/game.proto",
+  "schema_sha256": "7fe295a5e281ed226aab8cf669acc1a5eee7ce5bef69692f8f017bdbf62e8c13",
+  "generated_csharp": "Generated/Game.cs",
+  "descriptor": "game.desc",
+  "frame_format": "uint32_be_length_prefixed",
+  "max_frame_bytes": 4194304,
+  "csharp_namespace": "GameMesh.Protocol",
+  "protoc_version": "25.3",
+  "google_protobuf": "3.25.3",
+  "source_repo": "https://github.com/madongxin/webserver",
+  "source_path": "proto/game.proto",
+  "source_commit": "37b19773b6856e5da374f22f66c8540fc9867ca3",
+  "required_types_present": [
+    "RegisterReq",
+    "LoginReq",
+    "LogoutReq",
+    "ReconnectReq",
+    "PushAckReq",
+    "EnterMapReq",
+    "LeaveMapReq",
+    "MailboxSummaryReq",
+    "MailListReq",
+    "MailGetReq",
+    "ServerPushEnvelope",
+    "GameRequest",
+    "GameResponse"
+  ],
+  "required_types_missing": [
+    "PlayerAttributes",
+    "Vec3",
+    "EntitySnapshot",
+    "MoveReq",
+    "AoiDelta",
+    "PlayerMailSendReq",
+    "MailboxChangedNotify"
+  ]
+}

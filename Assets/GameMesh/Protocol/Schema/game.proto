@@ -1,0 +1,542 @@
+syntax = "proto3";
+
+package game;
+
+message LoginReq {
+  uint64 player_id = 1;
+  string device_id = 2;
+  uint32 server_id = 3;
+  uint32 ttl_sec = 4;
+  bool kick_other_device = 5;
+  // 密码/凭证：仅 Gateway→Auth 消费，不入 GameLogic
+  string credential = 6;
+}
+
+message LoginRsp {
+  bool ok = 1;
+  string message = 2;
+  string token = 3;          // 即 fence_token：写栅栏，顶号/重连后会轮换
+  uint32 server_id = 4;
+  int64 login_time_sec = 5;
+  bool kicked_previous = 6;
+  string session_id = 7;     // 阶段 3：会话 ID（宽限期内重连携带）
+  uint64 generation = 8;     // 会话世代，拒绝迟到断线回调
+}
+
+message ReconnectReq {
+  uint64 player_id = 1;
+  string session_id = 2;
+  string reconnect_ticket = 3;  // 通常为断线前的 session_token
+  uint64 last_server_seq = 4;   // 预留：可靠补发
+}
+
+message ReconnectRsp {
+  bool ok = 1;
+  string message = 2;
+  string token = 3;       // 新 fence_token
+  string session_id = 4;
+  uint64 generation = 5;
+  bool need_full_snapshot = 6;  // 可靠 Push 缓存缺口，需全量同步
+  uint64 replay_from_seq = 7;   // 将从该 seq 之后补发（0=无补发）
+}
+
+/** 客户端确认已收到可靠 Push（Gateway 裁剪 ReplayStore） */
+message PushAckReq {
+  uint64 player_id = 1;
+  uint64 ack_server_seq = 2;
+  string session_id = 3;
+  string fence_token = 4;
+  uint64 generation = 5;
+}
+
+message PushAckRsp {
+  bool ok = 1;
+  string message = 2;
+  uint64 trimmed_to_seq = 3;
+}
+
+/** 客户端可见的可靠 Push 外层（Gateway 下发；兼容仍可直接收业务 GameResponse） */
+message ServerPushEnvelope {
+  uint64 server_seq = 1;
+  string message_type = 2;
+  bytes payload = 3;  // 内层业务 GameResponse 序列化体
+  bool reliable = 4;
+  bool coalescable = 5;
+}
+
+/** 全量状态同步（Replay 缺口时下发，禁止只回标志） */
+message FullStateSnapshotRsp {
+  bool ok = 1;
+  string message = 2;
+  uint64 player_id = 3;
+  uint64 asset_version = 4;
+  repeated uint32 item_ids = 5;
+  repeated uint32 item_counts = 6;
+  uint64 baseline_server_seq = 7;
+}
+
+message ValidateSessionReq {
+  uint64 player_id = 1;
+  string token = 2;
+}
+
+message ValidateSessionRsp {
+  bool ok = 1;
+  string message = 2;
+  bool valid = 3;
+  bool online = 4;
+  uint32 server_id = 5;
+  string device_id = 6;
+  int64 login_time_sec = 7;
+}
+
+message CheckOnlineReq {
+  uint64 player_id = 1;
+}
+
+message CheckOnlineRsp {
+  bool ok = 1;
+  string message = 2;
+  bool online = 3;
+}
+
+message LogoutReq {
+  uint64 player_id = 1;
+  string token = 2;
+}
+
+message LogoutRsp {
+  bool ok = 1;
+  string message = 2;
+}
+
+/** 玩家注册：分配 player_id 并写入 MySQL player_account */
+message RegisterReq {
+  string device_id = 1;
+  string display_name = 2;
+  string password = 3;  // 明文仅在 Gateway→Auth 路径瞬时使用，不落日志
+}
+
+message RegisterRsp {
+  bool ok = 1;
+  string message = 2;
+  uint64 player_id = 3;
+}
+
+/** Gateway 断线通知 Logic：立即刷道具队列（不删 Session） */
+message FlushBagReq {
+  uint64 player_id = 1;
+  string reason = 2;
+}
+
+message FlushBagRsp {
+  bool ok = 1;
+  string message = 2;
+}
+
+message ConsumeItemReq {
+  uint64 player_id = 1;
+  uint32 item_id = 2;
+  uint32 count = 3;
+}
+
+message ConsumeItemRsp {
+  bool ok = 1;
+  string message = 2;
+  uint32 remain_count = 3;
+}
+
+message ReleaseSkillReq {
+  uint64 player_id = 1;
+  uint32 skill_id = 2;
+  float target_x = 3;
+  float target_y = 4;
+}
+
+message ReleaseSkillRsp {
+  bool ok = 1;
+  string message = 2;
+  uint32 cooldown_ms = 3;
+}
+
+// ---------- 道具发放（grant_item）----------
+// 流程：客户端发 GrantItemReq -> GameLogic 立刻改内存背包 -> 入 PlayerItemPersistQueue
+//       -> 每 5 分钟或登出时 INSERT player_item
+message GrantItemReq {
+  uint64 player_id = 1;       // 玩家 ID
+  uint64 item_id = 2;         // 道具配置 ID（客户端可随机，如 1001~1004）
+  uint32 count = 3;           // 发放数量
+  string extra_data = 4;      // JSON，如 {"source":"client_random"}；空则服务端默认
+  int64 expire_time_sec = 5;  // 过期 Unix 秒；0 表示不过期（DB 为 NULL）
+}
+
+message GrantItemRsp {
+  bool ok = 1;
+  string message = 2;
+  uint64 instance_id = 3;     // 队列入库时为 0；即时 Insert 时为 DB 自增 id
+  uint32 bag_total = 4;       // 内存背包该 item_id 聚合数量（非 player_item 行数）
+}
+
+// ======================== 邮件系统（Protobuf RPC，非 REST）========================
+
+message MailAttachmentDto {
+  uint32 slot_index = 1;
+  string asset_type = 2;   // ITEM（首期）
+  uint64 asset_id = 3;
+  uint32 count = 4;
+  string bind_type = 5;
+  string payload = 6;
+  string claim_state = 7;
+}
+
+message MailBrief {
+  uint64 mail_id = 1;
+  string category = 2;
+  int32 priority = 3;
+  string title = 4;
+  string sender_name = 5;
+  string read_state = 6;
+  string visible_state = 7;
+  string attachment_state = 8;
+  bool has_attachment = 9;
+  bool is_favorite = 10;
+  int64 sent_at = 11;
+  int64 expire_at = 12;
+  int64 row_version = 13;
+}
+
+message MailDetail {
+  MailBrief brief = 1;
+  string body = 2;
+  repeated MailAttachmentDto attachments = 3;
+  repeated string allowed_actions = 4;
+}
+
+message MailboxSummaryReq {
+  uint64 player_id = 1;
+}
+
+message MailboxSummaryRsp {
+  bool ok = 1;
+  string message = 2;
+  string error_code = 3;
+  uint32 unread_system = 4;
+  uint32 unread_activity = 5;
+  uint32 unread_social = 6;
+  uint32 unread_trade = 7;
+  uint32 unclaimed_attachment = 8;
+  uint32 expiring_soon = 9;
+  uint32 current_count = 10;
+  uint32 max_capacity = 11;
+  int64 mailbox_version = 12;
+  int64 server_time_utc = 13;
+}
+
+message MailListReq {
+  uint64 player_id = 1;
+  string category = 2;
+  bool unread = 3;
+  bool has_attachment = 4;
+  bool unclaimed = 5;
+  bool expiring_soon = 6;
+  bool favorite = 7;
+  string keyword = 8;
+  string cursor = 9;
+  int32 limit = 10;
+}
+
+message MailListRsp {
+  bool ok = 1;
+  string message = 2;
+  string error_code = 3;
+  repeated MailBrief mails = 4;
+  string next_cursor = 5;
+  int64 mailbox_version = 6;
+  int64 server_time_utc = 7;
+}
+
+message MailGetReq {
+  uint64 player_id = 1;
+  uint64 mail_id = 2;
+}
+
+message MailGetRsp {
+  bool ok = 1;
+  string message = 2;
+  string error_code = 3;
+  MailDetail mail = 4;
+  int64 mailbox_version = 5;
+  int64 server_time_utc = 6;
+}
+
+message MailReadReq {
+  uint64 player_id = 1;
+  uint64 mail_id = 2;
+  string idempotency_key = 3;
+}
+
+message MailReadRsp {
+  bool ok = 1;
+  string message = 2;
+  string error_code = 3;
+  int64 read_at = 4;
+  int64 mailbox_version = 5;
+  int64 server_time_utc = 6;
+}
+
+message MailClaimReq {
+  uint64 player_id = 1;
+  uint64 mail_id = 2;
+  string idempotency_key = 3;
+  string trace_id = 4;
+}
+
+message MailClaimResult {
+  uint64 mail_id = 1;
+  bool ok = 2;
+  string error_code = 3;
+  string message = 4;
+  string attachment_state = 5;
+}
+
+message MailClaimRsp {
+  bool ok = 1;
+  string message = 2;
+  string error_code = 3;
+  MailClaimResult result = 4;
+  int64 mailbox_version = 5;
+  int64 server_time_utc = 6;
+}
+
+message MailBatchClaimReq {
+  uint64 player_id = 1;
+  repeated uint64 mail_ids = 2;
+  string idempotency_key_prefix = 3;
+  string trace_id = 4;
+}
+
+message MailBatchClaimRsp {
+  bool ok = 1;
+  string message = 2;
+  string error_code = 3;
+  repeated MailClaimResult results = 4;
+  int64 mailbox_version = 5;
+  int64 server_time_utc = 6;
+}
+
+message MailFavoriteReq {
+  uint64 player_id = 1;
+  uint64 mail_id = 2;
+  bool favorite = 3;
+  string idempotency_key = 4;
+}
+
+message MailFavoriteRsp {
+  bool ok = 1;
+  string message = 2;
+  string error_code = 3;
+  bool is_favorite = 4;
+  int64 mailbox_version = 5;
+  int64 server_time_utc = 6;
+}
+
+message MailBatchReadReq {
+  uint64 player_id = 1;
+  repeated uint64 mail_ids = 2;
+  string idempotency_key = 3;
+}
+
+message MailBatchReadRsp {
+  bool ok = 1;
+  string message = 2;
+  string error_code = 3;
+  uint32 success_count = 4;
+  int64 mailbox_version = 5;
+  int64 server_time_utc = 6;
+}
+
+message MailBatchDeleteReq {
+  uint64 player_id = 1;
+  repeated uint64 mail_ids = 2;
+  string idempotency_key = 3;
+}
+
+message MailBatchDeleteRsp {
+  bool ok = 1;
+  string message = 2;
+  string error_code = 3;
+  uint32 success_count = 4;
+  repeated uint64 failed_mail_ids = 5;
+  int64 mailbox_version = 6;
+  int64 server_time_utc = 7;
+}
+
+message MailDeliverAttachment {
+  string asset_type = 1;
+  uint64 asset_id = 2;
+  uint32 count = 3;
+  string bind_type = 4;
+  string payload = 5;
+}
+
+message MailDeliverReq {
+  string source_system = 1;
+  string business_key = 2;
+  string receiver_type = 3;  // ROLE|ACCOUNT；首期 ROLE
+  uint64 receiver_id = 4;
+  string template_id = 5;
+  int32 template_version = 6;
+  string category = 7;
+  int32 priority = 8;
+  string sender_name = 9;
+  string title = 10;
+  string body = 11;
+  repeated MailDeliverAttachment attachments = 12;
+  int64 send_at = 13;
+  int64 expire_at = 14;
+  string trace_id = 15;
+  string session_token_override = 16;  // 预留；玩法内调可不填
+}
+
+message MailDeliverRsp {
+  bool ok = 1;
+  string message = 2;
+  string error_code = 3;
+  uint64 mail_id = 4;
+  bool idempotent_hit = 5;
+  int64 server_time_utc = 6;
+}
+
+// ---------- 阶段 5：地图骨架（无 AOI/Tick，仅 Placement + epoch）----------
+message EnterMapReq {
+  uint64 player_id = 1;
+  uint32 realm_id = 2;
+  uint64 map_template_id = 3;
+  uint64 map_instance_id = 4;  // 0=新建实例
+}
+
+message EnterMapRsp {
+  bool ok = 1;
+  string message = 2;
+  uint64 map_template_id = 3;
+  uint64 map_instance_id = 4;
+  string gamelogic_instance_id = 5;
+  uint64 owner_epoch = 6;
+  uint64 route_version = 7;
+}
+
+message LeaveMapReq {
+  uint64 player_id = 1;
+  uint64 map_instance_id = 2;
+}
+
+message LeaveMapRsp {
+  bool ok = 1;
+  string message = 2;
+}
+
+/** 哑元场景命令：校验玩家在图且 epoch 有效 */
+message MapPingReq {
+  uint64 player_id = 1;
+  uint64 map_instance_id = 2;
+}
+
+message MapPingRsp {
+  bool ok = 1;
+  string message = 2;
+  uint64 owner_epoch = 3;
+  uint32 player_count = 4;
+  string gamelogic_instance_id = 5;
+}
+
+// ---------- 阶段 6：World 中控骨架（聊天/好友占位，无完整玩法）----------
+message ChatSendReq {
+  uint64 player_id = 1;
+  string channel = 2;
+  string text = 3;
+}
+
+message ChatSendRsp {
+  bool ok = 1;
+  string message = 2;
+  string error_code = 3;
+}
+
+message FriendListReq {
+  uint64 player_id = 1;
+}
+
+message FriendListRsp {
+  bool ok = 1;
+  string message = 2;
+  string error_code = 3;
+}
+
+message GameRequest {
+  uint64 seq = 1;
+  string session_token = 2;
+  oneof body {
+    ConsumeItemReq consume_item = 10;
+    ReleaseSkillReq release_skill = 11;
+    GrantItemReq grant_item = 12;
+    LoginReq login = 20;
+    ValidateSessionReq validate_session = 21;
+    CheckOnlineReq check_online = 22;
+    LogoutReq logout = 23;
+    ReconnectReq reconnect = 24;
+    RegisterReq register = 25;
+    FlushBagReq flush_bag = 26;
+    MailboxSummaryReq mailbox_summary = 30;
+    MailListReq mail_list = 31;
+    MailGetReq mail_get = 32;
+    MailReadReq mail_read = 33;
+    MailClaimReq mail_claim = 34;
+    MailBatchClaimReq mail_batch_claim = 35;
+    MailFavoriteReq mail_favorite = 36;
+    MailBatchReadReq mail_batch_read = 37;
+    MailBatchDeleteReq mail_batch_delete = 38;
+    MailDeliverReq mail_deliver = 39;
+    EnterMapReq enter_map = 40;
+    LeaveMapReq leave_map = 41;
+    MapPingReq map_ping = 42;
+    ChatSendReq chat_send = 50;
+    FriendListReq friend_list = 51;
+    PushAckReq push_ack = 52;
+  }
+}
+
+message GameResponse {
+  uint64 seq = 1;
+  bool ok = 2;
+  string message = 3;
+  oneof body {
+    ConsumeItemRsp consume_item = 10;
+    ReleaseSkillRsp release_skill = 11;
+    GrantItemRsp grant_item = 12;
+    LoginRsp login = 20;
+    ValidateSessionRsp validate_session = 21;
+    CheckOnlineRsp check_online = 22;
+    LogoutRsp logout = 23;
+    ReconnectRsp reconnect = 24;
+    RegisterRsp register = 25;
+    FlushBagRsp flush_bag = 26;
+    MailboxSummaryRsp mailbox_summary = 30;
+    MailListRsp mail_list = 31;
+    MailGetRsp mail_get = 32;
+    MailReadRsp mail_read = 33;
+    MailClaimRsp mail_claim = 34;
+    MailBatchClaimRsp mail_batch_claim = 35;
+    MailFavoriteRsp mail_favorite = 36;
+    MailBatchReadRsp mail_batch_read = 37;
+    MailBatchDeleteRsp mail_batch_delete = 38;
+    MailDeliverRsp mail_deliver = 39;
+    EnterMapRsp enter_map = 40;
+    LeaveMapRsp leave_map = 41;
+    MapPingRsp map_ping = 42;
+    ChatSendRsp chat_send = 50;
+    FriendListRsp friend_list = 51;
+    PushAckRsp push_ack = 52;
+    ServerPushEnvelope server_push = 53;
+    FullStateSnapshotRsp full_snapshot = 54;
+  }
+}
