@@ -10,8 +10,9 @@
 | protoc | 25.3 |
 | Google.Protobuf | 3.25.3（`Assets/GameMesh/Plugins/Google.Protobuf.dll`） |
 | System.Runtime.CompilerServices.Unsafe | 6.0.0 |
-| 协议来源 | [madongxin/webserver](https://github.com/madongxin/webserver) `proto/game.proto` @ `145a64753aacd0d9e1dc7916edee81d15f183148` |
-| schema SHA-256 | `aed5c952a1aa817a13464af8ae05c14d14c19da0ceedd6b61663d2b39f255bcb` |
+| 协议来源 | [madongxin/webserver](https://github.com/madongxin/webserver) `proto/game.proto` @ `60542e51ed5f7e757fced13cb2a069c29739aa36` |
+| schema SHA-256 | `4c29a73aa7fbed19f122e122bc1832852e593f6bfaca0b7433249391e2ec643d` |
+| protocol_version | `1` |
 
 版本只写在 `Tools/GameMesh/versions.json`。不要手改 `Assets/GameMesh/Protocol/Generated/Game.cs`。
 
@@ -24,9 +25,7 @@
 5. 运行 `Tools/GameMesh/check_protocol_contract.*` 与 EditMode 测试。
 6. 两端用同一 schema hash 联调。
 
-当前已导入的必需类型包括：`PlayerAttributes`、`Vec3`、`EntitySnapshot`、`MoveReq`、`AoiDelta`、`PlayerMailSendReq`、`MailboxChangedNotify`。
-
-服务器仍未提供、客户端不会自造的类型：`ClientHelloReq`、`Heartbeat`、`WorldSnapshotReq`、`RespawnReq`。这些在 UI 和状态文档中标记为 `BLOCKED BY SERVER`。
+当前已导入 Hello、Heartbeat、WorldSnapshot、Respawn 以及既有 Register/Login/Move/AOI/Mail 类型。连接后必须先 `ClientHello`，再注册或登录。
 
 ## 运行 Demo
 

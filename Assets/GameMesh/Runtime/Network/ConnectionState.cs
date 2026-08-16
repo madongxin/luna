@@ -7,14 +7,15 @@ namespace GameMesh.Network
     {
         Disconnected = 0,
         Connecting = 1,
-        Connected = 2,
-        Authenticating = 3,
-        Authenticated = 4,
-        EnteringWorld = 5,
-        InWorld = 6,
-        Reconnecting = 7,
-        Closing = 8,
-        Resyncing = 9
+        Handshaking = 2,
+        Connected = 3,
+        Authenticating = 4,
+        Authenticated = 5,
+        EnteringWorld = 6,
+        InWorld = 7,
+        Reconnecting = 8,
+        Closing = 9,
+        Resyncing = 10
     }
 
     public enum DisconnectReason
@@ -41,7 +42,12 @@ namespace GameMesh.Network
                 },
                 [ConnectionState.Connecting] = new HashSet<ConnectionState>
                 {
-                    ConnectionState.Connected, ConnectionState.Disconnected, ConnectionState.Closing
+                    ConnectionState.Handshaking, ConnectionState.Disconnected, ConnectionState.Closing
+                },
+                [ConnectionState.Handshaking] = new HashSet<ConnectionState>
+                {
+                    ConnectionState.Connected, ConnectionState.Closing,
+                    ConnectionState.Disconnected, ConnectionState.Reconnecting
                 },
                 [ConnectionState.Connected] = new HashSet<ConnectionState>
                 {
@@ -76,7 +82,7 @@ namespace GameMesh.Network
                 },
                 [ConnectionState.Reconnecting] = new HashSet<ConnectionState>
                 {
-                    ConnectionState.Connecting, ConnectionState.Connected,
+                    ConnectionState.Connecting, ConnectionState.Handshaking, ConnectionState.Connected,
                     ConnectionState.Authenticated, ConnectionState.InWorld,
                     ConnectionState.Resyncing, ConnectionState.Closing, ConnectionState.Disconnected
                 },
@@ -119,8 +125,7 @@ namespace GameMesh.Network
         public const string MapHashMismatch = "MAP_HASH_MISMATCH";
         public const string ProtocolMissing = "PROTOCOL_MISSING_TYPE";
         public const string ServerError = "SERVER_ERROR";
-        public const string HelloBlocked = "BLOCKED_BY_SERVER_HELLO";
-        public const string SnapshotBlocked = "BLOCKED_BY_SERVER_SNAPSHOT";
+        public const string SessionReplaced = "ERR_SESSION_REPLACED";
     }
 
     public sealed class GameMeshException : Exception

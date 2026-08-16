@@ -104,8 +104,16 @@ namespace GameMesh.UI
             GUILayout.Label(
                 "client_seq  " + (client.Connection != null ? client.Connection.LastClientSeq.ToString() : "0") +
                 "    server_seq  " + client.Session.LastServerSeq +
-                "    协议  " + client.ProtocolSchemaShort, _label);
-            GUILayout.Label(client.ServerBlockedNotes, _hint);
+                "    RTT  " + client.LastRttMs + "ms", _label);
+            GUILayout.Label(
+                "协议  v" + client.ProtocolVersion +
+                "  " + client.ProtocolSchemaShort +
+                "    Hello  " + (client.HelloOk ? "OK" : "未完成") +
+                "    心跳  " + (client.HeartbeatOk ? "OK" : "-") +
+                "    时差  " + client.ServerTimeOffsetMs + "ms", _hint);
+            GUILayout.Label(
+                "生命  " + (client.Session.Attributes.LifeState ?? "ALIVE") +
+                (client.Session.SessionReplaced ? "    已被顶号" : ""), _hint);
 
             if (!string.IsNullOrEmpty(client.LastErrorUi))
                 GUILayout.Label(client.LastErrorUi, _statusErr);
@@ -155,6 +163,12 @@ namespace GameMesh.UI
             GUILayout.Label("HP  " + a.Hp + " / " + a.MaxHp + "    MP  " + a.Mp + " / " + a.MaxMp, _label);
             GUILayout.Label("攻击  " + a.Attack + "    法强  " + a.SpellPower + "    防御  " + a.Defense + "    魔抗  " + a.MagicResist, _label);
             GUILayout.Label("暴击  " + a.CritRate + " / " + a.CritDamage + "    移速  " + a.MoveSpeed + "    攻速  " + a.AttackSpeed, _label);
+            if (client.Session.IsDead)
+            {
+                GUILayout.Label("角色已死亡，镜头和界面仍可用，移动已禁用", _statusWarn);
+                if (GUILayout.Button("复  活", _loginStyle, GUILayout.Height(40)))
+                    _ = client.RespawnAsync();
+            }
         }
 
         void DrawMail(GameMeshClient client)
@@ -242,6 +256,7 @@ namespace GameMesh.UI
             {
                 case ConnectionState.Disconnected: return "未连接";
                 case ConnectionState.Connecting: return "连接中";
+                case ConnectionState.Handshaking: return "协议握手中";
                 case ConnectionState.Connected: return "已连接";
                 case ConnectionState.Authenticating: return "登录中";
                 case ConnectionState.Authenticated: return "已登录";

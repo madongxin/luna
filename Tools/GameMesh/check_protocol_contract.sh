@@ -34,31 +34,33 @@ if manifest.get("protoc_version") != versions["protoc"]:
     raise SystemExit("protoc version drift")
 if manifest.get("google_protobuf") != versions["google_protobuf"]:
     raise SystemExit("google_protobuf version drift")
+if int(manifest.get("protocol_version", 0)) != int(versions.get("protocol_version", 0)):
+    raise SystemExit("protocol_version drift")
+if versions.get("min_supported_protocol_version") is not None and int(manifest.get("min_supported_protocol_version", 0)) != int(versions.get("min_supported_protocol_version")):
+    raise SystemExit("min_supported_protocol_version drift")
+desc = pathlib.Path(r"$ROOT/Assets/GameMesh/Protocol/game.desc")
+if desc.exists() and manifest.get("descriptor_sha256"):
+    desc_sha = hashlib.sha256(desc.read_bytes()).hexdigest()
+    if manifest.get("descriptor_sha256", "").lower() != desc_sha:
+        raise SystemExit("descriptor hash drift")
 cs = generated.read_text(encoding="utf-8")
 proto = schema.read_text(encoding="utf-8")
 if "namespace GameMesh.Protocol" not in cs:
     raise SystemExit("generated C# namespace drift")
 if "source: game.proto" not in cs:
     raise SystemExit("generated C# is not from game.proto")
-required = [
-    "RegisterReq", "LoginReq", "LogoutReq", "ReconnectReq", "PushAckReq",
-    "PlayerAttributes", "Vec3", "EntitySnapshot",
-    "EnterMapReq", "LeaveMapReq", "MoveReq", "AoiDelta",
-    "PlayerMailSendReq", "MailboxSummaryReq", "MailListReq", "MailGetReq",
-    "MailboxChangedNotify", "ServerPushEnvelope",
-]
+import re
+required = list(versions.get("required_types") or [])
 missing = []
 for t in required:
-    if f"message {t}" not in proto and f"message {t} " not in proto:
-        # tolerate newline after name
-        import re
-        if not re.search(rf"message\s+{t}\b", proto):
-            missing.append(t)
+    if not re.search(rf"message\s+{t}\b", proto):
+        missing.append(t)
     if f"class {t}" not in cs:
         missing.append(t + "(C#)")
-for token in ("EnterMap", "GetSelfProfile", "PlayerMailSend", "MailboxChanged"):
+for token in ("error_code", "retryable", "EnterMap", "GetSelfProfile", "PlayerMailSend",
+              "MailboxChanged", "ClientHello", "Heartbeat", "WorldSnapshot", "Respawn"):
     if token not in cs:
-        missing.append("oneof " + token)
+        missing.append("field/oneof " + token)
 if missing:
     raise SystemExit("required types missing: " + ", ".join(missing))
 if manifest.get("required_types_missing"):
@@ -73,9 +75,13 @@ if source:
     src = next((p for p in candidates if p.exists()), None)
     if src is None:
         raise SystemExit(f"server game.proto not found under {source}")
-    server_sha = hashlib.sha256(src.read_bytes()).hexdigest()
-    if server_sha != client_sha:
-        raise SystemExit(f"server/client schema hash mismatch server={server_sha} client={client_sha}")
+    def lf_sha(p):
+        text = p.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+        return hashlib.sha256(text).hexdigest()
+    server_sha = lf_sha(src)
+    client_canon = lf_sha(schema)
+    if server_sha != client_canon:
+        raise SystemExit(f"server/client schema hash mismatch server={server_sha} client={client_canon}")
     print(f"server schema matches client: {server_sha}")
 print(f"protocol contract OK schema_sha256={client_sha} commit={manifest.get('source_commit')}")
 PY

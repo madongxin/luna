@@ -20,6 +20,17 @@ if [[ -z "$PROTOC" ]]; then
     fi
     if [[ ! -x "$CACHE/protoc-$VERSION/bin/protoc" ]]; then
       curl -L "https://github.com/protocolbuffers/protobuf/releases/download/v${VERSION}/${ZIP}" -o "$CACHE/$ZIP"
+      python3 - <<PY
+import hashlib, json, pathlib, sys
+versions = json.loads(pathlib.Path("$ROOT/Tools/GameMesh/versions.json").read_text(encoding="utf-8"))
+key = "osx_x86_64" if "$ZIP".find("osx") >= 0 else "linux_x86_64"
+expected = (versions.get("protoc_sha256") or {}).get(key) or ""
+path = pathlib.Path("$CACHE/$ZIP")
+actual = hashlib.sha256(path.read_bytes()).hexdigest()
+if expected and actual != expected.lower():
+    raise SystemExit(f"protoc zip SHA-256 mismatch expected={expected} actual={actual}")
+print(f"protoc zip sha256={actual}")
+PY
       mkdir -p "$CACHE/protoc-$VERSION"
       unzip -o "$CACHE/$ZIP" -d "$CACHE/protoc-$VERSION"
     fi

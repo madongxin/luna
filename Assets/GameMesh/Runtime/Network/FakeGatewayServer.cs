@@ -242,12 +242,78 @@ namespace GameMesh.Network
                 case GameRequest.BodyOneofCase.PushAck:
                     rsp.PushAck = new PushAckRsp { Ok = true, TrimmedToSeq = req.PushAck.AckServerSeq };
                     break;
+                case GameRequest.BodyOneofCase.ClientHello:
+                    rsp.ServerHello = new ServerHelloRsp
+                    {
+                        Ok = true,
+                        ProtocolVersion = 1,
+                        MinSupportedProtocolVersion = 1,
+                        SchemaSha256 = req.ClientHello.SchemaSha256 ?? "",
+                        HeartbeatIntervalMs = 1000,
+                        IdleTimeoutMs = 15000,
+                        ServerTimeMs = 1,
+                        ServerBuild = "fake-gw"
+                    };
+                    break;
+                case GameRequest.BodyOneofCase.Heartbeat:
+                    rsp.Heartbeat = new HeartbeatRsp
+                    {
+                        Ok = true,
+                        ServerTimeMs = 2,
+                        EchoMs = req.Heartbeat.EchoMs,
+                        ServerRecvMs = 2
+                    };
+                    break;
+                case GameRequest.BodyOneofCase.WorldSnapshot:
+                    rsp.FullSnapshot = SampleSnapshot(req.WorldSnapshot.PlayerId, req.WorldSnapshot.LastAppliedServerSeq);
+                    break;
+                case GameRequest.BodyOneofCase.Respawn:
+                    rsp.Respawn = new RespawnRsp
+                    {
+                        Ok = true,
+                        LifeState = "ALIVE",
+                        Self = new EntitySnapshot
+                        {
+                            PlayerId = req.Respawn.PlayerId,
+                            Position = new Vec3 { X = 1, Y = 0, Z = 1 },
+                            Hp = 100,
+                            MaxHp = 100,
+                            StateSeq = 1
+                        }
+                    };
+                    break;
                 default:
                     rsp.Ok = true;
                     break;
             }
 
             return rsp;
+        }
+
+        static FullStateSnapshotRsp SampleSnapshot(ulong playerId, ulong baseline)
+        {
+            return new FullStateSnapshotRsp
+            {
+                Ok = true,
+                PlayerId = playerId != 0 ? playerId : 10001,
+                BaselineServerSeq = baseline + 1,
+                SnapshotVersion = 1,
+                RealmId = 1,
+                MapTemplateId = 1001,
+                MapInstanceId = 5001,
+                LifeState = "ALIVE",
+                RecoveryReason = "INSTANCE_LIVE",
+                Profile = SampleProfile(playerId != 0 ? playerId : 10001),
+                Self = new EntitySnapshot
+                {
+                    PlayerId = playerId != 0 ? playerId : 10001,
+                    PlayerName = "Luna",
+                    Position = new Vec3 { X = -28.5f, Y = -0.244f, Z = -7.25f },
+                    Hp = 80,
+                    MaxHp = 100,
+                    StateSeq = 1
+                }
+            };
         }
 
         static PlayerAttributes SampleProfile(ulong playerId)

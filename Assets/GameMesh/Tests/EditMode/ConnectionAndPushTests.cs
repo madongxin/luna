@@ -19,6 +19,10 @@ namespace GameMesh.Tests.EditMode
                 ConnectionStateMachine.Transition(ConnectionState.Disconnected, ConnectionState.Authenticated));
             Assert.AreEqual(ConnectionState.Connecting,
                 ConnectionStateMachine.Transition(ConnectionState.Disconnected, ConnectionState.Connecting));
+            Assert.AreEqual(ConnectionState.Handshaking,
+                ConnectionStateMachine.Transition(ConnectionState.Connecting, ConnectionState.Handshaking));
+            Assert.AreEqual(ConnectionState.Connected,
+                ConnectionStateMachine.Transition(ConnectionState.Handshaking, ConnectionState.Connected));
         }
 
         [Test]
@@ -37,6 +41,7 @@ namespace GameMesh.Tests.EditMode
                 try
                 {
                     conn.ConnectAsync("127.0.0.1", server.Port, CancellationToken.None).GetAwaiter().GetResult();
+                    Assert.AreEqual(ConnectionState.Handshaking, conn.State);
                     var t1 = conn.RequestAsync(new GameRequest { Register = new RegisterReq { DeviceId = "a" } },
                         TimeSpan.FromSeconds(3), CancellationToken.None);
                     var t2 = conn.RequestAsync(new GameRequest { Login = new LoginReq { PlayerId = 1 } },
@@ -147,7 +152,7 @@ namespace GameMesh.Tests.EditMode
                 try
                 {
                     conn.ConnectAsync("127.0.0.1", server.Port, CancellationToken.None).GetAwaiter().GetResult();
-                    Assert.AreEqual(ConnectionState.Connected, conn.State);
+                    Assert.AreEqual(ConnectionState.Handshaking, conn.State);
                     server.SendRawAsync(new byte[] { 0xff, 0x00, 0xab, 0xcd, 0x12, 0x34 }).GetAwaiter().GetResult();
                     SpinPump(dispatcher, () => conn.State == ConnectionState.Disconnected, 3000);
                     Assert.AreEqual(ConnectionState.Disconnected, conn.State);

@@ -39,13 +39,27 @@ jobs:
       - name: Strip CI-incompatible videos
         run: find Assets -type f \( -iname '*.mov' -o -iname '*.mp4' \) -print -delete || true
       - name: Read Unity version
-        id: uv
         run: |
           ver=$(tr -d '\r' < ProjectSettings/ProjectVersion.txt | awk -F: '/m_EditorVersion:/{print $2}' | xargs)
-          echo "project=$ver"
-          echo "unity=2022.3.62f1" >> "$GITHUB_OUTPUT"
+          echo "ProjectVersion=$ver runner=2022.3.62f1"
+      - name: License gate
+        id: lic
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+        run: |
+          if [ -z "$UNITY_LICENSE" ]; then
+            echo "has=0" >> "$GITHUB_OUTPUT"
+            echo "Unity EditMode/PlayMode/Integration Build NOT RUN: UNITY_LICENSE secret is not configured"
+          else
+            echo "has=1" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Release requires Unity license
+        if: steps.lic.outputs.has != '1' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+        run: |
+          echo "BLOCKED: UNITY_LICENSE is required on main/tags"
+          exit 1
       - name: EditMode
-        if: ${{ secrets.UNITY_LICENSE != '' }}
+        if: steps.lic.outputs.has == '1'
         uses: game-ci/unity-test-runner@v4
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
@@ -58,7 +72,7 @@ jobs:
           customParameters: -testFilter GameMesh
           artifactsPath: TestResults
       - name: PlayMode
-        if: ${{ secrets.UNITY_LICENSE != '' }}
+        if: steps.lic.outputs.has == '1'
         uses: game-ci/unity-test-runner@v4
         env:
           UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
@@ -70,11 +84,19 @@ jobs:
           testMode: PlayMode
           customParameters: -testFilter GameMesh
           artifactsPath: TestResults
-      - name: License missing
-        if: ${{ secrets.UNITY_LICENSE == '' }}
-        run: |
-          echo "Unity EditMode/PlayMode NOT RUN: UNITY_LICENSE secret is not configured"
-          exit 0
+      - name: Integration build
+        if: steps.lic.outputs.has == '1'
+        uses: game-ci/unity-builder@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: .
+          unityVersion: 2022.3.62f1
+          targetPlatform: StandaloneLinux64
+          buildName: GameMeshClient
+          allowDirtyBuild: false
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -83,6 +105,7 @@ jobs:
           path: |
             TestResults/
             Logs/
+            Builds/
           if-no-files-found: ignore
 
   e2e:
@@ -93,12 +116,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: E2E requires live Gateway
         run: |
-          chmod +x Tools/GameMesh/run_two_clients_e2e.sh
+          chmod +x Tools/GameMesh/run_two_clients_e2e.sh Tools/GameMesh/run_session_replaced_e2e.sh Tools/GameMesh/check_protocol_contract.sh Tools/GameMesh/import_server_contract.sh Tools/GameMesh/generate_csharp_proto.sh
           set +e
           Tools/GameMesh/run_two_clients_e2e.sh
           code=$?
           if [ "$code" -eq 2 ]; then
             echo "E2E NOT RUN: no GAMEMESH_E2E_GATEWAY / client binary / live Gateway"
+            if [ "${{ github.ref }}" = "refs/heads/main" ] || [[ "${{ github.ref }}" == refs/tags/* ]]; then
+              echo "BLOCKED: live dual-Unity E2E is required on main/tags"
+              exit 1
+            fi
             exit 0
           fi
           exit "$code"

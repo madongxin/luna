@@ -1,94 +1,111 @@
-# Luna Unity 客户端基础能力完善：Cursor 分阶段执行提示词
+# Luna Unity 客户端基础版收口：Cursor 分阶段执行提示词
 
 > 目标仓库：`https://github.com/madongxin/luna`  
 > 目标分支：`main`  
-> 本次审计基线：`084fcd4cc133974b390c4e234b236cf34cd931d2`  
-> 协议事实源：`https://github.com/madongxin/webserver` 的 `proto/game.proto`  
-> 本次服务器审计基线：`145a64753aacd0d9e1dc7916edee81d15f183148`
+> 本次审计基线：`38a0042a62a1e3975a5315a7e742dbc5342102f4`  
+> 服务器仓库：`https://github.com/madongxin/webserver`  
+> 服务器审计基线：`60542e51ed5f7e757fced13cb2a069c29739aa36`  
+> Unity 当前 schema SHA-256：`aed5c952a1aa817a13464af8ae05c14d14c19da0ceedd6b61663d2b39f255bcb`  
+> 服务器当前 schema SHA-256：`4c29a73aa7fbed19f122e122bc1832852e593f6bfaca0b7433249391e2ec643d`
 
-> 远端复核：2026-08-15 再次执行 `git pull --ff-only origin main` 和
-> `git ls-remote origin refs/heads/main`，客户端远端仍为 `084fcd4`，没有发现用户所说的
-> 后续提交；服务器远端仍为 `145a647`。如果执行时已出现新 HEAD，Cursor 必须先逐项确认
-> 缺口是否已经修复，再决定修改范围，禁止重复实现。
+请把本文件整体交给 Unity 客户端仓库中的 Cursor。先让服务器完成其 S0/S1 并导出最终契约，再按 C0 → C1 → C2 → C3 顺序执行。前一阶段未通过时停止。
 
-请把本文件整体交给 Cursor。Cursor 必须按 C0 → C1 → C2 → C3 顺序执行；前一阶段未通过时不能继续下一阶段。
+## 1. 本轮目标
 
-## 1. 最终目标
+把当前 Unity Demo 收口为能与最新 GameMesh 服务器真实联调的基础客户端：
 
-把当前 Unity Demo 从“已有网络代码和联调 UI”完善为真正能与 GameMesh 服务器联调的基础客户端：
+- 连接后先完成协议握手，再允许注册、登录和重连。
+- 心跳、RTT、服务器时间差、断线检测和有界重连可用。
+- 真实注册、登录、权威属性、进图、移动、AOI、50 人公共图语义、邮件和 Logout 可用。
+- Push 序号缺口和跨 Gateway 重连后使用完整世界快照恢复。
+- 能显示被顶号、协议/地图/配置不兼容、过载等稳定错误。
+- 两个真实 Unity 进程对最新服务器执行自动化 E2E 并返回可靠退出码。
 
-- 从服务器唯一协议事实源生成 C#，杜绝协议分叉。
-- 真实完成注册、登录、资料加载、进图、移动、AOI、邮件和 Logout。
-- 断线后能重连原会话、恢复原地图和 AOI，不盲目申请新地图。
-- 处理协议版本、心跳、统一错误码、Push 序号缺口和世界快照。
-- 两个真实 Unity 进程的 E2E 有自动断言和可靠退出码。
-- 密码/Token 不落日志和普通本地配置，所有 Unity 对象只在主线程访问。
+## 2. 审计结论：保留已经完成的实现
 
-## 2. 已确认的现状与缺口
+当前客户端已经完成或基本完成：
 
-当前版本已经有：
+- 4 字节大端 ProtoFraming、pending request、Push 分流、请求超时和有界队列。
+- 注册、登录、Logout、Reconnect 基础调用与 Session 状态机。
+- `LoginRsp.profile/GetSelfProfile` 到玩家权威属性映射。
+- 真实 EnterMap version/hash、spawn、self 和 AOI snapshot 应用。
+- 真实 `MoveReq/MoveRsp`、移动限频与服务器位置校正。
+- 真实 `AoiDelta` Enter/Move/Leave 和远端实体模型。
+- 真实玩家邮件发送、邮箱查询、MailboxChanged 触发刷新。
+- Push ACK、gap 检测、`Resyncing` 状态。
+- 安全的本地身份存储，不保存 password/token。
+- 自动场景与双客户端结果文件断言框架。
+- 协议自检脚本、EditMode/PlayMode 测试和 CI 框架。
 
-- `GameConnection`、4 字节大端长度帧、请求 seq/pending、收发循环。
-- 注册、登录、Logout、Reconnect、EnterMap、邮箱查询 UI。
-- `AoiWorld`、远端 Capsule、插值、MoveSampler、PushReliability。
-- 地图导出文件，且当前地图 JSON 与服务器 hash 一致。
-- EditMode/PlayMode 测试脚本和双客户端启动脚本框架。
+不要重新设计网络层，不要手写第二套 DTO 协议，不要重做已接通的 Move/AOI/Mail。
 
-但当前代码不能视为真实联调完成：
+## 3. 当前阻塞项
 
-1. 客户端 `Assets/GameMesh/Protocol/Schema/game.proto` 的 hash 是旧值，manifest 指向服务器旧提交 `37b1977...`；服务器最新 schema 已增加 PlayerAttributes、Vec3、EntitySnapshot、MoveReq、AoiDelta、PlayerMailSendReq、MailboxChangedNotify。
-2. `Generated/Game.cs` 仍由旧 schema 生成，新的协议类型在客户端不可用。
-3. `Protocol_ReportsMissingUnitySliceTypes` 测试反而断言这些类型必须缺失，目标已经过时。
-4. `GameMeshWorldBinder.MaybeReportMove()` 只调用 `MarkSent()`，没有构造并发送 `MoveReq`。
-5. `ApplyInnerPush()` 没有把 `AoiDelta` 映射到 `AoiWorld`，所以远端玩家不会由真实 Push 创建/移动/销毁。
-6. `MailClient.SendAsync()` 只返回“mapping 未编译”的文本，没有发送 `PlayerMailSendReq`。
-7. `MailboxChangedNotify` 未被处理；邮箱主要靠固定 10 秒轮询。
-8. EnterMap 没发送真实 `map_data_version/map_data_sha256`，hash 校验只是检查本地字符串是否以 `FORCE_MISMATCH` 开头。
-9. 登录响应中的服务器权威 PlayerAttributes 未真正应用到 Session。
-10. Push 序号出现 gap 时只打日志，没有请求 AOI/世界快照。
-11. Reconnect 后如果已有地图会再次调用 `EnterMapAsync()`，该方法固定 `map_instance_id=0`，可能破坏精确恢复语义。
-12. `-gamemeshAutoScenario` 只被解析，没有执行自动场景。
-13. `run_two_clients_e2e.ps1` 等待 90 秒后强杀两个进程并返回 0，只证明进程启动，不证明登录、AOI、邮件或重连成功。
-14. CI 主要做 Asset Check，没有强制 GameMesh EditMode、PlayMode、协议漂移和 Integration Build。
+1. 当前 Unity manifest 的 `source_commit` 是服务器 `145a647...`，不是最新 `60542e5`。
+2. 客户端与服务器 schema hash 不一致；`check_protocol_contract.sh ../webserver` 已会正确失败。
+3. 客户端没有最新的 `ClientHello/Heartbeat/WorldSnapshot/Respawn` 生成类型。
+4. 服务器 Formal 模式默认要求 Hello，因此当前 Unity 无法开始注册或登录。
+5. Push gap 和 Reconnect `NeedFullSnapshot` 当前只进入 `Resyncing` 并打印“BLOCKED BY SERVER”，不会真正请求和应用世界快照。
+6. 当前 `FullStateSnapshotRsp` 旧版只应用 baseline，没有恢复 profile、map route、self、AOI、life_state。
+7. `GameErrorCatalog` 只读取部分子响应错误，没有优先处理服务器新增的顶层 `error_code/retryable/server_time_ms/trace_id`。
+8. 没有明确的重复登录顶号通知处理；普通网络断开与 session replaced 无法区分。
+9. CI 缺 Unity License 时会把 Unity tests 跳过并成功；E2E 缺 live Gateway 时也会被视为非阻塞，不能作为发布证据。
+10. 历史文档仍写旧 HEAD/dirty/未 push，真实双 Unity E2E 尚未在最新服务器运行。
+11. 当前 `Tools/GameMesh/check_protocol_contract.sh` 未保留可执行位，直接运行会退出 126；用 `bash` 调用可通过客户端自检，但发布脚本应统一修正文件权限。
 
-## 3. 全局执行规则
+## 4. 全局执行规则
 
 开始前必须：
 
-1. 阅读仓库 README、`Assets/GameMesh/`、`Tools/GameMesh/`、asmdef、测试、Packages 和 ProjectSettings。
-2. 执行：
+```bash
+git status --short
+git rev-parse HEAD
+git log -5 --oneline
+```
 
-   ```bash
-   git status --short
-   git rev-parse HEAD
-   git log -5 --oneline
-   ```
+同时读取同级或用户指定的服务器仓库：
 
-3. 检查同级或用户指定路径中的服务器仓库，记录服务器 HEAD 和 `proto/game.proto` hash。
-4. 如果代码晚于审计基线，先验证缺口是否已修复，禁止重复实现。
-5. 保留用户改动，不执行破坏性 Git 操作。
-6. 直接修改代码、生成物、脚本、测试和文档，不要只给建议。
-7. 不提交、不 push，除非用户在 Cursor 会话中明确授权。
-8. 不手工编辑 `Generated/Game.cs`，只能由固定版本 protoc 生成。
-9. 不在 Unity 主线程阻塞 `.Wait()`、`.Result` 或同步 socket；不从后台线程操作 GameObject/Transform/UI。
-10. 不把 password、credential、完整 token/session 写入日志、PlayerPrefs、命令结果或截图。
-11. 所有自动化脚本缺环境、缺二进制、超时、Unity 崩溃、断言缺失时必须非零退出。
-12. 每阶段更新 `docs/GameMesh_Client_Foundation_Status.md`，记录真实运行结果。
+```bash
+git -C <server_repo> status --short
+git -C <server_repo> rev-parse HEAD
+sha256sum <server_repo>/proto/game.proto
+```
+
+约束：
+
+- 若代码晚于审计基线，先确认缺口，禁止重复实现。
+- 保留用户已有改动，不执行破坏性 Git 操作。
+- 直接修改代码、生成物、测试、脚本和文档，不要只给建议。
+- 不提交、不 push，除非用户在本次 Cursor 会话中明确授权。
+- `Assets/GameMesh/Protocol/Generated/Game.cs` 只能由固定 protoc 生成，不得手工编辑。
+- 服务器 `proto/game.proto` 是公网协议唯一事实源；Unity 不维护分叉 schema。
+- 不在 Unity 主线程执行 `.Wait()`、`.Result` 或同步 Socket；后台线程不得操作 GameObject、Transform、UI 或 Unity API。
+- 不记录 password、credential、完整 token/session。
+- 所有网络流程必须有 timeout、CancellationToken、single-flight 和可恢复状态。
+- 必需测试缺 Unity、缺 License、缺客户端 Build、缺 Gateway 或超时，发布门禁必须非零并写 `BLOCKED/NOT RUN`，不能算 PASS。
 
 ---
 
-# C0：立即消除协议漂移
+# C0：导入服务器最终协议，先恢复两端兼容
 
-## C0.1 导入最新服务器契约
+## C0.1 导入而不是复制粘贴
 
-从服务器仓库执行现有导出脚本，或直接使用服务器导出目录：
+服务器完成 S0/S1 后，从服务器导出：
 
 ```bash
 cd <server_repo>
 ./scripts/export_unity_protocol.sh <export_dir>
 ```
 
-然后在 Unity 仓库导入并生成：
+在 Unity 仓库执行：
+
+```bash
+Tools/GameMesh/import_server_contract.sh <export_dir>
+Tools/GameMesh/generate_csharp_proto.sh
+Tools/GameMesh/check_protocol_contract.sh <server_repo>
+```
+
+更新并提交到工作区：
 
 ```text
 Assets/GameMesh/Protocol/Schema/game.proto
@@ -99,403 +116,316 @@ Assets/GameMesh/Protocol/protocol_manifest.json
 
 要求：
 
-- 客户端 schema SHA-256 必须与服务器导出 manifest 完全一致。
-- manifest 记录服务器 git SHA、protocol version、schema hash、descriptor hash、protoc version 和 Google.Protobuf version。
-- `required_types_missing` 必须为空。
-- 生成物 namespace 必须是 `GameMesh.Protocol`。
-- 固定 protoc 和 Google.Protobuf 版本，`Tools/GameMesh/versions.json` 是单一版本配置，脚本不能各写一份。
-- `import_server_contract.ps1` 遇到缺少必需类型必须失败，不能只 Warning 后退出 0。
-- 提供 Linux/macOS 可运行的导入/生成方式；不能让 `.sh` 只依赖 `powershell.exe`。可使用本机 `protoc` 或下载固定平台包，但要校验 SHA-256。
-- 不要把缓存 zip、临时生成目录提交到 Git。
+- manifest 的 `source_commit` 必须等于实际服务器 HEAD。
+- schema hash、descriptor hash、protocol version、frame format、max frame bytes 完全一致。
+- 固定 protoc 与 Google.Protobuf 版本；生成脚本校验下载包 SHA-256。
+- import 发现缺少 required type、旧 server commit、hash 不一致或生成物漂移时非零退出。
+- Linux/macOS 脚本不能只转调 PowerShell；Windows 脚本与 `.sh` 语义一致。
+- 所有对外 `.sh` 脚本必须提交可执行位，并且不依赖调用者当前目录。
+- 不导入服务器内部 `session.proto/gamelogic_rpc.proto/gamedb.proto`。
 
-## C0.2 修正协议测试
-
-删除“新类型应该缺失”的过时断言，改为：
-
-- 所有 RequiredTypes 必须存在。
-- client schema hash == manifest schema hash。
-- server export schema hash == client schema hash。
-- `Game.cs` 由当前 `game.proto` 生成。
-- oneof 中存在 EnterMap、Move、AoiDelta、PlayerMailSend、MailboxChanged。
-- 帧格式和最大帧长一致。
-
-增加一键命令：
+`required_types` 增加：
 
 ```text
-Tools/GameMesh/check_protocol_contract.ps1
-Tools/GameMesh/check_protocol_contract.sh
+ClientHelloReq ServerHelloRsp HeartbeatReq HeartbeatRsp
+FullStateSnapshotRsp WorldSnapshotReq RespawnReq RespawnRsp
+SessionReplacedNotify（如果服务器 S1 增加）
 ```
 
-任何漂移必须非零退出。
+并保留现有 Register/Login/Move/AOI/Mail 类型检查。
 
-## C0.3 修正文档
+## C0.2 协议回归测试
 
-更新 `docs/GameMesh_Unity_Integration.md`：
+新增或更新 EditMode 测试：
 
-- 删除“服务器尚无 MoveReq/AoiDelta/PlayerMailSendReq”等过时描述。
-- 写入实际服务器 commit 和 schema hash。
-- 明确协议更新顺序：服务器修改 → 导出 → Unity 导入 → 生成 → 测试 → 两端联调。
+- 新类型和 oneof 实际存在。
+- client schema == manifest == server schema。
+- 顶层错误字段存在。
+- append-only descriptor 与客户端生成类型一致。
+- 任一 hash 被篡改时脚本必须失败。
 
 ## C0 验收
 
-至少运行：
-
 ```bash
-Tools/GameMesh/check_protocol_contract.sh <server_repo_or_export>
-Tools/GameMesh/run_editmode_tests.sh
+bash Tools/GameMesh/check_protocol_contract.sh <server_repo>
+bash Tools/GameMesh/run_editmode_tests.sh
 ```
 
-Windows 可运行对应 `.ps1`。缺 Unity Editor 时必须报告 `NOT RUN`，不能标通过。
-
-C0 未通过时停止，不进入 C1。
+C0 未通过时不得继续写业务适配。
 
 ---
 
-# C1：把现有 UI、移动、AOI 和邮件接到真实协议
+# C1：握手、心跳、时间同步和统一错误
 
-## C1.1 玩家资料
+## C1.1 连接后强制 Hello
 
-登录成功后：
-
-- 使用 `LoginRsp.profile` 更新 `Session.Attributes`。
-- 如果服务器兼容路径没有 profile，则调用 `GetSelfProfileReq`，失败时明确显示错误，不能悄悄使用本地魔法默认值冒充服务器值。
-- 应用 player_name、HP/MP、攻击、法强、防御、魔抗、暴击、移速、攻速和 stats_version。
-- 只有 `FromServer=true` 才修改 FPS Player 的权威属性显示。
-- `player_id` 以服务器返回/连接会话为准。
-
-## C1.2 真实 EnterMap 和地图一致性
-
-EnterMap 请求必须填写：
+连接状态调整为：
 
 ```text
-realm_id
-map_template_id
-map_instance_id（首次公共图为 0；重连时使用服务器恢复语义）
-map_data_version
-map_data_sha256
-operation_id
+Disconnected → Connecting → Handshaking → Connected
+→ Authenticating → Authenticated → EnteringWorld → InWorld
+```
+
+TCP 建立后立即发送 `ClientHelloReq`：
+
+```text
+protocol_version
+schema_sha256
+client_version
+platform
+build_channel
+capabilities
 ```
 
 要求：
 
-- 从导出的 `maps/1001.grid.json` 或配置资产读取真实 version/hash。
-- 校验 `EnterMapRsp.map_data_version` 和 `map_data_sha256` 与本地完全相同。
-- 不再使用 `FORCE_MISMATCH` 字符串模拟正式校验；负测试应构造真实错误 hash 请求。
-- 应用 `spawn_position/spawn_yaw` 到本地角色。
-- 应用 `self` 和 `aoi_snapshot`，原子替换 `AoiWorld`。
-- 地图 hash 不一致时阻止进入 InWorld，并显示稳定 error_code。
-- 同一 EnterMap operation_id 重试不能生成重复占位。
+- 收到成功 `ServerHelloRsp` 前禁止 Register/Login/Reconnect/普通业务请求。
+- Hello 只能 single-flight，使用独立 timeout 和连接 generation。
+- 校验服务器 protocol、schema、最小客户端版本和必要 capability。
+- 不匹配时 fail-closed，显示稳定中文错误，不自动绕过。
+- 删除运行时代码中的 `ServerBlockedNotes`、`HelloBlocked` 等旧占位逻辑。
+- 不使用服务器 legacy no-hello 开关作为正式兼容方案。
 
-## C1.3 真实移动上报和服务器校正
+## C1.2 Heartbeat、RTT 与时间差
 
-新增明确的异步入口，例如：
+按 `ServerHelloRsp.heartbeat_interval_ms` 启动心跳：
 
-```csharp
-Task SendMoveAsync(Vector3 position, float yaw, CancellationToken ct)
+- 使用单调时钟计算 RTT，不能用可回拨墙钟测延迟。
+- 通过请求发送时间、响应时间和 server time 估算 `server_time_offset_ms`。
+- 保存平滑 RTT、jitter、last heartbeat received。
+- 心跳不能重叠；连接 generation 改变后旧 timer/callback 自动失效。
+- 连续超时或超过 idle timeout 时进入 Reconnecting，不制造多个重连任务。
+- 断开、Logout、OnDestroy 时取消 timer，不泄漏 Task。
+
+## C1.3 顶层公开错误
+
+统一错误解析顺序：
+
+1. `GameResponse.error_code/retryable/server_time_ms/trace_id`。
+2. 对应子响应的 error_code（兼容旧服务器）。
+3. 本地传输错误。
+
+更新 `GameErrorCatalog`，至少覆盖：
+
+```text
+协议/客户端版本不兼容
+未认证/会话过期/旧 fence
+地图版本不匹配/地图满/路由过期
+AOI 需要全量同步
+邮件限流/收件人不存在
+请求过载/限流/依赖不可用
+重复登录被顶号
 ```
 
-`GameMeshWorldBinder` 在 `MoveSampler.ShouldSend()` 成功后必须：
+UI 以 error_code 为准，不依赖服务器英文 message；显示简短 trace_id 仅用于联调，日志仍需脱敏。
 
-- 构造 `MoveReq`，填写 player_id、map_instance_id、position、yaw、client_time_ms。
-- 真正调用 `RequestAsync`。
-- 只有成功入队后才 `MarkSent`。
-- 保证同一玩家移动请求有界，不能无限创建未等待 Task。
-- 处理 `MoveRsp`：正常误差平滑，超过 snap 阈值立即校正，旧 state_seq 忽略。
-- `ERR_MOVE_TOO_FAST/ERR_UNWALKABLE/ERR_OUT_OF_BOUNDS` 触发权威位置校正和可读提示。
-- 不在后台线程直接修改 Transform。
+## C1.4 最小配置版本
 
-## C1.4 真实 AOI Push
+读取服务器 Hello 或配置清单中的：
 
-在 `ApplyInnerPush()` 中处理 `AoiDelta`：
+```text
+gameplay_config_version
+map_manifest_version
+map data_version/sha256
+```
 
-- 将每个 `AoiEvent` 映射为本地 Enter/Move/Leave。
-- 使用 `player_id` 作为当前基础实体 ID，除非协议后续提供独立 entity_id。
-- 校验 map_instance_id，不接受其他地图的 Push。
-- 忽略自己作为 remote entity。
-- 使用 state_seq 去重和拒绝倒退。
-- Enter 幂等创建，Move 插值，Leave 幂等销毁。
-- 场景卸载、Logout、换图、断线需要清理或冻结远端实体。
-- 可靠 Enter/Leave 成功应用后再 ACK；解析或应用失败不能先 ACK。
-
-修正 DTO：优先直接使用生成的协议类型或集中 mapper，不能维护第二份会漂移的协议模型。
-
-## C1.5 真实玩家邮件
-
-实现 `MailClient.SendAsync()`：
-
-- 构造 `PlayerMailSendReq`。
-- sender_player_id 仍填写当前玩家，但服务器会用连接身份覆盖。
-- operation_id 在一次用户操作重试期间保持不变；明确成功/最终失败后清除。
-- 处理 idempotent_hit、限流、收件人不存在、不能发给自己等错误码。
-- 处理 `MailboxChangedNotify`，采用 debounce 后刷新 summary/list。
-- Push 不可用时保留低频轮询兜底；邮箱面板关闭时不能仍每 10 秒永久轮询。
-- CancellationToken 要真实传到请求层，不能只作为未使用参数。
-
-## C1.6 统一错误显示
-
-- 优先读取服务器顶层/业务 `error_code`，不能根据英文 message 分支。
-- 建立 `GameErrorCatalog`，映射为中文 UI 文案和是否可重试。
-- 日志保留 code、seq、request type、trace_id，不输出敏感内容。
-- UI 防止 `_busy` 导致按钮无反馈；显示当前阶段和超时。
+版本不兼容时阻止进图，提示更新资源。复用现有 `maps/1001.grid.json` 及 sha256，不建立第二份 magic version。
 
 ## C1 验收
 
 EditMode/PlayMode 至少覆盖：
 
-1. LoginRsp.profile 完整映射。
-2. 正确/错误地图 hash。
-3. EnterMap snapshot 原子应用。
-4. MoveReq 真实发出且字段正确。
-5. MoveRsp 小误差平滑、大误差 snap、旧 seq 忽略。
-6. AoiDelta Enter/Move/Leave 的真实 protobuf 映射。
-7. PlayerMailSend operation_id 重试幂等。
-8. MailboxChanged debounce 刷新。
-9. Logout/换图销毁远端对象。
-
-C1 未通过时停止，不进入 C2。
+- Hello 成功、hash 错误、版本过低、超时。
+- Hello 前 Login 被客户端状态机阻止。
+- Heartbeat RTT/time offset、超时重连、timer 取消。
+- 顶层错误优先级和 retryable 映射。
+- 配置/地图版本不匹配阻止 InWorld。
 
 ---
 
-# C2：握手、心跳、重连和世界状态恢复
+# C2：完整快照、重连、顶号和复活
 
-> C2 需要服务器提示词中的 S1/S2 协议已经完成。开始前重新导入服务器协议，禁止客户端自行发明字段。
+## C2.1 Push gap 自动请求 WorldSnapshot
 
-## C2.1 Hello 和能力协商
-
-TCP Connect 后、Register/Login/Reconnect 前发送 `ClientHelloReq`：
-
-- protocol version、schema SHA-256、client version、platform、build channel、capabilities。
-- 校验 `ServerHelloRsp`。
-- schema/version 不兼容时停止登录并显示升级提示。
-- 保存 heartbeat interval、idle timeout、server time offset 和 capability 集合。
-- 不能依赖反射 `HasType` 决定同一构建内的功能；构建时类型必须齐全，运行时能力由 ServerHello 协商。
-
-## C2.2 心跳和连接生命周期
-
-- 使用 unscaled time + 随机抖动定时发送 Heartbeat。
-- 连续超时或超过服务器 idle timeout 才触发断线恢复。
-- 前后台切换、Application pause/focus、场景切换和退出时行为明确。
-- 单例心跳任务；Reconnect 时取消旧任务，禁止多重循环。
-- `reconnectMaxTotalMs` 必须真正生效。
-- 重连 single-flight，避免 Update 每帧启动多个 Task。
-- 可取消 Request/Connect/Heartbeat；销毁对象后迟到 callback 不更新 UI。
-
-## C2.3 精确重连
-
-重连流程必须是：
+当前 Push gap 不能只进入 `Resyncing`。实现：
 
 ```text
-断线
-→ 新 TCP Connect
-→ ClientHello
-→ Reconnect(session_id, ticket, last_server_seq)
-→ 应用新 token/generation
-→ 应用服务器返回或推送的 WorldSnapshot
+发现 expected_seq 与 received_seq 缺口
+→ 暂停应用后续增量且不 ACK 未应用消息
+→ single-flight WorldSnapshotReq(last_applied_server_seq)
+→ 校验完整快照
+→ 原子替换 Session + self + AoiWorld
+→ Push baseline 重置
 → 恢复 InWorld
 ```
 
+应用 `FullStateSnapshotRsp` 的全部基础字段：
+
+```text
+profile
+realm_id/map_template_id/map_instance_id
+gamelogic_instance_id（仅诊断）
+owner_epoch/route_version（仅保存诊断，不由客户端选路）
+self/aoi_entities
+baseline_server_seq/snapshot_version
+recovery_reason/life_state
+```
+
 要求：
 
-- 不再无条件 `EnterMap(map_instance_id=0)`。
-- 服务器明确要求重新进图时，使用返回的 map template/instance 和 operation id。
-- 重连期间冻结本地移动上报。
-- 成功应用完整 snapshot 前不能显示为 InWorld。
-- 旧连接 callback、旧 generation Push 和旧 map instance Push 必须丢弃。
-- 失败达到总时限后返回登录界面，不无限重试。
+- 快照 `ok=false`、空 self、地图不一致、版本倒退时不能清空旧世界后假装成功。
+- 先构建临时模型并完整校验，最后在 Unity 主线程一次性切换。
+- 去掉旧实现中只 `Aoi.Clear()` 和重置 baseline、却不应用实体的行为。
+- 快照过程中到达的 Push 要么有界暂存并按 seq 应用，要么丢弃后再次拉快照；策略必须有测试。
 
-## C2.4 Push gap 和 WorldSnapshot
+## C2.2 Reconnect 恢复
 
-当前 `PushReliability` 发现 Gap 后不能只打日志：
+Reconnect 成功后：
 
-- 标记 Resyncing，暂停对顺序敏感的增量。
-- 请求 `WorldSnapshotReq` 或服务器定义的等价接口。
-- 原子应用 profile、self、map route、AOI、背包和 baseline_server_seq。
-- 丢弃 `<= baseline` 的旧 Push，缓存或重新处理 `> baseline` 的 Push。
-- snapshot 失败时按 retryable 和退避处理；不能先 ACK 未应用消息。
-- 缓存有界，溢出时断开并重新建立权威状态。
+- 应用服务器返回的新 session/fence/generation。
+- `NeedFullSnapshot=true` 时立即走同一个 WorldSnapshot 流程。
+- 不调用 `EnterMap(map_instance_id=0)` 破坏服务器恢复路由。
+- 恢复 map/self/AOI 后才进入 InWorld。
+- 恢复失败要回到可重新登录状态，不能卡在 Resyncing。
+- 旧连接 generation 的 callback 不得修改新 Session/UI。
 
-## C2.5 本地身份保存
+## C2.3 重复登录/顶号
 
-为 Demo 提供可用但安全的本地身份：
+处理服务器的 `SessionReplacedNotify`（或服务器最终定义的等价公开通知）：
 
-- 可保存 device_id、最近 player_id、显示名、服务器环境。
-- 不保存明文 password。
-- 默认不持久化 access/fence token；若实现“记住登录”，必须使用平台安全存储并支持清除。
-- 日志和 E2E 结果对 token/session 打码。
-- 提供“清除本地账号信息”按钮。
+- 展示“账号已在其他设备登录”的稳定原因。
+- 禁止自动重连旧 session。
+- 清理 token/session/AOI/远端实体和 pending requests。
+- 返回登录界面；不要清除非敏感的 device/player_id 便捷信息。
+- 普通网络断开仍按自动重连策略处理，二者必须区分。
 
-## C2.6 最小死亡/复活客户端状态
+## C2.4 死亡与复活
 
-如果服务器已实现：
-
-- 展示 ALIVE/DEAD/RESPAWNING。
-- DEAD 时禁止移动上报和本地射击输入。
-- 显示复活按钮并发送 RespawnReq。
-- 应用服务器返回位置和 HP/MP。
-
-服务器未实现时明确标记 `BLOCKED BY SERVER`，不要做纯本地假复活。
+- 应用 `PlayerAttributes.life_state` 与快照 life_state。
+- DEAD 时禁用本地移动/技能提交，但保留镜头和 UI。
+- 复活按钮发送带稳定 operation_id 的 `RespawnReq`。
+- 重复点击复用同一 in-flight；响应成功后应用服务器 self/life_state。
+- 失败显示 error_code；不得客户端自行改 HP 或坐标冒充复活。
 
 ## C2 验收
 
-至少覆盖：
+新增 EditMode/PlayMode 测试：
 
-1. Hello 版本/hash 不匹配时不能 Login。
-2. 心跳 RTT、时间偏移和 idle timeout。
-3. 网络断开只启动一个 Reconnect 流程。
-4. gw0 断线后通过 gw1 恢复原玩家、原地图和 AOI。
-5. 旧 Push/generation 被拒绝。
-6. 人工制造 server_seq gap 后完整快照恢复。
-7. 应用退出时无悬挂 socket/task，且不阻塞 Unity 主线程。
-
-C2 未通过时停止，不进入 C3。
+1. Push gap 请求且只请求一次快照。
+2. 完整快照原子恢复 profile、self、AOI 和 baseline。
+3. 非法/过期快照不破坏当前世界。
+4. Reconnect + NeedFullSnapshot 恢复原地图，不 EnterMap(0)。
+5. 被顶号后不自动重连，普通掉线仍重连。
+6. Respawn operation_id、失败和成功状态。
 
 ---
 
-# C3：真实双 Unity E2E、CI 和联调体验
+# C3：真实双 Unity E2E 和发布门禁
 
-## C3.1 实现 AutoScenario
+## C3.1 完善自动场景
 
-当前 `-gamemeshAutoScenario` 只解析不执行。实现无 UI 依赖的自动状态机：
-
-```text
-hello
-→ register 或读取已准备账号
-→ login
-→ profile
-→ enter map
-→ 等待 peer AOI enter
-→ 移动到指定点
-→ 等待 peer AOI move
-→ A 给 B 发邮件
-→ B 收到 MailboxChanged 并读取邮件
-→ 可选断网/重连
-→ logout
-→ 写结果并退出
-```
-
-每个关键步骤写结构化 JSON Lines 和最终结果文件：
-
-```json
-{"event":"login_ok","player_id":1001}
-{"event":"enter_map_ok","map_instance_id":9}
-{"event":"aoi_peer_seen","peer_id":1002}
-{"event":"mail_received","mail_id":88}
-{"result":"PASS","scenario":"two-client","duration_ms":12345}
-```
-
-禁止输出 password/token/session 原文。
-
-## C3.2 重写双客户端脚本
-
-当前脚本等待后强杀并退出 0，必须重写。脚本需要：
-
-- 启动两个独立 `-dataPath` 客户端。
-- 使用唯一 device/name，建立协调目录交换 player_id。
-- 等待明确结果文件或进程退出。
-- 断言双方同一 map_instance_id。
-- 断言 A 看到 B、B 看到 A。
-- 断言真实 MoveReq 造成另一端 AOI Move。
-- 断言邮件到达正确玩家且内容匹配。
-- 可选断言一端断线重连后重新看到对方。
-- 任一进程崩溃、超时、缺标记、结果不一致时非零退出。
-- 成功时两个客户端自行 Logout 并以 0 退出；脚本不以强杀作为成功。
-- `finally` 清理残留进程，但不能按模糊进程名误杀用户其他 Unity。
-- 保存双方 Player.log、结果 JSON、服务器 commit、客户端 commit 和协议 hash。
-
-PowerShell 和 Bash 可以分别支持 Windows/Linux build；不支持的平台明确退出 2，不能打印 PASS。
-
-## C3.3 Unity 测试
-
-补齐：
-
-- EditMode：协议、FrameCodec、状态机、Push 顺序、mapper、error catalog、map hash、mail operation id。
-- PlayMode：FakeGateway 半包/粘包/掉线、真实主线程 dispatch、远端对象生命周期、重连 single-flight。
-- Integration：两个真实 Unity build 对真实 Gateway。
-- 测试结果 XML 缺失或包含失败时脚本必须非零。
-
-现有 `BadProtobuf_FailClosed` 必须真正让 FakeGateway 发送非法 protobuf；不能只主动 Disconnect 后断言 Disconnected。
-
-## C3.4 CI 和构建
-
-更新 CI：
-
-1. 协议漂移检查。
-2. Unity compile/import。
-3. GameMesh EditMode。
-4. GameMesh PlayMode。
-5. Windows 或 Linux Integration Build。
-6. 有服务器环境时运行双 Unity E2E；无环境时显示 NOT RUN，不能冒充成功。
-
-要求：
-
-- Unity 版本从 `ProjectVersion.txt` 读取并与 runner 匹配。
-- Google.Protobuf DLL 与 asmdef 引用验证。
-- 上传 test XML、Player.log、结果 JSON 和构建日志。
-- 不使用 `allowDirtyBuild` 掩盖协议生成后的未提交漂移。
-
-## C3.5 联调 UI 最小完善
-
-- 清楚显示 Connection/Hello/Auth/World/Resync 状态。
-- 显示 server build、protocol version、schema hash 简写、RTT、最后 server_seq。
-- 注册后自动保留 player_id，用户不必复制粘贴。
-- 显示当前 map template/instance、AOI 玩家数。
-- 邮件收件人支持 player ID；若服务器提供 PlayerBrief 查询，显示校验后的名字。
-- 错误显示 code + 中文文案 + 是否可重试。
-- Debug 面板可关闭，正式构建不显示敏感调试信息。
-
-## C3 验收
-
-实际运行：
+扩展 `GameMeshAutoScenario` 和结构化 `events.jsonl/result.json`，至少记录并断言：
 
 ```text
-Tools/GameMesh/check_protocol_contract.*
-Tools/GameMesh/run_editmode_tests.*
-Tools/GameMesh/run_playmode_tests.*
-Tools/GameMesh/build_integration_client.*
-Tools/GameMesh/run_two_clients_e2e.*
+hello_ok heartbeat_ok
+register_ok login_ok profile_ok
+enter_map_ok aoi_peer_seen aoi_peer_moved
+mail_sent mail_received
+snapshot_recovered reconnect_ok
+session_replaced（独立场景）
+logout_ok
 ```
 
-最终必须同时提供：
+结果文件必须包含：
 
-- 客户端 commit。
-- 服务器 commit。
-- schema hash。
-- 两个 Unity 进程的结果 JSON。
-- 真实退出码。
-- 未运行项和原因。
+```text
+client_commit
+server_commit
+schema_sha256
+map_manifest_version
+gateway
+duration_ms
+result/error_code
+```
 
----
+不得包含密码、token、session、完整 trace。
 
-# 4. 下一版本再做的内容
+## C3.2 真实场景，而不是 FakeGateway 替代
 
-以下不属于当前基础联调阻塞项：
+保留 FakeGateway 单元/PlayMode 测试，但真实门禁必须使用最新服务器：
 
-- 完整战斗、技能表现、背包 UI、任务、交易、公会。
-- 大世界 Chunk 流式加载和跨 Cell 无缝迁移。
-- Addressables 大规模资源热更新。
-- 完整角色选择/多角色系统。
-- 私聊、好友、公会聊天。
+1. 构建 Linux 或 Windows Integration Client。
+2. 启动两个真实 Unity 进程连接同一 VIP/Gateway 入口。
+3. 两玩家注册、登录、加载权威属性。
+4. 进入同一公共地图并互相看到。
+5. A 移动，B 收到 AOI Move。
+6. A 给 B 发邮件，B 收到 Push 并打开邮件。
+7. 断开 A 的 gw0 链路，通过 gw1 重连并恢复世界快照。
+8. 人为制造 Push gap，客户端恢复且不残留幽灵实体。
+9. 新进程重复登录 A，旧进程收到顶号通知并退出。
+10. 两个客户端正常 Logout。
 
-先让当前注册、登录、玩家资料、公共地图、移动 AOI、邮件和重连全部由真实协议驱动并可自动验收。
+`run_two_clients_e2e.sh/.ps1` 必须：
 
-# 5. Cursor 每阶段最终输出格式
+- 等待并验证每个事件，不只检查进程启动。
+- 进程崩溃、超时、结果缺失、Gateway 缺失均非零退出。
+- 发布模式下退出码 2 也是失败。
+- 清理时只终止自己记录的 PID，不按进程名误杀。
+- 保存服务端与两客户端日志路径。
 
-每阶段结束输出：
+另增加重复登录与重连场景脚本，不要把所有竞态塞入一个不可诊断脚本。
 
-1. 客户端 HEAD、服务器协议 HEAD、schema hash。
-2. 修改文件及用途。
-3. 生成代码使用的 protoc/Google.Protobuf 版本。
-4. 实际运行的 Unity/脚本命令、退出码和报告路径。
-5. 未运行项及原因。
-6. 屏幕可见的联调结果。
-7. 本阶段是否通过。
-8. 仍依赖服务器完成的项目。
+## C3.3 CI 与发布事实
 
-禁止：
+调整 CI：
 
-- 手改 `Game.cs`。
-- 用 DTO 单元测试代替真实 protobuf 映射。
-- 用两个进程启动成功代替双客户端 E2E。
-- 吞掉 Unity 测试失败或缺少结果 XML。
-- 在日志、结果文件或 UI 中输出密码和完整 Token。
-- 未经授权提交或推送。
+- 协议自检始终必跑。
+- Release 分支/标签必须有 Unity License 并真实跑 EditMode、PlayMode 和 Integration Build；缺 License 为 BLOCKED，不得绿色发布。
+- 真实 E2E 放到有服务器依赖和 Unity Build 的 runner；没有 live Gateway 不能标 PASS。
+- 上传 XML、Player.log、events.jsonl、result.json 和两端 manifest。
+
+更新 `docs/GameMesh_Client_Foundation_Status.md`：
+
+- 写实际客户端/服务器 HEAD、schema hash、工作区状态。
+- 只记录本次真实执行的测试。
+- 分开 `PASS/FAIL/BLOCKED/NOT RUN`。
+- 删除“服务器不提供 Hello/Heartbeat/WorldSnapshot/Respawn”的过时描述。
+
+## C3 验收命令
+
+按实际平台运行对应 `.sh` 或 `.ps1`：
+
+```bash
+Tools/GameMesh/check_protocol_contract.sh <server_repo>
+Tools/GameMesh/run_editmode_tests.sh
+Tools/GameMesh/run_playmode_tests.sh
+Tools/GameMesh/build_integration_client.sh
+GAMEMESH_E2E_GATEWAY=1 Tools/GameMesh/run_two_clients_e2e.sh <client_binary>
+```
+
+## 5. 基础版完成标准
+
+只有以下全部满足，才能写 `UNITY FOUNDATION PASS`：
+
+- 两端 schema/hash/commit 完全一致。
+- Formal 模式下 Hello、Heartbeat 正常，未使用 legacy no-hello。
+- Register/Login/Logout/Profile/Map/Move/AOI/Mail 全部真实联调通过。
+- Push gap、跨 GW Reconnect、完整快照和顶号处理通过。
+- EditMode、PlayMode、Integration Build、真实双 Unity E2E 均有当前 commit 证据。
+- 没有必需步骤 SKIP/NOT RUN。
+
+不阻塞本轮基础版：好友列表、私聊、公会、交易、复杂技能战斗、完整热更新和无缝 Cell 大世界。
+
+## 6. Cursor 最终输出
+
+每阶段完成后输出：
+
+1. 当前 Unity/服务器 HEAD、工作区状态和 schema hash。
+2. 修改文件清单。
+3. 连接、Hello、Login、Reconnect、Snapshot 状态流。
+4. 执行命令、退出码和报告路径。
+5. PASS/FAIL/BLOCKED/NOT RUN 清单。
+6. 真实双 Unity E2E 的结果目录。
+7. 尚未完成但不阻塞基础版的范围。
+
+禁止手工改生成代码、关闭 Formal Hello、放宽协议 hash、用 FakeGateway 冒充真实联调或通过跳过测试宣称完成。

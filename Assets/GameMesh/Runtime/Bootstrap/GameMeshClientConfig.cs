@@ -10,6 +10,8 @@ namespace GameMesh.Bootstrap
         public int port = 8081;
         public int connectTimeoutMs = 5000;
         public int requestTimeoutMs = 8000;
+        public int helloTimeoutMs = 5000;
+        public int heartbeatTimeoutMs = 4000;
         public int reconnectMaxAttempts = 6;
         public int reconnectMaxTotalMs = 30000;
         public float moveSendHz = 10f;

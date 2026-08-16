@@ -79,10 +79,15 @@ try {
     }
     $aEvents = Get-Content (Join-Path $aDir "events.jsonl") -ErrorAction SilentlyContinue
     $bEvents = Get-Content (Join-Path $bDir "events.jsonl") -ErrorAction SilentlyContinue
+    if (-not ($aEvents | Where-Object { $_ -match '"hello_ok"' })) { throw "A hello_ok missing" }
+    if (-not ($bEvents | Where-Object { $_ -match '"hello_ok"' })) { throw "B hello_ok missing" }
     if (-not ($aEvents | Where-Object { $_ -match '"aoi_peer_seen"' })) { throw "A did not see B in AOI" }
     if (-not ($bEvents | Where-Object { $_ -match '"aoi_peer_seen"' })) { throw "B did not see A in AOI" }
+    if (-not ($aEvents | Where-Object { $_ -match '"aoi_peer_moved"' })) { throw "A did not see B AOI move" }
+    if (-not ($bEvents | Where-Object { $_ -match '"aoi_peer_moved"' })) { throw "B did not see A AOI move" }
     if (-not ($aEvents | Where-Object { $_ -match '"mail_sent"' })) { throw "A did not send mail" }
     if (-not ($bEvents | Where-Object { $_ -match '"mail_received"' })) { throw "B did not receive mail" }
+    if (-not ($bEvents | Where-Object { $_ -match '"e2e"' })) { throw "B mail title/content mismatch" }
     if (-not $a.HasExited -or -not $b.HasExited) {
         throw "clients did not exit by themselves"
     }
@@ -96,6 +101,13 @@ try {
         server_commit = (Get-Content -Raw (Join-Path $Root "Assets\GameMesh\Protocol\protocol_manifest.json") | ConvertFrom-Json).source_commit
         a_result = $aResult
         b_result = $bResult
+    }
+    $playerLogs = @(
+        (Join-Path $aDir "data\Player.log"),
+        (Join-Path $bDir "data\Player.log")
+    ) | Where-Object { Test-Path $_ }
+    foreach ($log in $playerLogs) {
+        Copy-Item $log (Join-Path $work ([IO.Path]::GetFileName([IO.Path]::GetDirectoryName($log)) + "-Player.log")) -ErrorAction SilentlyContinue
     }
     $meta | ConvertTo-Json | Set-Content (Join-Path $work "meta.json")
     Write-Host "E2E PASS work=$work"

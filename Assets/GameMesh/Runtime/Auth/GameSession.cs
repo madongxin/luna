@@ -15,10 +15,17 @@ namespace GameMesh.Auth
         public ulong MapInstanceId;
         public ulong OwnerEpoch;
         public ulong RouteVersion;
+        public uint RealmId;
+        public uint SnapshotVersion;
+        public string GameLogicInstanceId = "";
+        public string RecoveryReason = "";
         public string DisplayName;
         public string DeviceId;
         public bool AutoReconnect = true;
+        public bool SessionReplaced;
         public PlayerAttributeSnapshot Attributes = new PlayerAttributeSnapshot();
+        public bool IsDead =>
+            string.Equals(Attributes?.LifeState, "DEAD", StringComparison.OrdinalIgnoreCase);
 
         public bool HasIdentity => PlayerId != 0 && !string.IsNullOrEmpty(SessionId);
 
@@ -49,16 +56,28 @@ namespace GameMesh.Auth
 
         public void ClearSensitive()
         {
+            ClearSessionKeepIdentity();
+            PlayerId = 0;
+            DisplayName = null;
+            AutoReconnect = true;
+            SessionReplaced = false;
+        }
+
+        public void ClearSessionKeepIdentity()
+        {
             Token = null;
             SessionId = null;
             Generation = 0;
             LastServerSeq = 0;
-            PlayerId = 0;
             MapInstanceId = 0;
+            MapTemplateId = 0;
             OwnerEpoch = 0;
             RouteVersion = 0;
-            AutoReconnect = true;
-            Attributes = new PlayerAttributeSnapshot();
+            RealmId = 0;
+            SnapshotVersion = 0;
+            GameLogicInstanceId = "";
+            RecoveryReason = "";
+            Attributes = new PlayerAttributeSnapshot { PlayerId = PlayerId, Name = DisplayName ?? "" };
         }
 
         public string DebugSummary()
@@ -120,5 +139,37 @@ namespace GameMesh.Auth
             public void Add(ulong v) => _inner.Add(v);
             public void Clear() => _inner.Clear();
         }
+    }
+
+    public sealed class PushGapCache
+    {
+        readonly System.Collections.Generic.SortedDictionary<ulong, GameMesh.Protocol.GameResponse> _pending =
+            new System.Collections.Generic.SortedDictionary<ulong, GameMesh.Protocol.GameResponse>();
+        public int Limit = 32;
+        public int Count => _pending.Count;
+
+        public bool TryBuffer(ulong seq, GameMesh.Protocol.GameResponse inner)
+        {
+            if (seq == 0 || inner == null)
+                return false;
+            if (_pending.Count >= Limit && !_pending.ContainsKey(seq))
+                return false;
+            _pending[seq] = inner;
+            return true;
+        }
+
+        public bool TryTake(ulong seq, out GameMesh.Protocol.GameResponse inner)
+        {
+            if (_pending.TryGetValue(seq, out inner))
+            {
+                _pending.Remove(seq);
+                return true;
+            }
+
+            inner = null;
+            return false;
+        }
+
+        public void Clear() => _pending.Clear();
     }
 }

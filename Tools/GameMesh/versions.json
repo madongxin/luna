@@ -4,5 +4,40 @@
   "system_runtime_compilerservices_unsafe": "6.0.0",
   "csharp_namespace": "GameMesh.Protocol",
   "frame_format": "uint32_be_length_prefixed",
-  "max_frame_bytes": 4194304
+  "max_frame_bytes": 4194304,
+  "protocol_version": 1,
+  "min_supported_protocol_version": 1,
+  "protoc_sha256": {
+    "win64": "d6b336b852726364313330631656b7f395dde5b1141b169f5c4b8d43cdf01482",
+    "linux_x86_64": "",
+    "osx_x86_64": ""
+  },
+  "required_types": [
+    "RegisterReq",
+    "LoginReq",
+    "LogoutReq",
+    "ReconnectReq",
+    "PushAckReq",
+    "PlayerAttributes",
+    "Vec3",
+    "EntitySnapshot",
+    "EnterMapReq",
+    "LeaveMapReq",
+    "MoveReq",
+    "AoiDelta",
+    "PlayerMailSendReq",
+    "MailboxSummaryReq",
+    "MailListReq",
+    "MailGetReq",
+    "MailboxChangedNotify",
+    "ServerPushEnvelope",
+    "ClientHelloReq",
+    "ServerHelloRsp",
+    "HeartbeatReq",
+    "HeartbeatRsp",
+    "FullStateSnapshotRsp",
+    "WorldSnapshotReq",
+    "RespawnReq",
+    "RespawnRsp"
+  ]
 }

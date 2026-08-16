@@ -16,7 +16,9 @@ namespace GameMesh.Protocol
             "PlayerAttributes", "Vec3", "EntitySnapshot",
             "EnterMapReq", "LeaveMapReq", "MoveReq", "AoiDelta",
             "PlayerMailSendReq", "MailboxSummaryReq", "MailListReq", "MailGetReq",
-            "MailboxChangedNotify", "ServerPushEnvelope"
+            "MailboxChangedNotify", "ServerPushEnvelope",
+            "ClientHelloReq", "ServerHelloRsp", "HeartbeatReq", "HeartbeatRsp",
+            "FullStateSnapshotRsp", "WorldSnapshotReq", "RespawnReq", "RespawnRsp"
         };
 
         public static bool HasType(string typeName)
@@ -51,6 +53,9 @@ namespace GameMesh.Protocol
         public string schema_file;
         public string schema_sha256;
         public string generated_csharp;
+        public string descriptor_sha256;
+        public int protocol_version;
+        public int min_supported_protocol_version;
         public string frame_format;
         public int max_frame_bytes;
         public string csharp_namespace;
@@ -61,6 +66,7 @@ namespace GameMesh.Protocol
         public const string ExpectedFrameFormat = "uint32_be_length_prefixed";
         public const int ExpectedMaxFrameBytes = 4 * 1024 * 1024;
         public const string ExpectedNamespace = "GameMesh.Protocol";
+        public const int ExpectedProtocolVersion = 1;
 
         public static string ComputeSha256(byte[] bytes)
         {
@@ -89,6 +95,8 @@ namespace GameMesh.Protocol
                 throw new InvalidOperationException("max_frame_bytes drift: " + manifest.max_frame_bytes);
             if (!string.Equals(manifest.csharp_namespace, ExpectedNamespace, StringComparison.Ordinal))
                 throw new InvalidOperationException("csharp_namespace drift");
+            if (manifest.protocol_version != 0 && manifest.protocol_version != ExpectedProtocolVersion)
+                throw new InvalidOperationException("protocol_version drift: " + manifest.protocol_version);
             if (!File.Exists(schemaPath))
                 throw new InvalidOperationException("schema missing: " + schemaPath);
             var actual = ComputeFileSha256(schemaPath);

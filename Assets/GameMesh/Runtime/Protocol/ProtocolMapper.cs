@@ -29,6 +29,7 @@ namespace GameMesh.Protocol
                 MoveSpeed = src.MoveSpeed,
                 AttackSpeed = src.AttackSpeed,
                 StatsVersion = src.StatsVersion,
+                LifeState = string.IsNullOrEmpty(src.LifeState) ? "ALIVE" : src.LifeState,
                 FromServer = true
             };
         }
@@ -112,8 +113,18 @@ namespace GameMesh.Protocol
         {
             if (rsp == null)
                 return "";
+            if (!string.IsNullOrEmpty(rsp.ErrorCode))
+                return rsp.ErrorCode;
             switch (rsp.BodyCase)
             {
+                case GameResponse.BodyOneofCase.ServerHello:
+                    return rsp.ServerHello?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.Heartbeat:
+                    return rsp.Heartbeat?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.FullSnapshot:
+                    return rsp.FullSnapshot?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.Respawn:
+                    return rsp.Respawn?.ErrorCode ?? "";
                 case GameResponse.BodyOneofCase.Move:
                     return rsp.Move?.ErrorCode ?? "";
                 case GameResponse.BodyOneofCase.GetSelfProfile:
@@ -129,6 +140,14 @@ namespace GameMesh.Protocol
                 default:
                     return "";
             }
+        }
+
+        public static string ShortTraceId(GameResponse rsp)
+        {
+            var id = rsp?.TraceId ?? "";
+            if (id.Length <= 8)
+                return id;
+            return id.Substring(id.Length - 8);
         }
     }
 }

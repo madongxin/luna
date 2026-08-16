@@ -28,6 +28,7 @@ namespace GameMesh.Network
         Task _sendTask = Task.CompletedTask;
         long _seq;
         int _queued;
+        int _generation;
         ConnectionState _state = ConnectionState.Disconnected;
         volatile bool _failClosed;
 
@@ -35,6 +36,8 @@ namespace GameMesh.Network
         {
             get { lock (_stateGate) return _state; }
         }
+
+        public int Generation => _generation;
 
         public ulong LastClientSeq => (ulong)Interlocked.Read(ref _seq);
 
@@ -100,13 +103,14 @@ namespace GameMesh.Network
                     _stream = tcp.GetStream();
                     _failClosed = false;
                     _loopCts = new CancellationTokenSource();
+                    _generation++;
                     var loopToken = _loopCts.Token;
                     _recvTask = Task.Run(() => ReceiveLoopAsync(loopToken), loopToken);
                     _sendTask = Task.Run(() => SendLoopAsync(loopToken), loopToken);
                 }
 
-                SetState(ConnectionState.Connected);
-                GameMeshLog.Info($"connected {host}:{port} lastSeq={LastClientSeq}");
+                SetState(ConnectionState.Handshaking);
+                GameMeshLog.Info($"connected {host}:{port} lastSeq={LastClientSeq} gen={_generation}");
             }
             catch (GameMeshException)
             {

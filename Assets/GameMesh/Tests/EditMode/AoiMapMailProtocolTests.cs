@@ -34,6 +34,12 @@ namespace GameMesh.Tests.EditMode
             Assert.IsTrue(ProtocolCapabilities.HasType("MailboxChangedNotify"));
             var req = new GameRequest { Move = new MoveReq() };
             Assert.AreEqual(GameRequest.BodyOneofCase.Move, req.BodyCase);
+            Assert.IsTrue(ProtocolCapabilities.HasType("ClientHelloReq"));
+            Assert.IsTrue(ProtocolCapabilities.HasType("WorldSnapshotReq"));
+            Assert.IsTrue(ProtocolCapabilities.HasType("RespawnReq"));
+            Assert.AreEqual(GameRequest.BodyOneofCase.ClientHello, new GameRequest { ClientHello = new ClientHelloReq() }.BodyCase);
+            Assert.AreEqual(GameResponse.BodyOneofCase.ServerHello, new GameResponse { ServerHello = new ServerHelloRsp() }.BodyCase);
+            Assert.AreEqual(GameResponse.BodyOneofCase.FullSnapshot, new GameResponse { FullSnapshot = new FullStateSnapshotRsp() }.BodyCase);
             var rsp = new GameResponse
             {
                 AoiDelta = new AoiDelta(),
@@ -166,6 +172,7 @@ namespace GameMesh.Tests.EditMode
         {
             var s = ConnectionState.Disconnected;
             s = ConnectionStateMachine.Transition(s, ConnectionState.Connecting);
+            s = ConnectionStateMachine.Transition(s, ConnectionState.Handshaking);
             s = ConnectionStateMachine.Transition(s, ConnectionState.Connected);
             s = ConnectionStateMachine.Transition(s, ConnectionState.Authenticating);
             s = ConnectionStateMachine.Transition(s, ConnectionState.Authenticated);

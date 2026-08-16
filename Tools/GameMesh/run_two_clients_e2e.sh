@@ -64,7 +64,13 @@ ae = pathlib.Path("$A_DIR/events.jsonl").read_text(encoding="utf-8")
 be = pathlib.Path("$B_DIR/events.jsonl").read_text(encoding="utf-8")
 if "aoi_peer_seen" not in ae or "aoi_peer_seen" not in be:
     raise SystemExit("AOI peer assertion failed")
+if "hello_ok" not in ae or "hello_ok" not in be:
+    raise SystemExit("hello assertion failed")
+if "aoi_peer_moved" not in ae or "aoi_peer_moved" not in be:
+    raise SystemExit("AOI move assertion failed")
 if "mail_sent" not in ae or "mail_received" not in be:
     raise SystemExit("mail assertion failed")
+if "e2e" not in be:
+    raise SystemExit("mail content assertion failed")
 print("E2E PASS work=$WORK")
 PY

@@ -1,5 +1,5 @@
 
-éy
+õ–
 
 game.protogame"Æ
 LoginReq
@@ -63,7 +63,7 @@ server_seq (R	serverSeq!
 message_type (	RmessageType
 payload (Rpayload
 reliable (Rreliable 
-coalescable (Rcoalescable"î
+coalescable (Rcoalescable"ú
 FullStateSnapshotRsp
 ok (Rok
 message (	Rmessage
@@ -72,7 +72,41 @@ server_seq (R	serverSeq!
 item_ids (RitemIds
 item_counts (R
 itemCounts.
-baseline_server_seq (RbaselineServerSeq"G
+baseline_server_seq (RbaselineServerSeq0
+profile (2.game.PlayerAttributesRprofile
+realm_id	 (RrealmId&
+map_template_id
+ (RmapTemplateId&
+map_instance_id (RmapInstanceId2
+gamelogic_instance_id (	RgamelogicInstanceId
+owner_epoch (R
+ownerEpoch#
+route_version (RrouteVersion(
+self (2.game.EntitySnapshotRself7
+aoi_entities (2.game.EntitySnapshotRaoiEntities)
+snapshot_version (RsnapshotVersion'
+recovery_reason (	RrecoveryReason
+
+life_state (	R	lifeState
+
+error_code (	R	errorCode"f
+WorldSnapshotReq
+	player_id (RplayerId5
+last_applied_server_seq (RlastAppliedServerSeq"t
+
+RespawnReq
+	player_id (RplayerId&
+map_instance_id (RmapInstanceId!
+operation_id (	RoperationId"ž
+
+RespawnRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode(
+self (2.game.EntitySnapshotRself
+
+life_state (	R	lifeState"G
 ValidateSessionReq
 	player_id (RplayerId
 token (	Rtoken"Ì
@@ -396,12 +430,26 @@ ownerEpoch!
 ChatSendReq
 	player_id (RplayerId
 channel (	Rchannel
-text (	Rtext"V
+text (	Rtext"µ
 ChatSendRsp
 ok (Rok
 message (	Rmessage
 
-error_code (	R	errorCode",
+error_code (	R	errorCode
+
+message_id (R	messageId$
+server_time_ms (RserverTimeMs
+channel (	Rchannel"Ê
+
+ChatNotify
+
+message_id (R	messageId(
+sender_player_id (RsenderPlayerId
+sender_name (	R
+senderName
+channel (	Rchannel
+text (	Rtext$
+server_time_ms (RserverTimeMs",
 FriendListReq
 	player_id (RplayerId"X
 FriendListRsp
@@ -412,7 +460,7 @@ error_code (	R	errorCode"0
 Vec3
 x (Rx
 y (Ry
-z (Rz"Å
+z (Rz"ä
 PlayerAttributes
 	player_id (RplayerId
 player_name (	R
@@ -434,7 +482,9 @@ critDamage
 
 move_speed (R	moveSpeed!
 attack_speed (RattackSpeed#
-stats_version (RstatsVersion"Ì
+stats_version (RstatsVersion
+
+life_state (	R	lifeState"Ì
 EntitySnapshot
 	player_id (RplayerId
 player_name (	R
@@ -452,7 +502,34 @@ playerName&
 message (	Rmessage
 
 error_code (	R	errorCode0
-profile (2.game.PlayerAttributesRprofile"®
+profile (2.game.PlayerAttributesRprofile"y
+PlayerBrief
+	player_id (RplayerId
+player_name (	R
+playerName
+max_hp (RmaxHp
+max_mp (RmaxMp"{
+GetPlayerBriefReq
+	player_id (RplayerId(
+target_player_id (RtargetPlayerId
+player_name (	R
+playerName"…
+GetPlayerBriefRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode'
+brief (2.game.PlayerBriefRbrief"\
+QueryOnlineStateReq
+	player_id (RplayerId(
+target_player_id (RtargetPlayerId"‘
+QueryOnlineStateRsp
+ok (Rok
+message (	Rmessage
+
+error_code (	R	errorCode
+	player_id (RplayerId
+state (	Rstate"®
 MoveReq
 	player_id (RplayerId&
 map_instance_id (RmapInstanceId&
@@ -492,7 +569,40 @@ error_code (	R	errorCode
 MailboxChangedNotify
 	player_id (RplayerId'
 mailbox_version (RmailboxVersion!
-unread_count (RunreadCount"•
+unread_count (RunreadCount"ì
+ClientHelloReq)
+protocol_version (RprotocolVersion#
+schema_sha256 (	RschemaSha256%
+client_version (	RclientVersion
+platform (	Rplatform#
+build_channel (	RbuildChannel"
+capabilities (	Rcapabilities"·
+ServerHelloRsp
+ok (Rok
+
+error_code (	R	errorCode
+message (	Rmessage)
+protocol_version (RprotocolVersionC
+min_supported_protocol_version (RminSupportedProtocolVersion#
+schema_sha256 (	RschemaSha256!
+server_build (	RserverBuild$
+server_time_ms (RserverTimeMs2
+heartbeat_interval_ms	 (RheartbeatIntervalMs&
+idle_timeout_ms
+ (RidleTimeoutMs"
+capabilities (	Rcapabilities"
+HeartbeatReq.
+client_monotonic_ms (RclientMonotonicMs&
+last_server_seq (RlastServerSeq
+echo_ms (RechoMs"È
+HeartbeatRsp
+ok (Rok
+
+error_code (	R	errorCode$
+server_time_ms (RserverTimeMs
+echo_ms (RechoMs$
+server_recv_ms (RserverRecvMs$
+jitter_hint_ms (RjitterHintMs"ƒ
 GameRequest
 seq (Rseq#
 session_token (	RsessionToken9
@@ -528,12 +638,23 @@ friendList-
 push_ack4 (2.game.PushAckReqH RpushAckC
 get_self_profile< (2.game.GetSelfProfileReqH RgetSelfProfile#
 move= (2.game.MoveReqH RmoveC
-player_mail_send? (2.game.PlayerMailSendReqH RplayerMailSendB
-body"‘
+player_mail_send? (2.game.PlayerMailSendReqH RplayerMailSend9
+client_helloF (2.game.ClientHelloReqH RclientHello2
+	heartbeatG (2.game.HeartbeatReqH R	heartbeat?
+world_snapshotH (2.game.WorldSnapshotReqH RworldSnapshot,
+respawnI (2.game.RespawnReqH RrespawnC
+get_player_briefJ (2.game.GetPlayerBriefReqH RgetPlayerBriefI
+query_online_stateK (2.game.QueryOnlineStateReqH RqueryOnlineStateB
+body"ñ
 GameResponse
 seq (Rseq
 ok (Rok
-message (	Rmessage9
+message (	Rmessage
+
+error_code (	R	errorCode
+	retryable (R	retryable$
+server_time_ms (RserverTimeMs
+trace_id (	RtraceId9
 consume_item
  (2.game.ConsumeItemRspH RconsumeItem<
 release_skill (2.game.ReleaseSkillRspH RreleaseSkill3
@@ -571,5 +692,12 @@ serverPushA
 move= (2.game.MoveRspH Rmove-
 	aoi_delta> (2.game.AoiDeltaH RaoiDeltaC
 player_mail_send? (2.game.PlayerMailSendRspH RplayerMailSendE
-mailbox_changed@ (2.game.MailboxChangedNotifyH RmailboxChangedB
+mailbox_changed@ (2.game.MailboxChangedNotifyH RmailboxChanged9
+server_helloF (2.game.ServerHelloRspH RserverHello2
+	heartbeatG (2.game.HeartbeatRspH R	heartbeat,
+respawnH (2.game.RespawnRspH Rrespawn3
+chat_notifyI (2.game.ChatNotifyH R
+chatNotifyC
+get_player_briefJ (2.game.GetPlayerBriefRspH RgetPlayerBriefI
+query_online_stateK (2.game.QueryOnlineStateRspH RqueryOnlineStateB
 bodyBªGameMesh.Protocolbproto3

@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using GameMesh.Aoi;
+using GameMesh.Auth;
 using GameMesh.Bootstrap;
 using GameMesh.Network;
 using GameMesh.Player;
@@ -23,7 +24,7 @@ namespace GameMesh.Tests.PlayMode
             var conn = new GameConnection(dispatcher);
             var connect = conn.ConnectAsync("127.0.0.1", server.Port, default);
             yield return WaitTask(connect, 3f);
-            Assert.AreEqual(ConnectionState.Connected, conn.State);
+            Assert.AreEqual(ConnectionState.Handshaking, conn.State);
 
             var req = conn.RequestAsync(new GameRequest { Register = new RegisterReq { DeviceId = "play" } },
                 TimeSpan.FromSeconds(3), default);
@@ -37,7 +38,7 @@ namespace GameMesh.Tests.PlayMode
 
             var reconnect = conn.ConnectAsync("127.0.0.1", server.Port, default);
             yield return WaitTask(reconnect, 3f);
-            Assert.AreEqual(ConnectionState.Connected, conn.State);
+            Assert.AreEqual(ConnectionState.Handshaking, conn.State);
             var again = conn.RequestAsync(new GameRequest { Login = new LoginReq { PlayerId = 1 } },
                 TimeSpan.FromSeconds(3), default);
             yield return WaitTask(again, 3f);
@@ -55,7 +56,7 @@ namespace GameMesh.Tests.PlayMode
             var conn = new GameConnection(dispatcher);
             var connect = conn.ConnectAsync("127.0.0.1", server.Port, default);
             yield return WaitTask(connect, 3f);
-            Assert.AreEqual(ConnectionState.Connected, conn.State);
+            Assert.AreEqual(ConnectionState.Handshaking, conn.State);
             var send = server.SendRawAsync(new byte[] { 0xff, 0x00, 0xab, 0xcd, 0x12, 0x34, 0x56 });
             yield return WaitTask(send, 2f);
             var t = 0f;
@@ -67,6 +68,18 @@ namespace GameMesh.Tests.PlayMode
 
             Assert.AreEqual(ConnectionState.Disconnected, conn.State);
             UnityEngine.Object.Destroy(go);
+        }
+
+        [UnityTest]
+        public IEnumerator Reconnect_SingleFlightOnMainThread()
+        {
+            var policy = new ReconnectPolicy();
+            Assert.IsTrue(policy.TryBegin(Time.unscaledTime, 4, 30000, out _));
+            Assert.IsFalse(policy.TryBegin(Time.unscaledTime, 4, 30000, out var reason));
+            Assert.AreEqual("in-flight", reason);
+            yield return null;
+            policy.EndSuccess();
+            Assert.IsTrue(policy.TryBegin(Time.unscaledTime, 4, 30000, out _));
         }
 
         [UnityTest]

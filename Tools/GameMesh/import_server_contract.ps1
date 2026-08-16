@@ -33,7 +33,9 @@ $srcProto = Find-Proto $Source
 $dstDir = Join-Path $Root "Assets\GameMesh\Protocol\Schema"
 New-Item -ItemType Directory -Force -Path $dstDir | Out-Null
 $dstProto = Join-Path $dstDir "game.proto"
-Copy-Item -Force $srcProto $dstProto
+$utf8 = New-Object System.Text.UTF8Encoding $false
+$text = $utf8.GetString([IO.File]::ReadAllBytes($srcProto)).Replace("`r`n", "`n").Replace("`r", "`n")
+[IO.File]::WriteAllText($dstProto, $text, $utf8)
 
 $sha = (Get-FileHash -Algorithm SHA256 $dstProto).Hash.ToLower()
 $manifestSrc = @(
@@ -64,13 +66,8 @@ if (-not $ServerCommit) {
     }
 }
 
-$required = @(
-    "RegisterReq", "LoginReq", "LogoutReq", "ReconnectReq", "PushAckReq",
-    "PlayerAttributes", "Vec3", "EntitySnapshot",
-    "EnterMapReq", "LeaveMapReq", "MoveReq", "AoiDelta",
-    "PlayerMailSendReq", "MailboxSummaryReq", "MailListReq", "MailGetReq",
-    "MailboxChangedNotify", "ServerPushEnvelope"
-)
+$required = @($versions.required_types)
+if ($required.Count -eq 0) { throw "versions.json required_types is empty" }
 $protoText = [IO.File]::ReadAllText($dstProto)
 $present = @()
 $missing = @()
@@ -96,18 +93,20 @@ $manifest = [ordered]@{
     descriptor_sha256      = $descSha
     frame_format           = $frame
     max_frame_bytes        = $maxBytes
+    protocol_version       = [int]$versions.protocol_version
+    min_supported_protocol_version = [int]$versions.min_supported_protocol_version
     csharp_namespace       = $versions.csharp_namespace
     protoc_version         = $versions.protoc
     google_protobuf        = $versions.google_protobuf
     source_repo            = $SourceRepo
     source_path            = "proto/game.proto"
     source_commit          = $ServerCommit
-    source                 = $srcProto
     required_types_present = $present
     required_types_missing = @()
 }
 $manifestPath = Join-Path $Root "Assets\GameMesh\Protocol\protocol_manifest.json"
-($manifest | ConvertTo-Json -Depth 6) + "`n" | Set-Content -Encoding utf8 $manifestPath
+$utf8Manifest = New-Object System.Text.UTF8Encoding $false
+[IO.File]::WriteAllText($manifestPath, (($manifest | ConvertTo-Json -Depth 6) + "`n"), $utf8Manifest)
 
 Write-Host "Imported $srcProto"
 Write-Host "schema_sha256=$sha"

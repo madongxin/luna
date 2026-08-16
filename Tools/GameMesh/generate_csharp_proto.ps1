@@ -20,6 +20,13 @@ if (-not (Test-Path $Protoc)) {
         Write-Host "Downloading $url"
         Invoke-WebRequest -Uri $url -OutFile $ProtocZip
     }
+    $expected = [string]$versions.protoc_sha256.win64
+    if ($expected) {
+        $actual = (Get-FileHash -Algorithm SHA256 $ProtocZip).Hash.ToLower()
+        if ($actual -ne $expected.ToLower()) {
+            throw "protoc zip SHA-256 mismatch expected=$expected actual=$actual"
+        }
+    }
     Expand-Archive -Force $ProtocZip $ProtocDir
     $Protoc = Join-Path $ProtocDir "bin\protoc.exe"
 }

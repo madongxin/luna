@@ -17,6 +17,7 @@ namespace GameMesh.Player
         public float MoveSpeed = 10f;
         public float AttackSpeed = 1f;
         public ulong StatsVersion;
+        public string LifeState = "ALIVE";
         public bool FromServer;
     }
 }
