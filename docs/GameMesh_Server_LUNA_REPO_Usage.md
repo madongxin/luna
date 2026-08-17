@@ -1,34 +1,35 @@
 # 服务器侧如何使用 Luna 仓库
 
-给 `webserver` 门禁用。客户端仓库：`https://github.com/madongxin/luna`。  
-当前约定 HEAD：以 `git rev-parse HEAD` 为准（本说明随 `main` 更新）。
+两台机器：
 
-## 不要从 GitHub 拉源码
+| 机器 | 角色 |
+|---|---|
+| 阿里云 Linux | 跑 `webserver` 门禁与 Formal Gateway |
+| 开发机 Windows | 开发并 `git push` Luna；跑双 Unity Player |
 
-GitHub clone / tarball 可能超时。任选其一：
+客户端：`https://github.com/madongxin/luna`。用 git 拉，不要用 GitHub tarball（大且易超时）。
 
-1. **本机已有仓库（优先）**
+## 阿里云拉取完整 Luna git 仓库（主路径）
 
-   ```bash
-   export LUNA_REPO="/mnt/c/Users/dongx/FirstFPS"
-   # Windows 原生路径：C:\Users\dongx\FirstFPS
-   ```
+```bash
+git clone https://github.com/madongxin/luna.git ~/luna
+export LUNA_REPO="$HOME/luna"
+cd "$LUNA_REPO"
+git fetch origin
+git checkout main
+git pull --ff-only origin main
+git rev-parse HEAD
+```
 
-2. **用 git bundle（不访问 github.com）**
+`LUNA_REPO` 必须是完整 git 工作树，含：
 
-   ```bash
-   git clone /mnt/c/Users/dongx/FirstFPS/Builds/luna-pack/luna-f830c09.bundle luna
-   cd luna
-   export LUNA_REPO="$PWD"
-   ```
+- `Assets/GameMesh/Protocol/Schema/game.proto`
+- `Assets/GameMesh/Protocol/protocol_manifest.json`
+- `Tools/GameMesh/check_protocol_contract.sh`
 
-   若 bundle 文件名随 commit 变化，到 `Builds/luna-pack/` 下取最新 `luna-*.bundle`。  
-   重新打包：在 Luna 仓库执行 `Tools/GameMesh/export_client_ready_pack.ps1`。
+只拷 proto 不够。`GAMEMESH_REQUIRE_LUNA_CONTRACT=1` 时未设置 `LUNA_REPO` 必须失败，不得写成 PASS。
 
-3. **协议文件副本（只够对 hash，不够当完整 git 仓库）**
-
-   `Builds/luna-pack/protocol/{game.proto,protocol_manifest.json,1001.grid.json.sha256}`  
-   `client_ready_gate.sh` / `check_luna_protocol_contract.sh` 需要完整 Luna 树（含 `Tools/GameMesh/check_protocol_contract.sh`），不要只拷 proto。
+若 `github.com` clone/fetch 失败：记录完整报错并 `BLOCKED`，不要假装有仓库。备用：开发机 `Builds/luna-pack/luna-*.bundle`（gitignore，需另行拷贝）。
 
 ## 协议钉死值
 
@@ -39,16 +40,12 @@ GitHub clone / tarball 可能超时。任选其一：
 | 地图 1001 hash | `ceef56586c5281dca4ce45340f511d0d577fd724b14131ae5a21d01ea7f41317` |
 | protocol_version | `1` |
 
-`GAMEMESH_REQUIRE_LUNA_CONTRACT=1` 时必须设置 `LUNA_REPO`，否则协议门禁失败，不得写成 PASS。
+Formal Gateway 的 `ServerHelloRsp.maps` 必须包含 `map_template_id=1001`，且 version/hash 与上表一致。
 
-Hello 的 `ServerHelloRsp.maps` 必须包含 `map_template_id=1001`，且 version/hash 与上表一致，否则 Unity 客户端禁止 `EnterMap`。
-
-## 在 webserver 仓库执行的门禁
-
-工作目录必须是 **webserver 根目录**，不是 Luna。
+## 在阿里云 webserver 根目录跑门禁
 
 ```bash
-export LUNA_REPO="/mnt/c/Users/dongx/FirstFPS"
+export LUNA_REPO="$HOME/luna"
 ./scripts/check_luna_protocol_contract.sh
 # 期望：luna_protocol_contract=PASS
 
@@ -60,32 +57,19 @@ export LUNA_REPO="/mnt/c/Users/dongx/FirstFPS"
 # 期望：STABLE CANDIDATE PASS
 ```
 
-`client_ready_gate.sh` 的 TCP 步骤使用服务器自己的 `build/test/game_tcp_e2e_client`，不是 Unity Player。  
-`stable_gate.sh --full` 含 sanitizers、20 轮 E2E、默认 30min 负载、2h soak；缩短时长或缺少 `shellcheck` 必须报 `STABLE BLOCKED`。
+TCP 使用云上 `build/test/game_tcp_e2e_client`，不要执行 Windows `GameMeshClient.exe`。  
+`--full` 含 sanitizers、20 轮 E2E、默认 30min 负载、2h soak。
 
-## 真实 Unity 双进程 E2E（Windows Player）
+## 真实 Unity 双进程 E2E（仅 Windows 开发机）
 
-二进制（gitignore，不在 Git 里）：
+Player 在 gitignore 的 `Builds/`，**不会出现在 git clone 里**。Linux 也不要跑 `.exe`。
 
-```
-C:\Users\dongx\FirstFPS\Builds\GameMeshClient\GameMeshClient.exe
-C:\Users\dongx\FirstFPS\Builds\luna-pack\GameMeshClient\GameMeshClient.exe
-```
-
-需要 Formal Gateway（默认 `127.0.0.1:8081`）后，在 **Luna 仓库**执行：
+开发机：`C:\Users\dongx\FirstFPS\Builds\GameMeshClient\GameMeshClient.exe`  
+云上把 Formal Gateway 游戏 TCP 对公网开放后，开发机：
 
 ```powershell
 $env:GAMEMESH_E2E_GATEWAY = "1"
-.\Tools\GameMesh\run_two_clients_e2e.ps1 -HostName 127.0.0.1 -Port 8081
+.\Tools\GameMesh\run_two_clients_e2e.ps1 -HostName <ALIYUN_GATEWAY_HOST> -Port 8081
 ```
 
-Linux：
-
-```bash
-GAMEMESH_E2E_GATEWAY=1 GAMEMESH_HOST=127.0.0.1 GAMEMESH_PORT=8081 \
-  bash Tools/GameMesh/run_two_clients_e2e.sh /path/to/GameMeshClient
-```
-
-场景名：`presence-move-logout`。缺 Gateway 或缺二进制时退出码 `2` = NOT RUN，不是 PASS。
-
-本机当前 Player 是 **Windows x64**。Linux runner 不能直接跑该 `.exe`；Linux 门禁用 `game_tcp_e2e_client`，Windows 上再用上述 Player 做双 Unity 进程。
+场景：`presence-move-logout`。缺 Gateway 或缺 exe 时退出码 `2` = NOT RUN。
