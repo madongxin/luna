@@ -359,5 +359,99 @@ namespace GameMesh.Tests.EditMode
             Assert.AreEqual(3ul, got.Seq);
             Assert.IsFalse(cache.TryTake(9, out _));
         }
+
+        [Test]
+        public void HelloMapManifest_MatchesTemplateAndRejectsMismatch()
+        {
+            var maps = new[]
+            {
+                new MapManifestEntry
+                {
+                    MapTemplateId = 1001,
+                    DataVersion = 1,
+                    Sha256 = "ceef56586c5281dca4ce45340f511d0d577fd724b14131ae5a21d01ea7f41317"
+                }
+            };
+            Assert.IsTrue(ProtocolHandshake.TryMatchMap(maps, 1001,
+                "ceef56586c5281dca4ce45340f511d0d577fd724b14131ae5a21d01ea7f41317", 1, out var entry, out _));
+            Assert.AreEqual(1001ul, entry.MapTemplateId);
+            Assert.IsFalse(ProtocolHandshake.TryMatchMap(maps, 1001, "deadbeef", 1, out _, out var code));
+            Assert.AreEqual("ERR_MAP_DATA_MISMATCH", code);
+            Assert.IsFalse(ProtocolHandshake.TryMatchMap(maps, 2002, maps[0].Sha256, 1, out _, out code));
+            Assert.AreEqual("ERR_MAP_DATA_MISMATCH", code);
+        }
+
+        [Test]
+        public void Login_TopLevelOkBodyFail_IsRejected()
+        {
+            var rsp = new GameResponse
+            {
+                Ok = true,
+                ErrorCode = "ERR_UNAUTHENTICATED",
+                Login = new LoginRsp { Ok = false, Message = "bad credential" }
+            };
+            Assert.IsFalse(AuthResponse.TryAcceptLogin(rsp, 9, out var playerId, out _, out var code, out var message));
+            Assert.AreEqual(0ul, playerId);
+            Assert.AreEqual("ERR_UNAUTHENTICATED", code);
+            StringAssert.Contains("bad credential", message);
+        }
+
+        [Test]
+        public void Login_MissingSessionIdentity_IsRejected()
+        {
+            var rsp = new GameResponse
+            {
+                Ok = true,
+                Login = new LoginRsp { Ok = true, Token = "", SessionId = "s", Generation = 1 }
+            };
+            Assert.IsFalse(AuthResponse.TryAcceptLogin(rsp, 0, out _, out _, out var code, out _));
+            Assert.AreEqual(GameMeshErrorCode.ServerError, code);
+        }
+
+        [Test]
+        public void Logout_BodyFail_IsNotAuthoritative()
+        {
+            var rsp = new GameResponse
+            {
+                Ok = true,
+                Logout = new LogoutRsp { Ok = false, Message = "still busy" }
+            };
+            var result = AuthResponse.FromLogout(rsp, true);
+            Assert.IsTrue(result.RequestSent);
+            Assert.IsTrue(result.TopLevelOk);
+            Assert.IsFalse(result.BodyOk);
+            Assert.IsFalse(result.AuthorityOk);
+        }
+
+        [Test]
+        public void Logout_AuthoritativeSuccess()
+        {
+            var rsp = new GameResponse { Ok = true, Logout = new LogoutRsp { Ok = true } };
+            var result = AuthResponse.FromLogout(rsp, true);
+            Assert.IsTrue(result.AuthorityOk);
+        }
+
+        [Test]
+        public void Credential_ClearedFromLaunchArgs()
+        {
+            var args = GameMeshLaunchArgs.Parse(new[]
+            {
+                "-gamemeshPassword", "e2e-secret", "-gamemeshAutoScenario", "presence-move-logout"
+            });
+            Assert.AreEqual("e2e-secret", args.Password);
+            Assert.AreEqual("presence-move-logout", args.AutoScenario);
+            args.ClearPassword();
+            Assert.AreEqual("", args.Password);
+        }
+
+        [Test]
+        public void RegisterThenLogin_UsesSameNonEmptyCredential()
+        {
+            const string password = "e2e-local";
+            var register = new RegisterReq { Password = password };
+            var login = new LoginReq { Credential = password };
+            Assert.IsFalse(string.IsNullOrEmpty(register.Password));
+            Assert.AreEqual(register.Password, login.Credential);
+        }
     }
 }

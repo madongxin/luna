@@ -122,6 +122,50 @@ namespace GameMesh.Tests.PlayMode
             UnityEngine.Object.Destroy(host);
         }
 
+        [UnityTest]
+        public IEnumerator LogoutAndSessionReplaced_ClearRemoteViewsAndKeepPlayerId()
+        {
+            var client = GameMeshClient.Instance;
+            Assert.IsNotNull(client);
+            var previousId = client.Session.PlayerId;
+            client.Session.ApplyLogin(42, "sess", "tok", 1, "Ada");
+            client.Session.DeviceId = "dev-keep";
+            client.Aoi.LocalPlayerId = 42;
+            client.Aoi.SetMapInstance(9);
+            client.Aoi.ApplySnapshot(new[]
+            {
+                new EntitySnapshotDto
+                {
+                    EntityId = 7, PlayerId = 7, Name = "B", X = 1, Y = 0, Z = 0, Hp = 10, MaxHp = 10,
+                    StateSeq = 1, MapInstanceId = 9
+                }
+            });
+            yield return null;
+            yield return null;
+            Assert.IsNotNull(GameObject.Find("RemotePlayer_7"));
+
+            var notify = new GameResponse
+            {
+                SessionReplaced = new SessionReplacedNotify
+                {
+                    ReasonCode = "ERR_SESSION_REPLACED",
+                    Message = "kicked"
+                }
+            };
+            Assert.IsTrue(client.ApplyInnerPush(notify));
+            yield return null;
+            yield return null;
+            Assert.IsNull(GameObject.Find("RemotePlayer_7"));
+            Assert.AreEqual(42ul, client.Session.PlayerId);
+            Assert.AreEqual("Ada", client.Session.DisplayName);
+            Assert.IsTrue(client.Session.SessionReplaced);
+            Assert.IsFalse(client.Session.AutoReconnect);
+            Assert.IsTrue(string.IsNullOrEmpty(client.Session.Token));
+            client.Session.PlayerId = previousId;
+            client.Session.SessionReplaced = false;
+            client.Session.AutoReconnect = true;
+        }
+
         static IEnumerator WaitTask(System.Threading.Tasks.Task task, float timeout)
         {
             var t = 0f;

@@ -3,7 +3,8 @@ param(
     [string]$HostName = "127.0.0.1",
     [int]$Port = 8081,
     [string]$ClientPath = "",
-    [int]$TimeoutSec = 90
+    [int]$TimeoutSec = 90,
+    [string]$Scenario = "presence-move-logout"
 )
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $PSScriptRoot)
@@ -30,12 +31,20 @@ if (-not (Test-Path $ClientPath)) {
     exit 2
 }
 
+$hashFile = Join-Path $Root "maps\1001.grid.json.sha256"
+if (-not (Test-Path $hashFile)) {
+    Write-Host "Real dual-client E2E NOT RUN. missing $hashFile"
+    exit 2
+}
+$mapHash = (Get-Content -Raw $hashFile).Trim()
+
 $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
 $work = Join-Path $Root "Logs\e2e-$stamp"
 $coord = Join-Path $work "coord"
 $aDir = Join-Path $work "a"
 $bDir = Join-Path $work "b"
 New-Item -ItemType Directory -Force -Path $coord, $aDir, $bDir | Out-Null
+$commit = (git -C $Root rev-parse HEAD)
 
 function Start-Client([string]$role, [string]$device, [string]$name, [string]$dataPath, [string]$resultDir) {
     New-Item -ItemType Directory -Force -Path $dataPath, $resultDir | Out-Null
@@ -45,16 +54,36 @@ function Start-Client([string]$role, [string]$device, [string]$name, [string]$da
         "-gamemeshDevice", $device,
         "-gamemeshName", $name,
         "-gamemeshPassword", "e2e-local",
-        "-gamemeshAutoScenario", "two-client",
+        "-gamemeshMapHash", $mapHash,
+        "-gamemeshMapVersion", "1",
+        "-gamemeshAutoScenario", $Scenario,
         "-gamemeshRole", $role,
         "-gamemeshCoordDir", $coord,
         "-gamemeshResultDir", $resultDir,
         "-dataPath", $dataPath
     )
-    return Start-Process -FilePath $ClientPath -ArgumentList $args -PassThru
+    $p = Start-Process -FilePath $ClientPath -ArgumentList $args -PassThru
+    return $p
+}
+
+function Get-JsonlEvents([string]$path) {
+    if (-not (Test-Path $path)) { return @() }
+    return Get-Content $path | ForEach-Object {
+        $line = $_.Trim()
+        if ($line) {
+            try { $line | ConvertFrom-Json } catch { $null }
+        }
+    } | Where-Object { $_ -ne $null }
+}
+
+function Assert-Event($events, [string]$name) {
+    $hit = @($events | Where-Object { $_.event -eq $name })
+    if ($hit.Count -lt 1) { throw "missing structured event $name" }
+    return $hit[0]
 }
 
 try {
+    $env:GAMEMESH_CLIENT_COMMIT = $commit
     $a = Start-Client "a" "e2e-a-$stamp" "Alice" (Join-Path $aDir "data") $aDir
     $b = Start-Client "b" "e2e-b-$stamp" "Bob" (Join-Path $bDir "data") $bDir
     $procs = @($a, $b)
@@ -62,6 +91,13 @@ try {
     while ((Get-Date) -lt $deadline) {
         if ($a.HasExited -and $b.HasExited) { break }
         Start-Sleep -Seconds 1
+    }
+
+    if (-not $a.HasExited -or -not $b.HasExited) {
+        throw "clients did not exit by themselves"
+    }
+    if ($a.ExitCode -ne 0 -or $b.ExitCode -ne 0) {
+        throw "nonzero client exit A=$($a.ExitCode) B=$($b.ExitCode)"
     }
 
     $aResult = Join-Path $aDir "result.json"
@@ -72,35 +108,52 @@ try {
     $aj = Get-Content -Raw $aResult | ConvertFrom-Json
     $bj = Get-Content -Raw $bResult | ConvertFrom-Json
     if ($aj.result -ne "PASS" -or $bj.result -ne "PASS") {
-        throw "client result not PASS A=$($aj.result) B=$($bj.result)"
+        throw "client result not PASS A=$($aj.result) B=$($bj.result) errA=$($aj.error) errB=$($bj.error)"
     }
-    if ([uint64]$aj.map_instance_id -eq 0 -or [uint64]$aj.map_instance_id -ne [uint64]$bj.map_instance_id) {
-        throw "map_instance mismatch A=$($aj.map_instance_id) B=$($bj.map_instance_id)"
+    if (-not $aj.hello_ok -or -not $bj.hello_ok -or -not $aj.login_ok -or -not $bj.login_ok) {
+        throw "hello/login not ok"
     }
-    $aEvents = Get-Content (Join-Path $aDir "events.jsonl") -ErrorAction SilentlyContinue
-    $bEvents = Get-Content (Join-Path $bDir "events.jsonl") -ErrorAction SilentlyContinue
-    if (-not ($aEvents | Where-Object { $_ -match '"hello_ok"' })) { throw "A hello_ok missing" }
-    if (-not ($bEvents | Where-Object { $_ -match '"hello_ok"' })) { throw "B hello_ok missing" }
-    if (-not ($aEvents | Where-Object { $_ -match '"aoi_peer_seen"' })) { throw "A did not see B in AOI" }
-    if (-not ($bEvents | Where-Object { $_ -match '"aoi_peer_seen"' })) { throw "B did not see A in AOI" }
-    if (-not ($aEvents | Where-Object { $_ -match '"aoi_peer_moved"' })) { throw "A did not see B AOI move" }
-    if (-not ($bEvents | Where-Object { $_ -match '"aoi_peer_moved"' })) { throw "B did not see A AOI move" }
-    if (-not ($aEvents | Where-Object { $_ -match '"mail_sent"' })) { throw "A did not send mail" }
-    if (-not ($bEvents | Where-Object { $_ -match '"mail_received"' })) { throw "B did not receive mail" }
-    if (-not ($bEvents | Where-Object { $_ -match '"e2e"' })) { throw "B mail title/content mismatch" }
-    if (-not $a.HasExited -or -not $b.HasExited) {
-        throw "clients did not exit by themselves"
+    $aMap = [uint64]$aj.player_id_before_logout
+    $bMap = [uint64]$bj.player_id_before_logout
+    if ($aMap -eq 0 -or $bMap -eq 0) { throw "player_id_before_logout missing" }
+    $aInst = [uint64]$aj.map_instance_id_before_logout
+    $bInst = [uint64]$bj.map_instance_id_before_logout
+    if ($aInst -eq 0 -or $aInst -ne $bInst) {
+        throw "map_instance mismatch A=$aInst B=$bInst"
     }
-    if ($a.ExitCode -ne 0 -or $b.ExitCode -ne 0) {
-        throw "nonzero client exit A=$($a.ExitCode) B=$($b.ExitCode)"
+    if (-not $aj.peer_seen -or -not $bj.peer_seen) { throw "mutual visibility failed" }
+    if (-not $aj.peer_move_seen -or -not $bj.peer_move_seen) { throw "bidirectional move failed" }
+    if (-not $aj.logout_rsp_ok -or -not $bj.logout_rsp_ok) { throw "logout_rsp_ok missing" }
+    if (-not $bj.peer_leave_seen) { throw "B did not see AOI Leave after A logout" }
+
+    $aEvents = Get-JsonlEvents (Join-Path $aDir "events.jsonl")
+    $bEvents = Get-JsonlEvents (Join-Path $bDir "events.jsonl")
+    $aSeen = Assert-Event $aEvents "aoi_peer_seen"
+    $bSeen = Assert-Event $bEvents "aoi_peer_seen"
+    if ([uint64]$aSeen.peer_id -eq 0 -or [uint64]$bSeen.peer_id -eq 0) { throw "aoi_peer_seen missing peer_id" }
+    $aMoved = Assert-Event $aEvents "aoi_peer_moved"
+    $bMoved = Assert-Event $bEvents "aoi_peer_moved"
+    if ([uint64]$aMoved.new_state_seq -le [uint64]$aMoved.old_state_seq -and [uint64]$aMoved.old_state_seq -ne 0) {
+        throw "A did not observe increasing state_seq"
     }
+    if ([uint64]$bMoved.new_state_seq -le [uint64]$bMoved.old_state_seq -and [uint64]$bMoved.old_state_seq -ne 0) {
+        throw "B did not observe increasing state_seq"
+    }
+    Assert-Event $bEvents "aoi_peer_left" | Out-Null
+    $aLogout = Assert-Event $aEvents "logout"
+    $bLogout = Assert-Event $bEvents "logout"
+    if (-not $aLogout.ok -or -not $bLogout.ok) { throw "structured logout ok=false" }
+
+    $secretHits = Select-String -Path $aResult, $bResult, (Join-Path $aDir "events.jsonl"), (Join-Path $bDir "events.jsonl") -Pattern "e2e-local" -ErrorAction SilentlyContinue
+    if ($secretHits) { throw "secret leaked into result/events" }
 
     $meta = @{
-        client_commit = (git -C $Root rev-parse HEAD)
+        client_commit = $commit
         schema_sha256 = (Get-Content -Raw (Join-Path $Root "Assets\GameMesh\Protocol\protocol_manifest.json") | ConvertFrom-Json).schema_sha256
         server_commit = (Get-Content -Raw (Join-Path $Root "Assets\GameMesh\Protocol\protocol_manifest.json") | ConvertFrom-Json).source_commit
         a_result = $aResult
         b_result = $bResult
+        scenario = $Scenario
     }
     $playerLogs = @(
         (Join-Path $aDir "data\Player.log"),

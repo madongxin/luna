@@ -58,7 +58,8 @@ for t in required:
     if f"class {t}" not in cs:
         missing.append(t + "(C#)")
 for token in ("error_code", "retryable", "EnterMap", "GetSelfProfile", "PlayerMailSend",
-              "MailboxChanged", "ClientHello", "Heartbeat", "WorldSnapshot", "Respawn"):
+              "MailboxChanged", "ClientHello", "Heartbeat", "WorldSnapshot", "Respawn",
+              "SessionReplaced", "MapManifestEntry"):
     if token not in cs:
         missing.append("field/oneof " + token)
 if missing:

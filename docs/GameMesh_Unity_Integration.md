@@ -10,8 +10,8 @@
 | protoc | 25.3 |
 | Google.Protobuf | 3.25.3（`Assets/GameMesh/Plugins/Google.Protobuf.dll`） |
 | System.Runtime.CompilerServices.Unsafe | 6.0.0 |
-| 协议来源 | [madongxin/webserver](https://github.com/madongxin/webserver) `proto/game.proto` @ `60542e51ed5f7e757fced13cb2a069c29739aa36` |
-| schema SHA-256 | `4c29a73aa7fbed19f122e122bc1832852e593f6bfaca0b7433249391e2ec643d` |
+| 协议来源 | [madongxin/webserver](https://github.com/madongxin/webserver) `proto/game.proto` @ `17912f2033344ee579fa388ba8f7467e1790f772` |
+| schema SHA-256 | `f16462b65fa998a1c1d63be4710b2be927c9ec1b8ef47756803b12798d6e8665` |
 | protocol_version | `1` |
 
 版本只写在 `Tools/GameMesh/versions.json`。不要手改 `Assets/GameMesh/Protocol/Generated/Game.cs`。
@@ -25,7 +25,7 @@
 5. 运行 `Tools/GameMesh/check_protocol_contract.*` 与 EditMode 测试。
 6. 两端用同一 schema hash 联调。
 
-当前已导入 Hello、Heartbeat、WorldSnapshot、Respawn 以及既有 Register/Login/Move/AOI/Mail 类型。连接后必须先 `ClientHello`，再注册或登录。
+当前已导入 Hello、Heartbeat、WorldSnapshot、Respawn、MapManifest、SessionReplaced 以及既有 Register/Login/Move/AOI/Mail 类型。连接后必须先 `ClientHello`，再注册或登录。Hello 返回的 `maps` 必须包含 template `1001`，且 hash/version 与本地 `maps/1001.grid.json.sha256` 一致，否则禁止进图。
 
 ## 运行 Demo
 
@@ -43,7 +43,7 @@
 -gamemeshDevice device-a
 -gamemeshPassword <not stored>
 -gamemeshName Alice
--gamemeshAutoScenario two-client
+-gamemeshAutoScenario presence-move-logout
 -gamemeshRole a
 -gamemeshResultDir <dir>
 -gamemeshCoordDir <dir>
@@ -71,4 +71,4 @@ $env:UNITY_PATH="C:\Program Files\Unity\Hub\Editor\2022.3.62f3c1\Editor\Unity.ex
 .\Tools\GameMesh\run_playmode_tests.ps1
 ```
 
-双客户端真实 E2E：先 `build_integration_client.ps1`，设置 `GAMEMESH_E2E_GATEWAY=1` 后运行 `run_two_clients_e2e.ps1`。未提供 Gateway 时脚本返回 2（NOT RUN，不是通过）。
+双客户端真实 E2E：先 `build_integration_client.ps1`，设置 `GAMEMESH_E2E_GATEWAY=1` 后运行 `run_two_clients_e2e.ps1`（默认场景 `presence-move-logout`）。未提供 Gateway 时脚本返回 2（NOT RUN，不是通过）。邮件场景使用 `-gamemeshAutoScenario extended-mail`。

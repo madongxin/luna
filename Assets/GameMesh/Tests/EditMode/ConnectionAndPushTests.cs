@@ -143,6 +143,84 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void FakeGateway_HelloIncludesMap1001_AndLoginLogoutFailBranches()
+        {
+            using (var server = new FakeGatewayServer())
+            {
+                var helloReq = new GameRequest { Seq = 1, ClientHello = new ClientHelloReq { SchemaSha256 = "abc" } };
+                var hello = FakeGatewayServer.DefaultHandler(helloReq);
+                Assert.IsTrue(hello.ServerHello.Ok);
+                Assert.AreEqual(1, hello.ServerHello.Maps.Count);
+                Assert.AreEqual(1001ul, hello.ServerHello.Maps[0].MapTemplateId);
+
+                server.Handler = req =>
+                {
+                    if (req.BodyCase == GameRequest.BodyOneofCase.Login)
+                    {
+                        return new GameResponse
+                        {
+                            Seq = req.Seq,
+                            Ok = true,
+                            ErrorCode = "ERR_UNAUTHENTICATED",
+                            Login = new LoginRsp { Ok = false, Message = "no" }
+                        };
+                    }
+
+                    if (req.BodyCase == GameRequest.BodyOneofCase.Logout)
+                    {
+                        return new GameResponse
+                        {
+                            Seq = req.Seq,
+                            Ok = true,
+                            Logout = new LogoutRsp { Ok = false, Message = "no" }
+                        };
+                    }
+
+                    return FakeGatewayServer.DefaultHandler(req);
+                };
+                var dispatcher = new QueueDispatcher();
+                var conn = new GameConnection(dispatcher);
+                try
+                {
+                    conn.ConnectAsync("127.0.0.1", server.Port, CancellationToken.None).GetAwaiter().GetResult();
+                    var loginTask = conn.RequestAsync(new GameRequest { Login = new LoginReq { PlayerId = 1, Credential = "x" } },
+                        TimeSpan.FromSeconds(3), CancellationToken.None);
+                    SpinPump(dispatcher, () => loginTask.IsCompleted, 3000);
+                    var login = loginTask.GetAwaiter().GetResult();
+                    Assert.IsFalse(AuthResponse.TryAcceptLogin(login, 1, out _, out _, out var code, out _));
+                    Assert.AreEqual("ERR_UNAUTHENTICATED", code);
+
+                    var logoutTask = conn.RequestAsync(new GameRequest { Logout = new LogoutReq { PlayerId = 1 } },
+                        TimeSpan.FromSeconds(3), CancellationToken.None);
+                    SpinPump(dispatcher, () => logoutTask.IsCompleted, 3000);
+                    var logout = AuthResponse.FromLogout(logoutTask.GetAwaiter().GetResult(), true);
+                    Assert.IsFalse(logout.AuthorityOk);
+                }
+                finally
+                {
+                    conn.DisconnectAsync(DisconnectReason.ClientRequest, CancellationToken.None).GetAwaiter().GetResult();
+                    conn.DisposeAsync().GetAwaiter().GetResult();
+                }
+            }
+        }
+
+        [Test]
+        public void SessionReplacedNotify_ParsesExplicitBody()
+        {
+            var inner = new GameResponse
+            {
+                SessionReplaced = new SessionReplacedNotify
+                {
+                    ReasonCode = "ERR_SESSION_REPLACED",
+                    Message = "kicked",
+                    ServerTimeMs = 9
+                }
+            };
+            Assert.AreEqual(GameResponse.BodyOneofCase.SessionReplaced, inner.BodyCase);
+            Assert.AreEqual("ERR_SESSION_REPLACED", inner.SessionReplaced.ReasonCode);
+        }
+
+        [Test]
         public void BadProtobuf_FailClosed()
         {
             using (var server = new FakeGatewayServer())

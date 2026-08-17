@@ -1,9 +1,9 @@
 {
     "schema_file":  "Schema/game.proto",
-    "schema_sha256":  "4c29a73aa7fbed19f122e122bc1832852e593f6bfaca0b7433249391e2ec643d",
+    "schema_sha256":  "f16462b65fa998a1c1d63be4710b2be927c9ec1b8ef47756803b12798d6e8665",
     "generated_csharp":  "Generated/Game.cs",
     "descriptor":  "game.desc",
-    "descriptor_sha256":  "99137cbf8274e771069a40178c27b5e36357865aa449533c152e75d97ad9c40d",
+    "descriptor_sha256":  "078461f2c0bfa23c3d806b51dff1734be06777a65e332fe772cf4aa223c4aefb",
     "frame_format":  "uint32_be_length_prefixed",
     "max_frame_bytes":  4194304,
     "protocol_version":  1,
@@ -13,7 +13,7 @@
     "google_protobuf":  "3.25.3",
     "source_repo":  "https://github.com/madongxin/webserver",
     "source_path":  "proto/game.proto",
-    "source_commit":  "60542e51ed5f7e757fced13cb2a069c29739aa36",
+    "source_commit":  "17912f2033344ee579fa388ba8f7467e1790f772",
     "required_types_present":  [
                                    "RegisterReq",
                                    "LoginReq",
@@ -40,7 +40,9 @@
                                    "FullStateSnapshotRsp",
                                    "WorldSnapshotReq",
                                    "RespawnReq",
-                                   "RespawnRsp"
+                                   "RespawnRsp",
+                                   "MapManifestEntry",
+                                   "SessionReplacedNotify"
                                ],
     "required_types_missing":  [
 

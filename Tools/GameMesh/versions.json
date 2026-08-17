@@ -38,6 +38,8 @@
     "FullStateSnapshotRsp",
     "WorldSnapshotReq",
     "RespawnReq",
-    "RespawnRsp"
+    "RespawnRsp",
+    "MapManifestEntry",
+    "SessionReplacedNotify"
   ]
 }

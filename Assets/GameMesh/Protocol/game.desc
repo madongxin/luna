@@ -1,5 +1,5 @@
 
-õ–
+Æš
 
 game.protogame"Æ
 LoginReq
@@ -576,7 +576,11 @@ error_code (	R	errorCode
 client_version (	RclientVersion
 platform (	Rplatform#
 build_channel (	RbuildChannel"
-capabilities (	Rcapabilities"·
+capabilities (	Rcapabilities"u
+MapManifestEntry&
+map_template_id (RmapTemplateId!
+data_version (RdataVersion
+sha256 (	Rsha256"Í
 ServerHelloRsp
 ok (Rok
 
@@ -590,7 +594,15 @@ error_code (	R	errorCode
 heartbeat_interval_ms	 (RheartbeatIntervalMs&
 idle_timeout_ms
  (RidleTimeoutMs"
-capabilities (	Rcapabilities"
+capabilities (	Rcapabilities6
+gameplay_config_version (RgameplayConfigVersion0
+map_manifest_version (RmapManifestVersion*
+maps (2.game.MapManifestEntryRmaps"x
+SessionReplacedNotify
+reason_code (	R
+reasonCode$
+server_time_ms (RserverTimeMs
+message (	Rmessage"
 HeartbeatReq.
 client_monotonic_ms (RclientMonotonicMs&
 last_server_seq (RlastServerSeq
@@ -645,7 +657,7 @@ friendList-
 respawnI (2.game.RespawnReqH RrespawnC
 get_player_briefJ (2.game.GetPlayerBriefReqH RgetPlayerBriefI
 query_online_stateK (2.game.QueryOnlineStateReqH RqueryOnlineStateB
-body"ñ
+body"»
 GameResponse
 seq (Rseq
 ok (Rok
@@ -699,5 +711,6 @@ serverPushA
 chat_notifyI (2.game.ChatNotifyH R
 chatNotifyC
 get_player_briefJ (2.game.GetPlayerBriefRspH RgetPlayerBriefI
-query_online_stateK (2.game.QueryOnlineStateRspH RqueryOnlineStateB
+query_online_stateK (2.game.QueryOnlineStateRspH RqueryOnlineStateH
+session_replacedL (2.game.SessionReplacedNotifyH RsessionReplacedB
 bodyBªGameMesh.Protocolbproto3

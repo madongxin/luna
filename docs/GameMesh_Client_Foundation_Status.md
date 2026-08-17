@@ -1,31 +1,29 @@
 # GameMesh 客户端基础能力状态
 
-日期：2026-08-16  
-客户端 HEAD：`38a0042`（工作区有未提交的 60542e5 协议收口）  
-服务器协议 HEAD：`60542e51ed5f7e757fced13cb2a069c29739aa36`  
-schema SHA-256：`4c29a73aa7fbed19f122e122bc1832852e593f6bfaca0b7433249391e2ec643d`  
-descriptor SHA-256：`99137cbf8274e771069a40178c27b5e36357865aa449533c152e75d97ad9c40d`  
-protocol_version：`1`  
-min_supported_protocol_version：`1`  
-protoc：25.3  
-Google.Protobuf：3.25.3  
+日期：2026-08-16
+客户端 HEAD：`2e43ed53267887614a358116d42b0de9c19b6822`（工作区有未提交的 17912f2 登录/AOI/移动收口）
+服务器协议 HEAD：`17912f2033344ee579fa388ba8f7467e1790f772`
+schema SHA-256：`f16462b65fa998a1c1d63be4710b2be927c9ec1b8ef47756803b12798d6e8665`
+descriptor SHA-256：`078461f2c0bfa23c3d806b51dff1734be06777a65e332fe772cf4aa223c4aefb`
+protocol_version：`1`
+min_supported_protocol_version：`1`
+protoc：25.3
+Google.Protobuf：3.25.3
 
 ## 本轮收口
 
-- C0：从服务器 `60542e5` 导入 `game.proto`（LF 规范化后 hash 与审计基线一致），生成 C#；required_types 含 Hello/Heartbeat/WorldSnapshot/Respawn。
-- C1：TCP 后进入 `Handshaking`，强制 `ClientHelloReq`；按 Hello 间隔发 `HeartbeatReq`；顶层 `error_code/retryable/trace_id` 优先；UI 用稳定中文错误。
-- C2：Push gap / Reconnect `NeedFullSnapshot` 请求 `WorldSnapshotReq` 并原子应用完整快照；死亡禁用移动并发送 `RespawnReq`；顶号停止自动重连并保留本地 player_id/device。
-- C3：AutoScenario 记录 `hello_ok`/`heartbeat_ok` 及 commit/schema/gateway；CI 在 main/tags 缺 License 或缺 live Gateway 时 BLOCKED。
-
-`SessionReplacedNotify` 未出现在公网 `game.proto`；客户端按顶层 `ERR_SESSION_REPLACED` / `ERR_FENCE_STALE` 与重连失败处理顶号。
+- C0：从服务器 `17912f2` 导入 `game.proto`（LF 规范化后 hash 与审计基线一致）；required_types 含 `MapManifestEntry` / `SessionReplacedNotify`。Hello 后按地图清单校验 template `1001`；`ApplyInnerPush` 显式处理顶号 Push。协议 CI 使用 `bash Tools/GameMesh/check_protocol_contract.sh`。
+- C1：`RegisterThenLoginAsync` 在登录请求发出前保留同一份非空密码；登录结束后清空内存密码。自动场景不读 PlayerPrefs。`LogoutAsync` 返回 `LogoutResult`，仅权威成功记 `logout_ok`，并保留本地 player_id/device/name。
+- C2：新增 `presence-move-logout` 双客户端场景；`result.json` 使用登出前 player_id/map_instance。Bash 后台并发启动两个 Player。邮件断言移到 `extended-mail`。
+- C3：FakeGateway Hello 带地图清单，并覆盖 Login/Logout 失败与 SessionReplaced。CI 上传 Integration Build，E2E job 下载该产物；main/tags 缺 License 或缺 live Gateway 时 BLOCKED。
 
 ## 本机实测
 
 | 命令 | 退出码 | 报告 |
 |------|--------|------|
-| `check_protocol_contract.ps1 <webserver-60542e5>` | 0 | schema `4c29a73a…` 与服务器 HEAD 一致 |
-| EditMode | 0 | `TestResults/editmode.xml` 37/37 |
-| PlayMode | 0 | `TestResults/playmode.xml` 4/4 |
+| `check_protocol_contract.ps1 <webserver-17912f2>` | 0 | schema `f16462b6…` 与服务器 HEAD 一致 |
+| EditMode | 0 | `TestResults/editmode.xml` 46/46 |
+| PlayMode | 0 | `TestResults/playmode.xml` 5/5 |
 | `build_integration_client.ps1` | NOT RUN | 本轮未出包 |
 | `run_two_clients_e2e.ps1` | 2 | NOT RUN：无 `GAMEMESH_E2E_GATEWAY` |
 
@@ -33,6 +31,7 @@ Google.Protobuf：3.25.3
 
 | 项 | 原因 |
 |----|------|
-| 真实双 Unity E2E | 需要 live Gateway 与 Integration Client |
+| 真实双 Unity E2E | 需要 Formal Gateway `127.0.0.1:8081`（commit `17912f2`）、Hello 地图清单含 1001、以及 Integration Client |
 | 跨 GW 重连 / 人为 Push gap / 顶号 E2E | 需要 live 集群；`run_session_replaced_e2e` 无 Gateway 时退出 2 |
 | CI Unity 测试/出包 | 需要仓库 `UNITY_LICENSE` secret |
+| CI 真实 E2E | 需要 `GAMEMESH_E2E_GATEWAY=1` 和可访问的 live Gateway |

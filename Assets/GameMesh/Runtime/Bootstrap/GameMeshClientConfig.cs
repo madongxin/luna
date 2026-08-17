@@ -41,8 +41,6 @@ namespace GameMesh.Bootstrap
                     mapTemplateId + ".grid.json.sha256"));
                 if (File.Exists(hashPath))
                     mapDataHash = File.ReadAllText(hashPath).Trim().ToLowerInvariant();
-                else
-                    mapDataHash = "ceef56586c5281dca4ce45340f511d0d577fd724b14131ae5a21d01ea7f41317";
             }
 
             if (dataVersion == 0)

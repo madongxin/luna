@@ -18,9 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Check protocol contract
-        run: |
-          chmod +x Tools/GameMesh/check_protocol_contract.sh
-          Tools/GameMesh/check_protocol_contract.sh
+        run: bash Tools/GameMesh/check_protocol_contract.sh
       - name: Verify Google.Protobuf plugin
         run: |
           test -f Assets/GameMesh/Plugins/Google.Protobuf.dll
@@ -96,7 +94,15 @@ jobs:
           unityVersion: 2022.3.62f1
           targetPlatform: StandaloneLinux64
           buildName: GameMeshClient
+          buildsPath: Builds
           allowDirtyBuild: false
+      - name: Upload integration client
+        if: steps.lic.outputs.has == '1'
+        uses: actions/upload-artifact@v4
+        with:
+          name: gamemesh-integration-client
+          path: Builds/
+          if-no-files-found: ignore
       - name: Upload test artifacts
         if: always()
         uses: actions/upload-artifact@v4
@@ -111,14 +117,20 @@ jobs:
   e2e:
     name: Dual client E2E
     runs-on: ubuntu-latest
-    needs: protocol-check
+    needs: [protocol-check, unity-tests]
+    if: always() && needs.protocol-check.result == 'success'
     steps:
       - uses: actions/checkout@v4
-      - name: E2E requires live Gateway
+      - name: Download integration client
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: gamemesh-integration-client
+          path: Builds
+      - name: Dual Unity presence-move-logout
         run: |
-          chmod +x Tools/GameMesh/run_two_clients_e2e.sh Tools/GameMesh/run_session_replaced_e2e.sh Tools/GameMesh/check_protocol_contract.sh Tools/GameMesh/import_server_contract.sh Tools/GameMesh/generate_csharp_proto.sh
           set +e
-          Tools/GameMesh/run_two_clients_e2e.sh
+          bash Tools/GameMesh/run_two_clients_e2e.sh
           code=$?
           if [ "$code" -eq 2 ]; then
             echo "E2E NOT RUN: no GAMEMESH_E2E_GATEWAY / client binary / live Gateway"

@@ -37,8 +37,12 @@ namespace GameMesh.Tests.EditMode
             Assert.IsTrue(ProtocolCapabilities.HasType("ClientHelloReq"));
             Assert.IsTrue(ProtocolCapabilities.HasType("WorldSnapshotReq"));
             Assert.IsTrue(ProtocolCapabilities.HasType("RespawnReq"));
+            Assert.IsTrue(ProtocolCapabilities.HasType("MapManifestEntry"));
+            Assert.IsTrue(ProtocolCapabilities.HasType("SessionReplacedNotify"));
             Assert.AreEqual(GameRequest.BodyOneofCase.ClientHello, new GameRequest { ClientHello = new ClientHelloReq() }.BodyCase);
             Assert.AreEqual(GameResponse.BodyOneofCase.ServerHello, new GameResponse { ServerHello = new ServerHelloRsp() }.BodyCase);
+            Assert.AreEqual(GameResponse.BodyOneofCase.SessionReplaced,
+                new GameResponse { SessionReplaced = new SessionReplacedNotify() }.BodyCase);
             Assert.AreEqual(GameResponse.BodyOneofCase.FullSnapshot, new GameResponse { FullSnapshot = new FullStateSnapshotRsp() }.BodyCase);
             var rsp = new GameResponse
             {
@@ -178,6 +182,11 @@ namespace GameMesh.Tests.EditMode
             s = ConnectionStateMachine.Transition(s, ConnectionState.Authenticated);
             s = ConnectionStateMachine.Transition(s, ConnectionState.EnteringWorld);
             s = ConnectionStateMachine.Transition(s, ConnectionState.InWorld);
+            s = ConnectionStateMachine.Transition(s, ConnectionState.Closing);
+            s = ConnectionStateMachine.Transition(s, ConnectionState.Disconnected);
+            Assert.AreEqual(ConnectionState.Disconnected, s);
+            s = ConnectionState.InWorld;
+            s = ConnectionStateMachine.Transition(s, ConnectionState.LoggingOut);
             s = ConnectionStateMachine.Transition(s, ConnectionState.Closing);
             s = ConnectionStateMachine.Transition(s, ConnectionState.Disconnected);
             Assert.AreEqual(ConnectionState.Disconnected, s);

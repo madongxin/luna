@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using GameMesh.Aoi;
@@ -78,6 +79,7 @@ namespace GameMesh.Bootstrap
         ulong _lastMoveStateSeq;
         int _heartbeatMisses;
         uint _heartbeatIntervalMs = 5000;
+        readonly List<MapManifestEntry> _helloMaps = new List<MapManifestEntry>();
         uint _idleTimeoutMs = 20000;
         readonly PushGapCache _gapCache = new PushGapCache();
         bool Alive => this != null && _lifetime != null && !_lifetime.IsCancellationRequested;
@@ -180,9 +182,30 @@ namespace GameMesh.Bootstrap
             }
         }
 
+        public async Task RegisterThenLoginAsync()
+        {
+            var password = LaunchArgs.Password ?? "";
+            try
+            {
+                await RegisterAsync(password).ConfigureAwait(true);
+                if (Session.PlayerId == 0)
+                    return;
+                await LoginAsync(password).ConfigureAwait(true);
+            }
+            finally
+            {
+                LaunchArgs.ClearPassword();
+            }
+        }
+
         public async Task RegisterAsync()
         {
-            if (_busy)
+            await RegisterAsync(LaunchArgs.Password).ConfigureAwait(true);
+        }
+
+        public async Task RegisterAsync(string password)
+        {
+            if (_busy || Connection.State == ConnectionState.LoggingOut)
                 return;
             _busy = true;
             BusyStage = "注册中";
@@ -190,7 +213,6 @@ namespace GameMesh.Bootstrap
             {
                 await EnsureConnectedAsync().ConfigureAwait(true);
                 Connection.SetLogicalState(ConnectionState.Authenticating);
-                var password = LaunchArgs.Password;
                 var req = new GameRequest
                 {
                     Register = new RegisterReq
@@ -201,7 +223,6 @@ namespace GameMesh.Bootstrap
                     }
                 };
                 var rsp = await RequestAsync(req).ConfigureAwait(true);
-                LaunchArgs.ClearPassword();
                 if (!rsp.Ok || rsp.Register == null || !rsp.Register.Ok)
                 {
                     SetError(GameMeshErrorCode.ServerError, rsp.Register?.Message ?? rsp.Message,
@@ -230,7 +251,19 @@ namespace GameMesh.Bootstrap
 
         public async Task LoginAsync()
         {
-            if (_busy)
+            try
+            {
+                await LoginAsync(LaunchArgs.Password).ConfigureAwait(true);
+            }
+            finally
+            {
+                LaunchArgs.ClearPassword();
+            }
+        }
+
+        public async Task LoginAsync(string password)
+        {
+            if (_busy || Connection.State == ConnectionState.LoggingOut)
                 return;
             _busy = true;
             BusyStage = "登录中";
@@ -238,7 +271,6 @@ namespace GameMesh.Bootstrap
             {
                 await EnsureConnectedAsync().ConfigureAwait(true);
                 Connection.SetLogicalState(ConnectionState.Authenticating);
-                var password = LaunchArgs.Password;
                 var req = new GameRequest
                 {
                     Login = new LoginReq
@@ -252,26 +284,20 @@ namespace GameMesh.Bootstrap
                     }
                 };
                 var rsp = await RequestAsync(req).ConfigureAwait(true);
-                LaunchArgs.ClearPassword();
-                if (!rsp.Ok || rsp.Login == null || !rsp.Login.Ok)
+                if (!AuthResponse.TryAcceptLogin(rsp, Session.PlayerId, out var playerId, out var login,
+                        out var errorCode, out var message))
                 {
-                    SetError(GameMeshErrorCode.ServerError, rsp.Login?.Message ?? rsp.Message,
-                        ProtocolMapper.ExtractErrorCode(rsp));
+                    SetError(errorCode, message, errorCode);
                     Connection.SetLogicalState(ConnectionState.Connected);
                     return;
                 }
 
-                var login = rsp.Login;
-                var playerId = Session.PlayerId;
-                if (login.Profile != null && login.Profile.PlayerId != 0)
-                    playerId = login.Profile.PlayerId;
                 Session.ApplyLogin(playerId, login.SessionId, login.Token, login.Generation,
                     LaunchArgs.DisplayName);
                 if (!ApplyProfile(login.Profile))
                     await LoadSelfProfileAsync().ConfigureAwait(true);
-                if (Session.PlayerId == 0)
-                    GameMeshLog.Warn("login ok but player_id was 0; enter it from register result");
                 Session.AutoReconnect = true;
+                Session.SessionReplaced = false;
                 _logoutRequested = false;
                 Reconnect.Reset();
                 Push.Reset(0);
@@ -288,6 +314,8 @@ namespace GameMesh.Bootstrap
             catch (Exception ex)
             {
                 SetError(ex);
+                if (Connection.State == ConnectionState.Authenticating)
+                    Connection.SetLogicalState(ConnectionState.Connected);
             }
             finally
             {
@@ -296,27 +324,53 @@ namespace GameMesh.Bootstrap
             }
         }
 
-        public async Task LogoutAsync()
+        public async Task<LogoutResult> LogoutAsync()
         {
+            var result = new LogoutResult();
             _logoutRequested = true;
             Session.AutoReconnect = false;
             Reconnect.Reset();
+            StopHeartbeat();
+            if (Connection != null &&
+                ConnectionStateMachine.CanTransition(Connection.State, ConnectionState.LoggingOut))
+                Connection.SetLogicalState(ConnectionState.LoggingOut);
+
             try
             {
-                if (Connection.State != ConnectionState.Disconnected && Session.HasIdentity)
+                if (Connection != null &&
+                    Connection.State != ConnectionState.Disconnected &&
+                    Connection.State != ConnectionState.Closing &&
+                    Session.HasIdentity)
                 {
                     var req = new GameRequest
                     {
                         Logout = new LogoutReq { PlayerId = Session.PlayerId, Token = Session.Token ?? "" }
                     };
+                    result.RequestSent = true;
                     try
                     {
-                        await RequestAsync(req, TimeSpan.FromSeconds(2)).ConfigureAwait(true);
+                        var rsp = await RequestAsync(req, TimeSpan.FromSeconds(2)).ConfigureAwait(true);
+                        var parsed = AuthResponse.FromLogout(rsp, true);
+                        result.TopLevelOk = parsed.TopLevelOk;
+                        result.BodyOk = parsed.BodyOk;
+                        result.ErrorCode = parsed.ErrorCode;
+                        result.Message = parsed.Message;
+                        if (!result.AuthorityOk)
+                            SetError(result.ErrorCode, result.Message, result.ErrorCode);
                     }
                     catch (Exception ex)
                     {
+                        result.ErrorCode = ex is GameMeshException ge
+                            ? ge.ErrorCode
+                            : GameMeshErrorCode.ServerError;
+                        result.Message = ex.Message;
                         GameMeshLog.Warn("logout request: " + ex.Message);
                     }
+                }
+                else
+                {
+                    result.ErrorCode = GameMeshErrorCode.ClientIllegalState;
+                    result.Message = "logout skipped: no live session";
                 }
             }
             finally
@@ -327,14 +381,21 @@ namespace GameMesh.Bootstrap
                 StopHeartbeat();
                 HelloOk = false;
                 HeartbeatOk = false;
-                Session.ClearSensitive();
+                Session.ClearSessionKeepIdentity();
+                Session.AutoReconnect = false;
                 LaunchArgs.ClearPassword();
                 HasPendingSpawn = false;
                 HasPendingCorrection = false;
                 _enterOpId = null;
-                await Connection.DisconnectAsync(DisconnectReason.UserLogout, CancellationToken.None)
-                    .ConfigureAwait(true);
+                if (Connection != null)
+                {
+                    await Connection.DisconnectAsync(DisconnectReason.UserLogout, CancellationToken.None)
+                        .ConfigureAwait(true);
+                    result.TransportDisconnected = Connection.State == ConnectionState.Disconnected;
+                }
             }
+
+            return result;
         }
 
         public void ClearLocalAccount()
@@ -354,11 +415,29 @@ namespace GameMesh.Bootstrap
                 return;
             }
 
+            if (Connection != null && Connection.State == ConnectionState.LoggingOut)
+            {
+                SetError(GameMeshErrorCode.ClientIllegalState, "logging out");
+                return;
+            }
+
+            Config.ResolveMapContract();
+            var mapMatched = ProtocolHandshake.TryMatchMap(_helloMaps, Config.mapTemplateId, Config.mapDataHash,
+                Config.dataVersion, out _, out var mapCode);
+            if (MapBlocked || !mapMatched)
+            {
+                MapBlocked = true;
+                if (string.IsNullOrEmpty(MapBlockReason))
+                    MapBlockReason = "map manifest missing or mismatch template=" + Config.mapTemplateId;
+                SetError(string.IsNullOrEmpty(mapCode) ? GameMeshErrorCode.MapHashMismatch : mapCode,
+                    MapBlockReason, mapCode);
+                return;
+            }
+
             try
             {
                 BusyStage = "进图中";
                 Connection.SetLogicalState(ConnectionState.EnteringWorld);
-                Config.ResolveMapContract();
                 if (string.IsNullOrEmpty(_enterOpId))
                     _enterOpId = Guid.NewGuid().ToString("N");
                 var req = new GameRequest
@@ -470,6 +549,12 @@ namespace GameMesh.Bootstrap
         {
             if (request == null)
                 throw new GameMeshException(GameMeshErrorCode.ClientProtocol, "null request");
+            if (Connection != null && Connection.State == ConnectionState.LoggingOut &&
+                request.BodyCase != GameRequest.BodyOneofCase.Logout)
+            {
+                throw new GameMeshException(GameMeshErrorCode.ClientIllegalState,
+                    "logging out; business requests rejected");
+            }
             if (request.BodyCase != GameRequest.BodyOneofCase.ClientHello && !HelloOk)
                 throw new GameMeshException(GameMeshErrorCode.ClientIllegalState, "Hello required before business requests");
             if (!string.IsNullOrEmpty(Session.Token) &&
@@ -506,6 +591,8 @@ namespace GameMesh.Bootstrap
 
         async Task EnsureConnectedAsync()
         {
+            if (Connection != null && Connection.State == ConnectionState.LoggingOut)
+                throw new GameMeshException(GameMeshErrorCode.ClientIllegalState, "logging out");
             if (HelloOk &&
                 (Connection.State == ConnectionState.Connected ||
                  Connection.State == ConnectionState.Authenticating ||
@@ -574,6 +661,27 @@ namespace GameMesh.Bootstrap
                     _idleTimeoutMs = helloRsp.IdleTimeoutMs;
                 HeartbeatClock.OnReply(HeartbeatClock.MonotonicMs, HeartbeatClock.MonotonicMs,
                     helloRsp.ServerTimeMs, 0);
+                _helloMaps.Clear();
+                if (helloRsp.Maps != null)
+                {
+                    foreach (var map in helloRsp.Maps)
+                        _helloMaps.Add(map);
+                }
+
+                Config.ResolveMapContract();
+                if (!ProtocolHandshake.TryMatchMap(_helloMaps, Config.mapTemplateId, Config.mapDataHash,
+                        Config.dataVersion, out _, out var mapCode))
+                {
+                    MapBlocked = true;
+                    MapBlockReason = "hello map manifest missing or mismatch template=" + Config.mapTemplateId;
+                    SetError(mapCode, MapBlockReason, mapCode);
+                }
+                else
+                {
+                    MapBlocked = false;
+                    MapBlockReason = "";
+                }
+
                 Connection.SetLogicalState(ConnectionState.Connected);
                 StartHeartbeat(generation);
                 GameMeshLog.Info($"hello ok protocol={helloRsp.ProtocolVersion} hb={_heartbeatIntervalMs}ms");
@@ -807,10 +915,19 @@ namespace GameMesh.Bootstrap
             }
         }
 
-        bool ApplyInnerPush(GameResponse inner)
+        internal bool ApplyInnerPush(GameResponse inner)
         {
             if (inner == null)
                 return false;
+            if (inner.SessionReplaced != null)
+            {
+                var notify = inner.SessionReplaced;
+                var code = string.IsNullOrEmpty(notify.ReasonCode)
+                    ? GameMeshErrorCode.SessionReplaced
+                    : notify.ReasonCode;
+                HandleSessionReplaced(code, notify.Message);
+                return true;
+            }
             if (inner.MailboxChanged != null || inner.MailboxSummary != null || inner.MailList != null)
                 Mail.NotifyMailboxChanged(Time.unscaledTime);
             if (inner.AoiDelta != null)
@@ -934,7 +1051,7 @@ namespace GameMesh.Bootstrap
             }
         }
 
-        public void HandleSessionReplaced(string code)
+        public void HandleSessionReplaced(string code, string message = "")
         {
             Session.SessionReplaced = true;
             Session.AutoReconnect = false;
@@ -948,8 +1065,8 @@ namespace GameMesh.Bootstrap
             HasPendingSpawn = false;
             HasPendingCorrection = false;
             Session.ClearSessionKeepIdentity();
-            SetError(string.IsNullOrEmpty(code) ? GameMeshErrorCode.SessionReplaced : code,
-                "账号已在其他设备登录");
+            var text = string.IsNullOrEmpty(message) ? "账号已在其他设备登录" : message;
+            SetError(string.IsNullOrEmpty(code) ? GameMeshErrorCode.SessionReplaced : code, text);
             if (Connection != null && Connection.State != ConnectionState.Disconnected)
                 _ = Connection.DisconnectAsync(DisconnectReason.ClientRequest, CancellationToken.None);
         }
@@ -1129,6 +1246,13 @@ namespace GameMesh.Bootstrap
 
         void ApplyLocalIdentity()
         {
+            if (!string.IsNullOrEmpty(LaunchArgs.AutoScenario))
+            {
+                Session.DeviceId = LaunchArgs.DeviceId;
+                Session.DisplayName = LaunchArgs.DisplayName;
+                return;
+            }
+
             var stored = LocalIdentityStore.Load();
             if (string.IsNullOrEmpty(LaunchArgs.DeviceId) || LaunchArgs.DeviceId == "unity-dev")
             {
@@ -1154,6 +1278,8 @@ namespace GameMesh.Bootstrap
 
         void PersistIdentity()
         {
+            if (!string.IsNullOrEmpty(LaunchArgs.AutoScenario))
+                return;
             LocalIdentityStore.Save(LaunchArgs.DeviceId, Session.PlayerId, Session.DisplayName, Config.host,
                 Config.port);
         }

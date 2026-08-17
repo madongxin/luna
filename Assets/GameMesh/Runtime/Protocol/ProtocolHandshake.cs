@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 
 namespace GameMesh.Protocol
 {
@@ -55,6 +56,48 @@ namespace GameMesh.Protocol
             {
                 errorCode = "ERR_SCHEMA_MISMATCH";
                 message = "schema_sha256 mismatch";
+                return false;
+            }
+
+            return true;
+        }
+
+        public static bool TryMatchMap(IEnumerable<MapManifestEntry> maps, ulong templateId,
+            string localHash, uint localVersion, out MapManifestEntry entry, out string errorCode)
+        {
+            entry = null;
+            errorCode = "";
+            if (maps == null)
+            {
+                errorCode = "ERR_MAP_DATA_MISMATCH";
+                return false;
+            }
+
+            foreach (var item in maps)
+            {
+                if (item != null && item.MapTemplateId == templateId)
+                {
+                    entry = item;
+                    break;
+                }
+            }
+
+            if (entry == null)
+            {
+                errorCode = "ERR_MAP_DATA_MISMATCH";
+                return false;
+            }
+
+            if (!string.IsNullOrEmpty(localHash) && !string.IsNullOrEmpty(entry.Sha256) &&
+                !string.Equals(localHash.Trim(), entry.Sha256.Trim(), StringComparison.OrdinalIgnoreCase))
+            {
+                errorCode = "ERR_MAP_DATA_MISMATCH";
+                return false;
+            }
+
+            if (localVersion != 0 && entry.DataVersion != 0 && localVersion != entry.DataVersion)
+            {
+                errorCode = "ERR_MAP_DATA_MISMATCH";
                 return false;
             }
 

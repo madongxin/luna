@@ -15,7 +15,8 @@ namespace GameMesh.Network
         InWorld = 7,
         Reconnecting = 8,
         Closing = 9,
-        Resyncing = 10
+        Resyncing = 10,
+        LoggingOut = 11
     }
 
     public enum DisconnectReason
@@ -52,39 +53,49 @@ namespace GameMesh.Network
                 [ConnectionState.Connected] = new HashSet<ConnectionState>
                 {
                     ConnectionState.Authenticating, ConnectionState.Closing,
-                    ConnectionState.Disconnected, ConnectionState.Reconnecting
+                    ConnectionState.Disconnected, ConnectionState.Reconnecting,
+                    ConnectionState.LoggingOut
                 },
                 [ConnectionState.Authenticating] = new HashSet<ConnectionState>
                 {
                     ConnectionState.Authenticated, ConnectionState.Closing,
-                    ConnectionState.Disconnected, ConnectionState.Reconnecting
+                    ConnectionState.Disconnected, ConnectionState.Reconnecting,
+                    ConnectionState.LoggingOut
                 },
                 [ConnectionState.Authenticated] = new HashSet<ConnectionState>
                 {
                     ConnectionState.EnteringWorld, ConnectionState.Closing,
                     ConnectionState.Disconnected, ConnectionState.Reconnecting,
-                    ConnectionState.Resyncing
+                    ConnectionState.Resyncing, ConnectionState.LoggingOut
                 },
                 [ConnectionState.EnteringWorld] = new HashSet<ConnectionState>
                 {
                     ConnectionState.InWorld, ConnectionState.Authenticated,
-                    ConnectionState.Closing, ConnectionState.Disconnected, ConnectionState.Reconnecting
+                    ConnectionState.Closing, ConnectionState.Disconnected, ConnectionState.Reconnecting,
+                    ConnectionState.LoggingOut
                 },
                 [ConnectionState.InWorld] = new HashSet<ConnectionState>
                 {
                     ConnectionState.Authenticated, ConnectionState.Reconnecting,
-                    ConnectionState.Resyncing, ConnectionState.Closing, ConnectionState.Disconnected
+                    ConnectionState.Resyncing, ConnectionState.Closing, ConnectionState.Disconnected,
+                    ConnectionState.LoggingOut
                 },
                 [ConnectionState.Resyncing] = new HashSet<ConnectionState>
                 {
                     ConnectionState.InWorld, ConnectionState.Authenticated,
-                    ConnectionState.Reconnecting, ConnectionState.Closing, ConnectionState.Disconnected
+                    ConnectionState.Reconnecting, ConnectionState.Closing, ConnectionState.Disconnected,
+                    ConnectionState.LoggingOut
+                },
+                [ConnectionState.LoggingOut] = new HashSet<ConnectionState>
+                {
+                    ConnectionState.Closing, ConnectionState.Disconnected
                 },
                 [ConnectionState.Reconnecting] = new HashSet<ConnectionState>
                 {
                     ConnectionState.Connecting, ConnectionState.Handshaking, ConnectionState.Connected,
                     ConnectionState.Authenticated, ConnectionState.InWorld,
-                    ConnectionState.Resyncing, ConnectionState.Closing, ConnectionState.Disconnected
+                    ConnectionState.Resyncing, ConnectionState.Closing, ConnectionState.Disconnected,
+                    ConnectionState.LoggingOut
                 },
                 [ConnectionState.Closing] = new HashSet<ConnectionState>
                 {

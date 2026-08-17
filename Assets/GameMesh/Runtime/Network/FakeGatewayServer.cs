@@ -252,8 +252,15 @@ namespace GameMesh.Network
                         HeartbeatIntervalMs = 1000,
                         IdleTimeoutMs = 15000,
                         ServerTimeMs = 1,
-                        ServerBuild = "fake-gw"
+                        ServerBuild = "fake-gw",
+                        MapManifestVersion = 1
                     };
+                    rsp.ServerHello.Maps.Add(new MapManifestEntry
+                    {
+                        MapTemplateId = 1001,
+                        DataVersion = 1,
+                        Sha256 = "ceef56586c5281dca4ce45340f511d0d577fd724b14131ae5a21d01ea7f41317"
+                    });
                     break;
                 case GameRequest.BodyOneofCase.Heartbeat:
                     rsp.Heartbeat = new HeartbeatRsp
@@ -288,6 +295,38 @@ namespace GameMesh.Network
             }
 
             return rsp;
+        }
+
+        public static GameResponse AoiDeltaPush(ulong mapInstanceId, int op, ulong playerId, float x, ulong stateSeq)
+        {
+            var delta = new AoiDelta { MapInstanceId = mapInstanceId };
+            delta.Events.Add(new AoiEvent
+            {
+                Op = op,
+                Entity = new EntitySnapshot
+                {
+                    PlayerId = playerId,
+                    PlayerName = "peer",
+                    Position = new Vec3 { X = x },
+                    StateSeq = stateSeq
+                }
+            });
+            return new GameResponse { Seq = 0, Ok = true, AoiDelta = delta };
+        }
+
+        public static GameResponse SessionReplacedPush(string reason = "ERR_SESSION_REPLACED", string message = "replaced")
+        {
+            return new GameResponse
+            {
+                Seq = 0,
+                Ok = true,
+                SessionReplaced = new SessionReplacedNotify
+                {
+                    ReasonCode = reason,
+                    Message = message,
+                    ServerTimeMs = 1
+                }
+            };
         }
 
         static FullStateSnapshotRsp SampleSnapshot(ulong playerId, ulong baseline)
