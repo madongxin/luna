@@ -11,7 +11,11 @@ if (-not (Test-Path $UnityPath)) { throw "Unity not found. Pass -UnityPath or se
 if (-not $OutputDir) { $OutputDir = Join-Path $Root "Builds\GameMeshClient" }
 New-Item -ItemType Directory -Force -Path $OutputDir, (Join-Path $Root "Logs") | Out-Null
 $log = Join-Path $Root "Logs\build_integration_client.log"
-& $UnityPath -batchmode -nographics -projectPath $Root -logFile $log -quit -executeMethod GameMesh.Editor.IntegrationBuild.BuildWindows
-$code = $LASTEXITCODE
+$p = Start-Process -FilePath $UnityPath -ArgumentList @(
+    "-batchmode", "-nographics", "-projectPath", $Root,
+    "-logFile", $log, "-quit",
+    "-executeMethod", "GameMesh.Editor.IntegrationBuild.BuildWindows"
+) -PassThru -Wait
+$code = $p.ExitCode
 Write-Host "Build exit=$code log=$log"
 exit $code

@@ -71,4 +71,6 @@ $env:UNITY_PATH="C:\Program Files\Unity\Hub\Editor\2022.3.62f3c1\Editor\Unity.ex
 .\Tools\GameMesh\run_playmode_tests.ps1
 ```
 
-双客户端真实 E2E：先 `build_integration_client.ps1`，设置 `GAMEMESH_E2E_GATEWAY=1` 后运行 `run_two_clients_e2e.ps1`（默认场景 `presence-move-logout`）。未提供 Gateway 时脚本返回 2（NOT RUN，不是通过）。邮件场景使用 `-gamemeshAutoScenario extended-mail`。
+双客户端真实 E2E：先 `build_integration_client.ps1`（必须等到 Unity 退出），设置 `GAMEMESH_E2E_GATEWAY=1` 后运行 `run_two_clients_e2e.ps1`（默认场景 `presence-move-logout`）。未提供 Gateway 时脚本返回 2（NOT RUN，不是通过）。邮件场景使用 `-gamemeshAutoScenario extended-mail`。
+
+服务器门禁如何指向本仓库：见 `docs/GameMesh_Server_LUNA_REPO_Usage.md`。离线打包：`Tools/GameMesh/export_client_ready_pack.ps1`（产物在 `Builds/luna-pack/`，不入库）。
