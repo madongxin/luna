@@ -185,17 +185,10 @@ namespace GameMesh.Bootstrap
         public async Task RegisterThenLoginAsync()
         {
             var password = LaunchArgs.Password ?? "";
-            try
-            {
-                await RegisterAsync(password).ConfigureAwait(true);
-                if (Session.PlayerId == 0)
-                    return;
-                await LoginAsync(password).ConfigureAwait(true);
-            }
-            finally
-            {
-                LaunchArgs.ClearPassword();
-            }
+            await RegisterAsync(password).ConfigureAwait(true);
+            if (Session.PlayerId == 0)
+                return;
+            await LoginAsync(password).ConfigureAwait(true);
         }
 
         public async Task RegisterAsync()
@@ -211,6 +204,12 @@ namespace GameMesh.Bootstrap
             BusyStage = "注册中";
             try
             {
+                if (GameErrorCatalog.TryDescribeAuthInput(LaunchArgs.DeviceId, password, false,
+                        Session.PlayerId, out var rejectCode, out var rejectMsg))
+                {
+                    SetError(rejectCode, rejectMsg, rejectCode);
+                    return;
+                }
                 await EnsureConnectedAsync().ConfigureAwait(true);
                 Connection.SetLogicalState(ConnectionState.Authenticating);
                 var req = new GameRequest
@@ -234,7 +233,7 @@ namespace GameMesh.Bootstrap
                 Session.PlayerId = rsp.Register.PlayerId;
                 Session.DisplayName = LaunchArgs.DisplayName;
                 PersistIdentity();
-                SetError("", "");
+                ClearError();
                 Connection.SetLogicalState(ConnectionState.Connected);
                 GameMeshLog.Info($"register ok player_id={Session.PlayerId}");
             }
@@ -251,14 +250,7 @@ namespace GameMesh.Bootstrap
 
         public async Task LoginAsync()
         {
-            try
-            {
-                await LoginAsync(LaunchArgs.Password).ConfigureAwait(true);
-            }
-            finally
-            {
-                LaunchArgs.ClearPassword();
-            }
+            await LoginAsync(LaunchArgs.Password).ConfigureAwait(true);
         }
 
         public async Task LoginAsync(string password)
@@ -269,6 +261,12 @@ namespace GameMesh.Bootstrap
             BusyStage = "登录中";
             try
             {
+                if (GameErrorCatalog.TryDescribeAuthInput(LaunchArgs.DeviceId, password, true,
+                        Session.PlayerId, out var rejectCode, out var rejectMsg))
+                {
+                    SetError(rejectCode, rejectMsg, rejectCode);
+                    return;
+                }
                 await EnsureConnectedAsync().ConfigureAwait(true);
                 Connection.SetLogicalState(ConnectionState.Authenticating);
                 var req = new GameRequest
@@ -303,7 +301,8 @@ namespace GameMesh.Bootstrap
                 Push.Reset(0);
                 Aoi.LocalPlayerId = Session.PlayerId;
                 PersistIdentity();
-                SetError("", "");
+                ClearError();
+                LaunchArgs.ClearPassword();
                 Connection.SetLogicalState(ConnectionState.Authenticated);
                 GameMeshLog.Info($"login ok {Session.DebugSummary()}");
                 if (SceneManager.GetActiveScene().name != Config.mainSceneName)
@@ -381,6 +380,7 @@ namespace GameMesh.Bootstrap
                 StopHeartbeat();
                 HelloOk = false;
                 HeartbeatOk = false;
+                ClearError();
                 Session.ClearSessionKeepIdentity();
                 Session.AutoReconnect = false;
                 LaunchArgs.ClearPassword();
@@ -1365,6 +1365,13 @@ namespace GameMesh.Bootstrap
             return int.TryParse(json.Substring(colon + 1, end - colon - 1).Trim(), out var v) ? v : 0;
         }
 
+        void ClearError()
+        {
+            LastErrorCode = "";
+            LastError = "";
+            LastErrorUi = "";
+        }
+
         void SetError(Exception ex)
         {
             var code = ex is GameMeshException ge ? ge.ErrorCode : GameMeshErrorCode.ServerError;
@@ -1375,6 +1382,12 @@ namespace GameMesh.Bootstrap
         {
             if (!Alive)
                 return;
+            if (string.IsNullOrEmpty(code) && string.IsNullOrEmpty(serverCode) &&
+                string.IsNullOrEmpty(message))
+            {
+                ClearError();
+                return;
+            }
             var resolved = !string.IsNullOrEmpty(serverCode) ? serverCode : code;
             LastErrorCode = resolved ?? "";
             LastError = GameMeshLog.Redact(message ?? "");

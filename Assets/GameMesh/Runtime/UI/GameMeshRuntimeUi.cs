@@ -117,8 +117,6 @@ namespace GameMesh.UI
 
             if (!string.IsNullOrEmpty(client.LastErrorUi))
                 GUILayout.Label(client.LastErrorUi, _statusErr);
-            else if (!string.IsNullOrEmpty(client.LastError))
-                GUILayout.Label("错误  " + client.LastErrorCode + "  " + client.LastError, _statusErr);
             if (client.MapBlocked)
                 GUILayout.Label("进图被阻止  " + client.MapBlockReason, _statusErr);
         }
@@ -136,6 +134,9 @@ namespace GameMesh.UI
             client.LaunchArgs.Password = GUILayout.PasswordField(client.LaunchArgs.Password ?? "", '*', 64, _field,
                 GUILayout.Height(32));
             GUILayout.EndHorizontal();
+            GUILayout.Label(
+                "密码至少 6 位。空密码或短于 6 位会被立刻拒绝。登录成功后密码框会清空，再次登录请再填一次（联调可用 demo-local）。关窗口 ≠ 登出。",
+                _hint);
             var playerText = Field("玩家ID", client.Session.PlayerId == 0 ? "" : client.Session.PlayerId.ToString());
             if (ulong.TryParse(playerText, out var pid))
                 client.Session.PlayerId = pid;
@@ -336,11 +337,13 @@ namespace GameMesh.UI
             var tex = ColorTex(bg);
             return new GUIStyle(GUI.skin.box)
             {
-                fontSize = 16,
+                fontSize = 15,
                 fontStyle = FontStyle.Bold,
-                alignment = TextAnchor.MiddleLeft,
-                padding = new RectOffset(10, 10, 8, 8),
+                alignment = TextAnchor.UpperLeft,
+                padding = new RectOffset(12, 12, 10, 10),
+                margin = new RectOffset(0, 0, 6, 6),
                 wordWrap = true,
+                stretchHeight = true,
                 normal = { background = tex, textColor = text }
             };
         }

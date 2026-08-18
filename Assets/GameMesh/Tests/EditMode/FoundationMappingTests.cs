@@ -162,6 +162,25 @@ namespace GameMesh.Tests.EditMode
             Assert.IsTrue(GameErrorCatalog.Resolve("ERR_AOI_RESYNC_REQUIRED").Retryable);
             Assert.IsTrue(GameErrorCatalog.IsSessionReplaced("ERR_FENCE_STALE"));
             StringAssert.Contains("#ab12", GameErrorCatalog.FormatUi("ERR_OVERLOADED", "", "ab12"));
+            Assert.AreEqual("账号或密码错误", GameErrorCatalog.Resolve("ERR_BAD_CREDENTIAL").Chinese);
+            StringAssert.Contains("请求参数非法", GameErrorCatalog.FormatUi("ERR_INVALID_ARGUMENT"));
+            StringAssert.Contains("至少 6 位", GameErrorCatalog.FormatUi("ERR_BAD_CREDENTIAL"));
+            StringAssert.Contains("不可重试", GameErrorCatalog.FormatUi("ERR_BAD_CREDENTIAL"));
+            StringAssert.Contains("密码", GameErrorCatalog.FormatUi("SERVER_ERROR", "设备ID和密码（至少6位）必填"));
+            StringAssert.Contains("填好后再点注册",
+                GameErrorCatalog.FormatUi("SERVER_ERROR", "device_id and password(>=6) required"));
+            StringAssert.Contains("至少 6 位",
+                GameErrorCatalog.FormatUi("ERR_BAD_CREDENTIAL", "invalid credential"));
+            Assert.IsTrue(GameErrorCatalog.TryDescribeAuthInput("dev-1", "", true, 9, out var emptyPwCode, out var emptyPw));
+            Assert.AreEqual("ERR_BAD_CREDENTIAL", emptyPwCode);
+            StringAssert.Contains("密码为空", emptyPw);
+            Assert.IsTrue(GameErrorCatalog.TryDescribeAuthInput("dev-1", "ab", false, 0, out var shortCode, out var shortMsg));
+            Assert.AreEqual("ERR_INVALID_ARGUMENT", shortCode);
+            StringAssert.Contains("2 位", shortMsg);
+            Assert.IsTrue(GameErrorCatalog.TryDescribeAuthInput("dev-1", "demo-local", true, 0, out var noIdCode, out var noId));
+            Assert.AreEqual("ERR_ACCOUNT_NOT_FOUND", noIdCode);
+            StringAssert.Contains("玩家ID为空", noId);
+            Assert.IsFalse(GameErrorCatalog.TryDescribeAuthInput("dev-1", "demo-local", true, 9, out _, out _));
         }
 
         [Test]
