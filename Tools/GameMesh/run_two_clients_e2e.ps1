@@ -60,7 +60,8 @@ function Start-Client([string]$role, [string]$device, [string]$name, [string]$da
         "-gamemeshRole", $role,
         "-gamemeshCoordDir", $coord,
         "-gamemeshResultDir", $resultDir,
-        "-dataPath", $dataPath
+        "-dataPath", $dataPath,
+        "-logFile", (Join-Path $resultDir "player.log")
     )
     $p = Start-Process -FilePath $ClientPath -ArgumentList $args -PassThru
     return $p

@@ -52,7 +52,7 @@ trap cleanup EXIT
   -gamemeshMapHash "$MAP_HASH" -gamemeshMapVersion 1 \
   -gamemeshAutoScenario "$SCENARIO" \
   -gamemeshRole a -gamemeshCoordDir "$COORD" -gamemeshResultDir "$A_DIR" \
-  -dataPath "$A_DIR/data" >"$A_DIR/stdout.log" 2>&1 &
+  -dataPath "$A_DIR/data" -logFile "$A_DIR/player.log" >"$A_DIR/stdout.log" 2>&1 &
 A_PID=$!
 "$CLIENT" \
   -gamemeshHost "$HOST" -gamemeshPort "$PORT" \
@@ -61,7 +61,7 @@ A_PID=$!
   -gamemeshMapHash "$MAP_HASH" -gamemeshMapVersion 1 \
   -gamemeshAutoScenario "$SCENARIO" \
   -gamemeshRole b -gamemeshCoordDir "$COORD" -gamemeshResultDir "$B_DIR" \
-  -dataPath "$B_DIR/data" >"$B_DIR/stdout.log" 2>&1 &
+  -dataPath "$B_DIR/data" -logFile "$B_DIR/player.log" >"$B_DIR/stdout.log" 2>&1 &
 B_PID=$!
 
 for ((i=0; i<TIMEOUT; i++)); do

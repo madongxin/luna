@@ -48,7 +48,7 @@ namespace GameMesh.Aoi
 
         public void SetMapInstance(ulong mapInstanceId)
         {
-            if (MapInstanceId != mapInstanceId)
+            if (MapInstanceId != 0 && MapInstanceId != mapInstanceId)
                 Clear();
             MapInstanceId = mapInstanceId;
         }
@@ -58,9 +58,10 @@ namespace GameMesh.Aoi
             _entities.Clear();
         }
 
-        public void ApplySnapshot(IEnumerable<EntitySnapshotDto> entities)
+        public void ApplySnapshot(IEnumerable<EntitySnapshotDto> entities, bool replace = true)
         {
-            Clear();
+            if (replace)
+                Clear();
             if (entities == null)
                 return;
             foreach (var e in entities)

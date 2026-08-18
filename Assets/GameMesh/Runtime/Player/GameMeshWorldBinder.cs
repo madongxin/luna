@@ -70,6 +70,8 @@ namespace GameMesh.Player
                 return;
             if (client.MovesFrozen)
                 return;
+            if (!string.IsNullOrEmpty(client.LaunchArgs.AutoScenario))
+                return;
             if (client.MoveCorrector.ShouldSuppress(Time.unscaledTime))
                 return;
             var pos = _local.transform.position;

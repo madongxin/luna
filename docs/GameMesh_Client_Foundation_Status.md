@@ -1,7 +1,7 @@
 # GameMesh 客户端基础能力状态
 
-日期：2026-08-16
-客户端 HEAD：`2e43ed53267887614a358116d42b0de9c19b6822`（工作区有未提交的 17912f2 登录/AOI/移动收口）
+日期：2026-08-18
+客户端：本提交起的 `main`；对 live Gateway `47.96.22.16:8083` 的 E2E 修复见下文
 服务器协议 HEAD：`17912f2033344ee579fa388ba8f7467e1790f772`
 schema SHA-256：`f16462b65fa998a1c1d63be4710b2be927c9ec1b8ef47756803b12798d6e8665`
 descriptor SHA-256：`078461f2c0bfa23c3d806b51dff1734be06777a65e332fe772cf4aa223c4aefb`
@@ -24,14 +24,14 @@ Google.Protobuf：3.25.3
 | `check_protocol_contract.ps1 <webserver-17912f2>` | 0 | schema `f16462b6…` 与服务器 HEAD 一致 |
 | EditMode | 0 | `TestResults/editmode.xml` 46/46 |
 | PlayMode | 0 | `TestResults/playmode.xml` 5/5 |
-| `build_integration_client.ps1` | NOT RUN | 本轮未出包 |
-| `run_two_clients_e2e.ps1` | 2 | NOT RUN：无 `GAMEMESH_E2E_GATEWAY` |
+| `build_integration_client.ps1` | 0 | `Builds/GameMeshClient/GameMeshClient.exe`，并写入 Player 内 `protocol_manifest.json` |
+| `run_two_clients_e2e.ps1 -HostName 47.96.22.16 -Port 8083` | 1 | `Logs/e2e-20260818-091936`：Hello/Login/EnterMap/双向 AOI 可见 PASS；MoveReq 被 Gateway 以空 body `ERR_STALE_SEQ` 拒绝 |
 
 ## 未运行 / BLOCKED
 
 | 项 | 原因 |
 |----|------|
-| 真实双 Unity E2E | 需要 Formal Gateway `127.0.0.1:8081`（commit `17912f2`）、Hello 地图清单含 1001、以及 Integration Client |
-| 跨 GW 重连 / 人为 Push gap / 顶号 E2E | 需要 live 集群；`run_session_replaced_e2e` 无 Gateway 时退出 2 |
+| 真实双 Unity E2E 全场景 | Gateway `47.96.22.16:8083` 已通。互相看见已过。A 的 `MoveReq`（`GameRequest.seq=6`，unix `client_time_ms`）回包 `seq=6 type=None ok=false error_code=ERR_STALE_SEQ`，无 `MoveRsp`。因此移动同步 / 登出 AOI Leave 未跑完 |
+| 跨 GW 重连 / 人为 Push gap / 顶号 E2E | `run_session_replaced_e2e` 仍为驱动脚本占位，退出 2 |
 | CI Unity 测试/出包 | 需要仓库 `UNITY_LICENSE` secret |
 | CI 真实 E2E | 需要 `GAMEMESH_E2E_GATEWAY=1` 和可访问的 live Gateway |

@@ -55,7 +55,7 @@ namespace GameMesh.Protocol
                 !string.Equals(serverHash, localHash, StringComparison.OrdinalIgnoreCase))
             {
                 errorCode = "ERR_SCHEMA_MISMATCH";
-                message = "schema_sha256 mismatch";
+                message = "schema_sha256 mismatch local=" + localHash + " server=" + serverHash;
                 return false;
             }
 

@@ -316,20 +316,30 @@ namespace GameMesh.Network
 
         void DispatchResponse(GameResponse response)
         {
-            var isPush = response.Seq == 0 || response.BodyCase == GameResponse.BodyOneofCase.ServerPush;
-            if (isPush)
+            if (IsPush(response) || !_pending.TryRemove(response.Seq, out var call))
             {
                 _dispatcher.Enqueue(() => PushReceived?.Invoke(response));
                 return;
             }
 
-            if (_pending.TryRemove(response.Seq, out var call))
-            {
-                _dispatcher.Enqueue(() => call.TrySetResult(response));
-                return;
-            }
+            _dispatcher.Enqueue(() => call.TrySetResult(response));
+        }
 
-            GameMeshLog.Info($"orphan response seq={response.Seq} type={response.BodyCase}");
+        static bool IsPush(GameResponse response)
+        {
+            if (response == null || response.Seq == 0)
+                return true;
+            switch (response.BodyCase)
+            {
+                case GameResponse.BodyOneofCase.ServerPush:
+                case GameResponse.BodyOneofCase.AoiDelta:
+                case GameResponse.BodyOneofCase.MailboxChanged:
+                case GameResponse.BodyOneofCase.SessionReplaced:
+                case GameResponse.BodyOneofCase.ChatNotify:
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         void FailClosed(Exception ex)

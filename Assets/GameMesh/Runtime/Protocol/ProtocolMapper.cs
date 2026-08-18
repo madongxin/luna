@@ -81,7 +81,8 @@ namespace GameMesh.Protocol
             return applied;
         }
 
-        public static void ApplySnapshot(AoiWorld world, IEnumerable<EntitySnapshot> entities, ulong mapInstanceId)
+        public static void ApplySnapshot(AoiWorld world, IEnumerable<EntitySnapshot> entities, ulong mapInstanceId,
+            bool replace = true)
         {
             if (world == null)
                 return;
@@ -96,7 +97,7 @@ namespace GameMesh.Protocol
                 }
             }
 
-            world.ApplySnapshot(dtos);
+            world.ApplySnapshot(dtos, replace);
         }
 
         public static Vec3 ToVec3(Vector3 v)

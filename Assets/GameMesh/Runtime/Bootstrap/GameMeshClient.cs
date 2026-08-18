@@ -48,7 +48,7 @@ namespace GameMesh.Bootstrap
             Connection == null ||
             Connection.State != ConnectionState.InWorld ||
             Reconnect.InFlight ||
-            AppPaused ||
+            (AppPaused && string.IsNullOrEmpty(LaunchArgs.AutoScenario)) ||
             Push.HasGap ||
             Session.IsDead ||
             Session.SessionReplaced;
@@ -479,7 +479,7 @@ namespace GameMesh.Bootstrap
 
                 Session.ApplyMap(enter.MapTemplateId, enter.MapInstanceId, enter.OwnerEpoch, enter.RouteVersion);
                 Aoi.SetMapInstance(enter.MapInstanceId);
-                ProtocolMapper.ApplySnapshot(Aoi, enter.AoiSnapshot, enter.MapInstanceId);
+                ProtocolMapper.ApplySnapshot(Aoi, enter.AoiSnapshot, enter.MapInstanceId, false);
                 if (enter.SpawnPosition != null)
                 {
                     HasPendingSpawn = true;
@@ -499,7 +499,8 @@ namespace GameMesh.Bootstrap
                 MapBlockReason = "";
                 _enterOpId = null;
                 Connection.SetLogicalState(ConnectionState.InWorld);
-                _ = PingMapAsync();
+                if (string.IsNullOrEmpty(LaunchArgs.AutoScenario))
+                    _ = PingMapAsync();
             }
             catch (Exception ex)
             {
@@ -511,10 +512,15 @@ namespace GameMesh.Bootstrap
             }
         }
 
-        public async Task SendMoveAsync(Vector3 position, float yaw, CancellationToken ct)
+        public async Task<bool> SendMoveAsync(Vector3 position, float yaw, CancellationToken ct)
         {
             if (MovesFrozen)
-                return;
+            {
+                GameMeshLog.Warn("move skipped frozen state=" +
+                                 (Connection != null ? Connection.State.ToString() : "null") +
+                                 " paused=" + AppPaused + " gap=" + Push.HasGap);
+                return false;
+            }
             var req = new GameRequest
             {
                 Move = new MoveReq
@@ -523,7 +529,7 @@ namespace GameMesh.Bootstrap
                     MapInstanceId = Session.MapInstanceId,
                     Position = ProtocolMapper.ToVec3(position),
                     Yaw = yaw,
-                    ClientTimeMs = (long)(Time.unscaledTime * 1000f)
+                    ClientTimeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                 }
             };
             try
@@ -533,10 +539,12 @@ namespace GameMesh.Bootstrap
                 var rsp = await pending.ConfigureAwait(true);
                 if (Alive)
                     ApplyMoveRsp(rsp);
+                return rsp != null && rsp.Ok && (rsp.Move == null || rsp.Move.Ok);
             }
             catch (Exception ex)
             {
                 GameMeshLog.Warn("move failed " + ex.Message);
+                return false;
             }
             finally
             {
@@ -573,7 +581,9 @@ namespace GameMesh.Bootstrap
                 GameMeshLog.Info($"rsp seq={rsp.Seq} type={rsp.BodyCase} ok={rsp.Ok} code={code} rtt_ms={LastRttMs}");
                 if (GameErrorCatalog.IsSessionReplaced(code))
                     HandleSessionReplaced(code);
-                else if (!rsp.Ok && request.BodyCase != GameRequest.BodyOneofCase.Heartbeat)
+                else if (!rsp.Ok &&
+                         request.BodyCase != GameRequest.BodyOneofCase.Heartbeat &&
+                         request.BodyCase != GameRequest.BodyOneofCase.MapPing)
                     SetError(string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code, rsp.Message, code, trace);
                 return rsp;
             }
@@ -897,8 +907,7 @@ namespace GameMesh.Bootstrap
                         return;
                     }
 
-                    if (!ApplyInnerPush(parsed))
-                        return;
+                    ApplyInnerPush(parsed);
                     Push.MarkApplied(serverSeq);
                     Session.LastServerSeq = Push.LastAppliedServerSeq;
                     if (reliable)
@@ -936,10 +945,11 @@ namespace GameMesh.Bootstrap
                     inner.AoiDelta.MapInstanceId != Session.MapInstanceId)
                 {
                     GameMeshLog.Warn("drop aoi from other map");
-                    return false;
+                    return true;
                 }
 
-                return ProtocolMapper.ApplyAoiDelta(Aoi, inner.AoiDelta);
+                ProtocolMapper.ApplyAoiDelta(Aoi, inner.AoiDelta);
+                return true;
             }
 
             if (inner.FullSnapshot != null)
@@ -952,8 +962,7 @@ namespace GameMesh.Bootstrap
         {
             while (_gapCache.TryTake(Push.ExpectedNext, out var buffered))
             {
-                if (!ApplyInnerPush(buffered))
-                    return;
+                ApplyInnerPush(buffered);
                 Push.MarkApplied(Push.ExpectedNext);
                 Session.LastServerSeq = Push.LastAppliedServerSeq;
             }
@@ -1284,13 +1293,28 @@ namespace GameMesh.Bootstrap
                 Config.port);
         }
 
+        internal static string FindProtocolManifestPath()
+        {
+            var candidates = new[]
+            {
+                System.IO.Path.Combine(Application.dataPath, "GameMesh", "Protocol", "protocol_manifest.json"),
+                System.IO.Path.Combine(Application.streamingAssetsPath, "GameMesh", "protocol_manifest.json")
+            };
+            foreach (var candidate in candidates)
+            {
+                if (!string.IsNullOrEmpty(candidate) && System.IO.File.Exists(candidate))
+                    return candidate;
+            }
+
+            return "";
+        }
+
         void TryReadProtocolHash()
         {
             try
             {
-                var path = System.IO.Path.Combine(Application.dataPath, "GameMesh", "Protocol",
-                    "protocol_manifest.json");
-                if (!System.IO.File.Exists(path))
+                var path = FindProtocolManifestPath();
+                if (string.IsNullOrEmpty(path))
                     return;
                 var json = System.IO.File.ReadAllText(path);
                 ProtocolSchemaSha256 = ReadJsonString(json, "schema_sha256");

@@ -3,6 +3,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
+using GameMesh.Aoi;
 using GameMesh.Auth;
 using GameMesh.Network;
 using UnityEngine;
@@ -94,7 +95,9 @@ namespace GameMesh.Bootstrap
             if (_role == "a")
             {
                 var target = MoveTarget();
-                await _client.SendMoveAsync(target, 0f, default).ConfigureAwait(true);
+                var moved = await _client.SendMoveAsync(target, 0f, default).ConfigureAwait(true);
+                if (!moved)
+                    throw new InvalidOperationException("move not sent: " + _client.LastErrorCode);
                 Event("move_sent", "x", target.x, "y", target.y, "z", target.z);
                 float peerX;
                 ulong peerSeq;
@@ -122,7 +125,9 @@ namespace GameMesh.Bootstrap
                 Event("aoi_peer_moved", "peer_id", peer, "old_x", baselineX, "new_x", newX,
                     "old_state_seq", baselineSeq, "new_state_seq", newSeq);
                 var target = MoveTarget();
-                await _client.SendMoveAsync(target, 0f, default).ConfigureAwait(true);
+                var moved = await _client.SendMoveAsync(target, 0f, default).ConfigureAwait(true);
+                if (!moved)
+                    throw new InvalidOperationException("move not sent: " + _client.LastErrorCode);
                 Event("move_sent", "x", target.x, "y", target.y, "z", target.z);
                 SnapshotBeforeLogout();
                 await WaitAoiLeaveAsync(peer, 45f).ConfigureAwait(true);
@@ -229,15 +234,30 @@ namespace GameMesh.Bootstrap
 
         Vector3 MoveTarget()
         {
-            return new Vector3(
-                _client.LaunchArgs.MoveX + (_role == "a" ? 0f : 1.5f),
-                _client.LaunchArgs.MoveY,
-                _client.LaunchArgs.MoveZ);
+            var origin = _client.PendingSpawn.sqrMagnitude > 0.01f
+                ? _client.PendingSpawn
+                : new Vector3(_client.LaunchArgs.MoveX, _client.LaunchArgs.MoveY, _client.LaunchArgs.MoveZ);
+            var dx = _role == "a" ? 3f : 4.5f;
+            return origin + new Vector3(dx, 0f, 0f);
+        }
+
+        RemoteEntityState FindPeer(ulong peerId)
+        {
+            if (_client.Aoi.Entities.TryGetValue(peerId, out var state))
+                return state;
+            foreach (var entity in _client.Aoi.Entities.Values)
+            {
+                if (entity != null && entity.PlayerId == peerId)
+                    return entity;
+            }
+
+            return null;
         }
 
         void CapturePeer(ulong peerId, out float x, out ulong stateSeq)
         {
-            if (_client.Aoi.Entities.TryGetValue(peerId, out var state))
+            var state = FindPeer(peerId);
+            if (state != null)
             {
                 x = state.X;
                 stateSeq = state.StateSeq;
@@ -257,12 +277,19 @@ namespace GameMesh.Bootstrap
             var deadline = Time.unscaledTime + timeoutSec;
             while (Time.unscaledTime < deadline)
             {
-                if (File.Exists(path))
+                try
                 {
-                    var text = File.ReadAllText(path);
-                    var id = ReadJsonUlong(text, "player_id");
-                    if (id != 0)
-                        return id;
+                    if (File.Exists(path))
+                    {
+                        var text = ReadFileShared(path);
+                        var id = ReadJsonUlong(text, "player_id");
+                        if (id != 0)
+                            return id;
+                    }
+                }
+                catch (IOException)
+                {
+                    /* peer file still being written */
                 }
 
                 await Task.Yield();
@@ -276,12 +303,14 @@ namespace GameMesh.Bootstrap
             var deadline = Time.unscaledTime + timeoutSec;
             while (Time.unscaledTime < deadline)
             {
-                if (_client.Aoi.Entities.ContainsKey(peerId))
+                if (FindPeer(peerId) != null)
                     return;
                 await Task.Yield();
             }
 
-            throw new TimeoutException("aoi peer not seen");
+            throw new TimeoutException("aoi peer not seen count=" + _client.Aoi.Entities.Count +
+                                       " map_players=" + _client.LastPlayerCount +
+                                       " gap=" + _client.Push.HasGap);
         }
 
         async Task WaitAoiMoveAsync(ulong peerId, float previousX, ulong previousSeq, float timeoutSec)
@@ -289,7 +318,8 @@ namespace GameMesh.Bootstrap
             var deadline = Time.unscaledTime + timeoutSec;
             while (Time.unscaledTime < deadline)
             {
-                if (_client.Aoi.Entities.TryGetValue(peerId, out var state) &&
+                var state = FindPeer(peerId);
+                if (state != null &&
                     Mathf.Abs(state.X - previousX) > 0.2f &&
                     (previousSeq == 0 || state.StateSeq > previousSeq))
                     return;
@@ -304,7 +334,7 @@ namespace GameMesh.Bootstrap
             var deadline = Time.unscaledTime + timeoutSec;
             while (Time.unscaledTime < deadline)
             {
-                if (!_client.Aoi.Entities.ContainsKey(peerId))
+                if (FindPeer(peerId) == null)
                     return;
                 await Task.Yield();
             }
@@ -350,9 +380,46 @@ namespace GameMesh.Bootstrap
         void WriteCoord()
         {
             var path = Path.Combine(_coordDir, _role + ".json");
-            File.WriteAllText(path,
+            WriteFileShared(path,
                 "{\"player_id\":" + _client.Session.PlayerId +
                 ",\"map_instance_id\":" + _client.Session.MapInstanceId + "}");
+        }
+
+        static void WriteFileShared(string path, string contents)
+        {
+            IOException last = null;
+            for (var i = 0; i < 30; i++)
+            {
+                try
+                {
+                    using (var fs = new FileStream(path, FileMode.OpenOrCreate, FileAccess.Write,
+                               FileShare.ReadWrite | FileShare.Delete))
+                    {
+                        fs.SetLength(0);
+                        var bytes = Encoding.UTF8.GetBytes(contents ?? "");
+                        fs.Write(bytes, 0, bytes.Length);
+                        fs.Flush();
+                    }
+
+                    return;
+                }
+                catch (IOException ex)
+                {
+                    last = ex;
+                    System.Threading.Thread.Sleep(20);
+                }
+            }
+
+            if (last != null)
+                throw last;
+        }
+
+        static string ReadFileShared(string path)
+        {
+            using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
+                       FileShare.ReadWrite | FileShare.Delete))
+            using (var reader = new StreamReader(fs, Encoding.UTF8, true, 256, false))
+                return reader.ReadToEnd();
         }
 
         void Event(string name, params object[] pairs)
@@ -447,8 +514,8 @@ namespace GameMesh.Bootstrap
         {
             try
             {
-                var path = Path.Combine(Application.dataPath, "GameMesh", "Protocol", "protocol_manifest.json");
-                if (!File.Exists(path))
+                var path = GameMeshClient.FindProtocolManifestPath();
+                if (string.IsNullOrEmpty(path))
                     return "";
                 return ReadJsonString(File.ReadAllText(path), key);
             }
