@@ -30,7 +30,6 @@ namespace Unity.FPS.Gameplay
             DebugUtility.HandleErrorIfNullGetComponent<PlayerCharacterController, PlayerInputHandler>(
                 m_PlayerCharacterController, this, gameObject);
             m_GameFlowManager = FindObjectOfType<GameFlowManager>();
-            DebugUtility.HandleErrorIfNullFindObject<GameFlowManager, PlayerInputHandler>(m_GameFlowManager, this);
 
             Cursor.lockState = CursorLockMode.Locked;
             Cursor.visible = false;
@@ -43,7 +42,9 @@ namespace Unity.FPS.Gameplay
 
         public bool CanProcessInput()
         {
-            return Cursor.lockState == CursorLockMode.Locked && !m_GameFlowManager.GameIsEnding;
+            return Cursor.lockState == CursorLockMode.Locked &&
+                   (m_GameFlowManager == null || !m_GameFlowManager.GameIsEnding) &&
+                   !CursorCapture.BlocksGameInput;
         }
 
         public Vector3 GetMoveInput()

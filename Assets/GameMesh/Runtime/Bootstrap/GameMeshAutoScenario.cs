@@ -73,7 +73,7 @@ namespace GameMesh.Bootstrap
                 _finished = true;
                 _running = false;
                 if (!Application.isEditor)
-                    Application.Quit(ok ? 0 : 1);
+                    Environment.Exit(ok ? 0 : 1);
             }
         }
 

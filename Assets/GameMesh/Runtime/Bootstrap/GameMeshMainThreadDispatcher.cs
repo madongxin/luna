@@ -43,7 +43,7 @@ namespace GameMesh.Bootstrap
 
         void Update()
         {
-            Pump(512);
+            Pump(2048);
         }
     }
 }

@@ -58,7 +58,7 @@ namespace GameMesh.Network
                 },
                 [ConnectionState.Authenticating] = new HashSet<ConnectionState>
                 {
-                    ConnectionState.Authenticated, ConnectionState.Closing,
+                    ConnectionState.Authenticated, ConnectionState.Connected, ConnectionState.Closing,
                     ConnectionState.Disconnected, ConnectionState.Reconnecting,
                     ConnectionState.LoggingOut
                 },

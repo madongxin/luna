@@ -6,8 +6,8 @@ namespace GameMesh.Bootstrap
     [CreateAssetMenu(menuName = "GameMesh/Client Config", fileName = "GameMeshClientConfig")]
     public sealed class GameMeshClientConfig : ScriptableObject
     {
-        public string host = "127.0.0.1";
-        public int port = 8081;
+        public string host = "124.222.244.169";
+        public int port = 8083;
         public int connectTimeoutMs = 5000;
         public int requestTimeoutMs = 8000;
         public int helloTimeoutMs = 5000;
@@ -16,11 +16,11 @@ namespace GameMesh.Bootstrap
         public int reconnectMaxTotalMs = 30000;
         public float moveSendHz = 10f;
         public int interpolationDelayMs = 100;
-        public ulong mapTemplateId = 1001;
+        public ulong mapTemplateId = 1002;
         public uint realmId = 1;
         public uint dataVersion = 1;
         public string mapDataHash = "";
-        public string mainSceneName = "MainScene";
+        public string mainSceneName = "TerrainDemoScene";
         public bool disableSprint = true;
         public float snapError = 2.5f;
         public float smoothError = 0.35f;
@@ -83,6 +83,7 @@ namespace GameMesh.Bootstrap
         public string Password = "";
         public string DisplayName = "Luna";
         public string AutoScenario = "";
+        public bool AutoLogin;
         public ulong PeerPlayerId;
         public string ResultDir = "";
         public string CoordDir = "";
@@ -109,6 +110,9 @@ namespace GameMesh.Bootstrap
                         break;
                     case "-gamemeshAutoScenario":
                         parsed.AutoScenario = value;
+                        break;
+                    case "-gamemeshAutoLogin":
+                        parsed.AutoLogin = value != "0" && value.ToLowerInvariant() != "false";
                         break;
                     case "-gamemeshPeerPlayerId":
                         ulong.TryParse(value, out parsed.PeerPlayerId);

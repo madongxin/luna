@@ -1,0 +1,32 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: a31c8f2adef9b86c69fe46f383b5e173, type: 3}
+  m_Name: GameMeshClientConfig
+  m_EditorClassIdentifier: 
+  host: 124.222.244.169
+  port: 8083
+  connectTimeoutMs: 5000
+  requestTimeoutMs: 8000
+  helloTimeoutMs: 5000
+  heartbeatTimeoutMs: 4000
+  reconnectMaxAttempts: 6
+  reconnectMaxTotalMs: 30000
+  moveSendHz: 10
+  interpolationDelayMs: 100
+  mapTemplateId: 1002
+  realmId: 1
+  dataVersion: 1
+  mapDataHash: 46d5bb506de2f0418a85fce8d8e285dfec664023122b2692cecf818a26be75d9
+  mainSceneName: TerrainDemoScene
+  disableSprint: 1
+  snapError: 2.5
+  smoothError: 0.35

@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 param(
-    [string]$HostName = "127.0.0.1",
-    [int]$Port = 8081,
+    [string]$HostName = "124.222.244.169",
+    [int]$Port = 8083,
     [string]$ClientPath = "",
     [int]$TimeoutSec = 90,
     [string]$Scenario = "presence-move-logout"
@@ -88,21 +88,25 @@ try {
     $a = Start-Client "a" "e2e-a-$stamp" "Alice" (Join-Path $aDir "data") $aDir
     $b = Start-Client "b" "e2e-b-$stamp" "Bob" (Join-Path $bDir "data") $bDir
     $procs = @($a, $b)
+    $aResult = Join-Path $aDir "result.json"
+    $bResult = Join-Path $bDir "result.json"
     $deadline = (Get-Date).AddSeconds($TimeoutSec)
     while ((Get-Date) -lt $deadline) {
         if ($a.HasExited -and $b.HasExited) { break }
+        if ((Test-Path $aResult) -and (Test-Path $bResult)) { break }
         Start-Sleep -Seconds 1
     }
 
-    if (-not $a.HasExited -or -not $b.HasExited) {
+    if ((Test-Path $aResult) -and (Test-Path $bResult)) {
+        Stop-Tracked
+    }
+    elseif (-not $a.HasExited -or -not $b.HasExited) {
         throw "clients did not exit by themselves"
     }
-    if ($a.ExitCode -ne 0 -or $b.ExitCode -ne 0) {
+    elseif ($a.ExitCode -ne 0 -or $b.ExitCode -ne 0) {
         throw "nonzero client exit A=$($a.ExitCode) B=$($b.ExitCode)"
     }
 
-    $aResult = Join-Path $aDir "result.json"
-    $bResult = Join-Path $bDir "result.json"
     if (-not (Test-Path $aResult) -or -not (Test-Path $bResult)) {
         throw "missing result.json A=$(Test-Path $aResult) B=$(Test-Path $bResult)"
     }

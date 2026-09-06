@@ -150,8 +150,9 @@ namespace GameMesh.Tests.EditMode
                 var helloReq = new GameRequest { Seq = 1, ClientHello = new ClientHelloReq { SchemaSha256 = "abc" } };
                 var hello = FakeGatewayServer.DefaultHandler(helloReq);
                 Assert.IsTrue(hello.ServerHello.Ok);
-                Assert.AreEqual(1, hello.ServerHello.Maps.Count);
+                Assert.AreEqual(2, hello.ServerHello.Maps.Count);
                 Assert.AreEqual(1001ul, hello.ServerHello.Maps[0].MapTemplateId);
+                Assert.AreEqual(1002ul, hello.ServerHello.Maps[1].MapTemplateId);
 
                 server.Handler = req =>
                 {

@@ -32,6 +32,8 @@ namespace GameMesh.Network
         ConnectionState _state = ConnectionState.Disconnected;
         volatile bool _failClosed;
 
+        public bool Quiet;
+
         public ConnectionState State
         {
             get { lock (_stateGate) return _state; }
@@ -110,7 +112,8 @@ namespace GameMesh.Network
                 }
 
                 SetState(ConnectionState.Handshaking);
-                GameMeshLog.Info($"connected {host}:{port} lastSeq={LastClientSeq} gen={_generation}");
+                if (!Quiet)
+                    GameMeshLog.Info($"connected {host}:{port} lastSeq={LastClientSeq} gen={_generation}");
             }
             catch (GameMeshException)
             {
@@ -216,7 +219,8 @@ namespace GameMesh.Network
 
             DrainSendQueue();
             SetState(ConnectionState.Disconnected);
-            GameMeshLog.Info($"disconnected reason={reason} lastSeq={LastClientSeq}");
+            if (!Quiet)
+                GameMeshLog.Info($"disconnected reason={reason} lastSeq={LastClientSeq}");
         }
 
         public async ValueTask DisposeAsync()
@@ -245,7 +249,8 @@ namespace GameMesh.Network
                         if (stream == null)
                             break;
                         await WriteExactAsync(stream, item.Frame, ct).ConfigureAwait(false);
-                        GameMeshLog.Info($"send seq={item.Seq} type={item.Type}");
+                        if (!Quiet)
+                            GameMeshLog.Info($"send seq={item.Seq} type={item.Type}");
                     }
                 }
             }

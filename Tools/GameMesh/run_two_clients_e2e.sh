@@ -8,8 +8,8 @@ if [[ ! -f "$CLIENT" && ! -x "$CLIENT" ]]; then
     CLIENT="$FOUND"
   fi
 fi
-HOST="${GAMEMESH_HOST:-127.0.0.1}"
-PORT="${GAMEMESH_PORT:-8081}"
+HOST="${GAMEMESH_HOST:-124.222.244.169}"
+PORT="${GAMEMESH_PORT:-8083}"
 TIMEOUT="${TIMEOUT_SEC:-90}"
 SCENARIO="${GAMEMESH_E2E_SCENARIO:-presence-move-logout}"
 
@@ -68,27 +68,37 @@ for ((i=0; i<TIMEOUT; i++)); do
   if ! kill -0 "$A_PID" 2>/dev/null && ! kill -0 "$B_PID" 2>/dev/null; then
     break
   fi
+  if [[ -f "$A_DIR/result.json" && -f "$B_DIR/result.json" ]]; then
+    break
+  fi
   sleep 1
 done
 
-if kill -0 "$A_PID" 2>/dev/null || kill -0 "$B_PID" 2>/dev/null; then
+if [[ -f "$A_DIR/result.json" && -f "$B_DIR/result.json" ]]; then
+  if kill -0 "$A_PID" 2>/dev/null || kill -0 "$B_PID" 2>/dev/null; then
+    echo "results written; stopping leftover clients"
+    kill "$A_PID" "$B_PID" 2>/dev/null || true
+    wait "$A_PID" 2>/dev/null || true
+    wait "$B_PID" 2>/dev/null || true
+  fi
+elif kill -0 "$A_PID" 2>/dev/null || kill -0 "$B_PID" 2>/dev/null; then
   echo "timeout; killing leftover clients"
   kill "$A_PID" "$B_PID" 2>/dev/null || true
   wait "$A_PID" 2>/dev/null || true
   wait "$B_PID" 2>/dev/null || true
   echo "clients did not exit by themselves"
   exit 1
-fi
-
-set +e
-wait "$A_PID"
-A_CODE=$?
-wait "$B_PID"
-B_CODE=$?
-set -e
-if [[ "$A_CODE" -ne 0 || "$B_CODE" -ne 0 ]]; then
-  echo "nonzero client exit A=$A_CODE B=$B_CODE"
-  exit 1
+else
+  set +e
+  wait "$A_PID"
+  A_CODE=$?
+  wait "$B_PID"
+  B_CODE=$?
+  set -e
+  if [[ "$A_CODE" -ne 0 || "$B_CODE" -ne 0 ]]; then
+    echo "nonzero client exit A=$A_CODE B=$B_CODE"
+    exit 1
+  fi
 fi
 
 if [[ ! -f "$A_DIR/result.json" || ! -f "$B_DIR/result.json" ]]; then

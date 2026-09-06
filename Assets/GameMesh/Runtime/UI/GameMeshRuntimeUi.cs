@@ -1,18 +1,30 @@
 using GameMesh.Bootstrap;
+using GameMesh.LoadTest;
 using GameMesh.Network;
+using GameMesh.Player;
 using GameMesh.Protocol;
+using Unity.FPS.Game;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 
 namespace GameMesh.UI
 {
+    [DefaultExecutionOrder(-20000)]
     public sealed class GameMeshRuntimeUi : MonoBehaviour
     {
         bool _showMail;
         bool _showDebug;
+        bool _panelOpen = true;
+        ConnectionState _lastState = ConnectionState.Disconnected;
         string _mailTitle = "hello";
         string _mailBody = "from luna";
         string _peerId = "";
+        string _loadCount = "100";
+        string _loadMinutes = "5";
+        string _loadStaggerMs = "40";
+        string _loadPortA = "8081";
+        string _loadPortB = "8083";
+        string _loadPassword = "loadtest";
         Vector2 _mailScroll;
         Vector2 _panelScroll;
         bool _cursorUnlocked = true;
@@ -37,23 +49,86 @@ namespace GameMesh.UI
 
         void Start()
         {
-            _cursorUnlocked = true;
+            var client = GameMeshClient.Instance;
+            if (client != null && !string.IsNullOrEmpty(client.LaunchArgs.AutoScenario))
+                _panelOpen = false;
+            if (PlayableScenePlayer.IsExploreScene)
+                _panelOpen = false;
+            _cursorUnlocked = _panelOpen;
             ApplyCursor();
+            if (GetComponent<GameMeshCursorApply>() == null)
+                gameObject.AddComponent<GameMeshCursorApply>();
+        }
+
+        static readonly Rect LauncherGui = new Rect(16f, 12f, 160f, 48f);
+
+        void OnDisable()
+        {
+            CursorCapture.UiOwnsCursor = false;
         }
 
         void Update()
         {
-            if (Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.F1))
+            var client = GameMeshClient.Instance;
+            if (client?.Connection != null)
             {
-                _cursorUnlocked = !_cursorUnlocked;
-                ApplyCursor();
+                var state = client.Connection.State;
+                if (state == ConnectionState.InWorld && _lastState != ConnectionState.InWorld)
+                    SetPanelOpen(false);
+                _lastState = state;
             }
 
-            if (SceneManager.GetActiveScene().name != "MainScene")
+            if (Input.GetKeyDown(KeyCode.F2))
+                SetPanelOpen(!_panelOpen);
+
+            if (Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.F1))
+            {
+                if (_panelOpen)
+                    SetPanelOpen(false);
+                else
+                    SetPanelOpen(true);
+            }
+
+            if (!PlayableScenePlayer.SceneUsesFpsLook && !PlayableScenePlayer.UsesHoldToLook)
             {
                 _cursorUnlocked = true;
                 ApplyCursor();
             }
+
+            var overLauncher = !_panelOpen && GuiToScreen(LauncherGui).Contains(Input.mousePosition);
+            var altUi = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+            CursorCapture.UiOwnsCursor = _panelOpen || altUi;
+
+            if (!_panelOpen && Cursor.lockState != CursorLockMode.Locked &&
+                Input.GetMouseButtonDown(0) && overLauncher)
+                SetPanelOpen(true);
+
+            if (_panelOpen || altUi)
+            {
+                _cursorUnlocked = true;
+                ApplyCursor();
+            }
+        }
+
+        void LateUpdate()
+        {
+            RefreshCursorCapture();
+        }
+
+        void RefreshCursorCapture()
+        {
+            var altUi = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
+            CursorCapture.UiOwnsCursor = _panelOpen || altUi;
+            if (_panelOpen || altUi)
+            {
+                _cursorUnlocked = true;
+                ApplyCursor();
+            }
+        }
+
+        public void ForceCursorIfUiOwns()
+        {
+            RefreshCursorCapture();
         }
 
         void OnGUI()
@@ -63,6 +138,12 @@ namespace GameMesh.UI
                 return;
 
             EnsureStyles();
+            if (!_panelOpen)
+            {
+                DrawLauncher(client);
+                return;
+            }
+
             var width = Mathf.Clamp(Screen.width * 0.36f, 460f, 620f);
             var height = Screen.height - 24f;
             var area = new Rect(16f, 12f, width, height);
@@ -72,16 +153,94 @@ namespace GameMesh.UI
             GUI.DrawTexture(new Rect(area.x, area.y + 64f, 6f, area.height - 64f), _accent);
 
             GUILayout.BeginArea(new Rect(area.x + 16f, area.y + 10f, area.width - 28f, area.height - 20f));
+            GUILayout.BeginHorizontal();
             GUILayout.Label("LUNA / GameMesh 联调", _title);
-            GUILayout.Label("Tab 或 F1 锁定/解锁鼠标", _hint);
+            GUILayout.FlexibleSpace();
+            if (GUILayout.Button("隐  藏", _logoutStyle, GUILayout.Width(96), GUILayout.Height(40)))
+                SetPanelOpen(false);
+            GUILayout.EndHorizontal();
+            GUILayout.Label("F2 或 Tab 打开/关闭    按住 Alt 再点「F2 联调」    隐藏后面板外点击才射击", _hint);
 
             _panelScroll = GUILayout.BeginScrollView(_panelScroll);
             DrawStatus(client);
             DrawAuth(client);
+            DrawLoadTest();
             DrawWorld(client);
             DrawMail(client);
             GUILayout.EndScrollView();
             GUILayout.EndArea();
+            EatMouseOver(area);
+        }
+
+        void DrawLauncher(GameMeshClient client)
+        {
+            var state = client.Connection != null ? client.Connection.State : ConnectionState.Disconnected;
+            var label = state == ConnectionState.InWorld ? "F2  联调" : "F2  登录";
+            if (GUI.Button(LauncherGui, label, _loginStyle))
+                SetPanelOpen(true);
+            EatMouseOver(LauncherGui);
+
+            var hint = new Rect(16f, 64f, 640f, 56f);
+            string text;
+            if (state != ConnectionState.InWorld)
+                text = "还没进服，压测机器人不会出现。进游戏会自动登录，或按 F2。";
+            else
+            {
+                var runner = GameMeshLoadTestRunner.Instance;
+                var bots = runner != null ? runner.InWorldCount : 0;
+                var binder = client.GetComponent<GameMeshWorldBinder>();
+                var near = "";
+                if (binder != null && binder.TryNearestRemote(out var botName, out var dist))
+                    near = "    最近 " + botName + " " + dist.ToString("0") + "m";
+                text = "已拉回出生点    AOI " + client.Aoi.Entities.Count +
+                       "    压测在线 " + bots + near +
+                       (bots > 0 && client.Aoi.Entities.Count == 0 ? "    正在同步视野…" : "");
+            }
+
+            GUI.Label(hint, text, _hint);
+        }
+
+        static Rect GuiToScreen(Rect gui)
+        {
+            return new Rect(gui.x, Screen.height - gui.y - gui.height, gui.width, gui.height);
+        }
+
+        static void EatMouseOver(Rect guiRect)
+        {
+            var ev = Event.current;
+            if (ev == null || !guiRect.Contains(ev.mousePosition))
+                return;
+            if (ev.type == EventType.MouseDown || ev.type == EventType.MouseUp || ev.type == EventType.ScrollWheel)
+                ev.Use();
+        }
+
+        public void PrepareExploreGameplay()
+        {
+            SetPanelOpen(false);
+        }
+
+        void SetPanelOpen(bool open)
+        {
+            _panelOpen = open;
+            if (open)
+            {
+                _cursorUnlocked = true;
+                ApplyCursor();
+                return;
+            }
+
+            if (PlayableScenePlayer.UsesHoldToLook)
+            {
+                _cursorUnlocked = true;
+                ApplyCursor();
+                return;
+            }
+
+            if (PlayableScenePlayer.SceneUsesFpsLook)
+            {
+                _cursorUnlocked = false;
+                ApplyCursor();
+            }
         }
 
         void DrawStatus(GameMeshClient client)
@@ -152,6 +311,87 @@ namespace GameMesh.UI
             GUILayout.EndHorizontal();
             if (GUILayout.Button("清除本地账号信息", _btnStyle, GUILayout.Height(36)))
                 client.ClearLocalAccount();
+        }
+
+        void DrawLoadTest()
+        {
+            var runner = GameMeshLoadTestRunner.Instance;
+            var client = GameMeshClient.Instance;
+            if (runner == null || client == null)
+                return;
+            if (!string.IsNullOrEmpty(client.LaunchArgs.AutoScenario))
+                return;
+
+            GUILayout.Space(12);
+            GUILayout.Label("压测机器人", _section);
+            GUILayout.Label("8081 / 8083 各一半。失败或停 Play 也会 Logout，避免 Session 残存。", _hint);
+            _loadCount = Field("登录人数", _loadCount);
+            _loadMinutes = Field("在线分钟", _loadMinutes);
+            _loadStaggerMs = Field("登录间隔ms", _loadStaggerMs);
+            _loadPortA = Field("Gateway A", _loadPortA);
+            _loadPortB = Field("Gateway B", _loadPortB);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("机器人密码", _label, GUILayout.Width(90));
+            _loadPassword = GUILayout.PasswordField(_loadPassword ?? "", '*', 64, _field, GUILayout.Height(32));
+            GUILayout.EndHorizontal();
+
+            var inWorld = runner.InWorldCount;
+            var failed = runner.FailedCount;
+            var remain = runner.RemainingSec;
+            var remainText = remain > 100000f ? "手动下线" : FormatClock(remain);
+            GUILayout.Label(
+                "阶段  " + runner.Phase +
+                "    在线  " + inWorld +
+                " / " + Mathf.Max(runner.TargetCount, 0) +
+                "    失败  " + failed, failed > 0 ? _statusWarn : _label);
+            int.TryParse(_loadPortA, out var portA);
+            int.TryParse(_loadPortB, out var portB);
+            if (portA <= 0)
+                portA = 8081;
+            if (portB <= 0)
+                portB = 8083;
+            GUILayout.Label(
+                "端口 " + portA + "  " + runner.InWorldOnPort(portA) +
+                "    端口 " + portB + "  " + runner.InWorldOnPort(portB), _hint);
+            GUILayout.Label("剩余在线  " + remainText, _hint);
+            var sample = runner.SampleError();
+            if (!string.IsNullOrEmpty(sample))
+                GUILayout.Label("最近错误  " + sample, _statusErr);
+
+            GUILayout.Space(8);
+            GUILayout.BeginHorizontal();
+            GUI.enabled = !runner.Busy;
+            if (GUILayout.Button("集体登录", _loginStyle, GUILayout.Height(48)))
+            {
+                int.TryParse(_loadCount, out var count);
+                float.TryParse(_loadMinutes, out var minutes);
+                int.TryParse(_loadStaggerMs, out var stagger);
+                if (count <= 0)
+                    count = 100;
+                if (minutes < 0f)
+                    minutes = 5f;
+                int.TryParse(_loadPortA, out var gwA);
+                int.TryParse(_loadPortB, out var gwB);
+                if (gwA <= 0)
+                    gwA = 8081;
+                if (gwB <= 0)
+                    gwB = 8083;
+                runner.StartCollectiveLogin(count, minutes, stagger, _loadPassword, gwA, gwB);
+            }
+
+            GUI.enabled = runner.Busy || runner.HoldOnline || inWorld > 0;
+            if (GUILayout.Button("集体下线", _logoutStyle, GUILayout.Height(48)))
+                runner.RequestCollectiveLogout();
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+        }
+
+        static string FormatClock(float seconds)
+        {
+            var total = Mathf.Max(0, Mathf.RoundToInt(seconds));
+            var m = total / 60;
+            var s = total % 60;
+            return m.ToString("00") + ":" + s.ToString("00");
         }
 
         void DrawWorld(GameMeshClient client)
@@ -355,6 +595,22 @@ namespace GameMesh.UI
             tex.Apply();
             tex.hideFlags = HideFlags.HideAndDontSave;
             return tex;
+        }
+    }
+
+    [DefaultExecutionOrder(32000)]
+    sealed class GameMeshCursorApply : MonoBehaviour
+    {
+        GameMeshRuntimeUi _ui;
+
+        void Awake()
+        {
+            _ui = GetComponent<GameMeshRuntimeUi>();
+        }
+
+        void LateUpdate()
+        {
+            _ui?.ForceCursorIfUiOwns();
         }
     }
 }

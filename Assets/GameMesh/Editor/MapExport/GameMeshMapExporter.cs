@@ -25,6 +25,17 @@ namespace GameMesh.Editor
 
         public static string ExportCurrentScene(string outputDir, string copyToDir)
         {
+            return ExportCurrentScene(outputDir, copyToDir, 0, 0, 0f, 0f);
+        }
+
+        public static string ExportCurrentScene(
+            string outputDir,
+            string copyToDir,
+            ulong templateIdOverride,
+            uint dataVersionOverride,
+            float aoiOverride,
+            float stepOverride)
+        {
             var scene = SceneManager.GetActiveScene();
             if (!scene.IsValid())
                 throw new InvalidOperationException("no active scene");
@@ -42,7 +53,7 @@ namespace GameMesh.Editor
             }
 
             var settings = GameMeshMapExportSettings.Load();
-            var step = Mathf.Max(0.1f, settings.navSampleStep);
+            var step = Mathf.Max(0.1f, stepOverride > 0f ? stepOverride : settings.navSampleStep);
             var minX = Mathf.Floor(min.x / step) * step;
             var minZ = Mathf.Floor(min.z / step) * step;
             var maxX = Mathf.Ceil(max.x / step) * step;
@@ -50,29 +61,53 @@ namespace GameMesh.Editor
             var width = Mathf.Max(1, Mathf.RoundToInt((maxX - minX) / step));
             var height = Mathf.Max(1, Mathf.RoundToInt((maxZ - minZ) / step));
             var cells = new bool[width * height];
-            var probeY = max.y + 1f;
-            var sampleRadius = Mathf.Max(step * 1.5f, (max.y - min.y) + 4f);
+            var midY = (min.y + max.y) * 0.5f;
+            var heightSpan = Mathf.Max(step, max.y - min.y);
+            var defaultRadius = Mathf.Max(step * 2f, heightSpan * 0.5f + step);
+            var surfaceRadius = Mathf.Max(step * 2f, 16f);
+            var maxSnapSqr = (step * 0.55f) * (step * 0.55f);
+            var terrains = UnityEngine.Object.FindObjectsOfType<Terrain>();
             for (var row = 0; row < height; row++)
             {
                 for (var col = 0; col < width; col++)
                 {
                     var wx = minX + (col + 0.5f) * step;
                     var wz = minZ + (row + 0.5f) * step;
-                    var probe = new Vector3(wx, probeY, wz);
-                    cells[MapStaticData.CellIndex(col, row, width)] =
-                        NavMesh.SamplePosition(probe, out _, sampleRadius, NavMesh.AllAreas);
+                    var py = midY;
+                    var radius = defaultRadius;
+                    for (var t = 0; t < (terrains?.Length ?? 0); t++)
+                    {
+                        var terrain = terrains[t];
+                        if (terrain == null || terrain.terrainData == null)
+                            continue;
+                        var origin = terrain.GetPosition();
+                        var size = terrain.terrainData.size;
+                        if (wx < origin.x || wx > origin.x + size.x ||
+                            wz < origin.z || wz > origin.z + size.z)
+                            continue;
+                        py = terrain.SampleHeight(new Vector3(wx, 0f, wz)) + origin.y + 2f;
+                        radius = surfaceRadius;
+                        break;
+                    }
+
+                    var probe = new Vector3(wx, py, wz);
+                    if (!NavMesh.SamplePosition(probe, out var hit, radius, NavMesh.AllAreas))
+                        continue;
+                    var dx = hit.position.x - wx;
+                    var dz = hit.position.z - wz;
+                    cells[MapStaticData.CellIndex(col, row, width)] = dx * dx + dz * dz <= maxSnapSqr;
                 }
             }
 
             var data = new MapStaticData
             {
                 schema_version = 1,
-                map_template_id = settings.mapTemplateId,
+                map_template_id = templateIdOverride != 0 ? templateIdOverride : settings.mapTemplateId,
                 scene_name = scene.name,
-                data_version = settings.dataVersion,
+                data_version = dataVersionOverride != 0 ? dataVersionOverride : settings.dataVersion,
                 bounds_min = new MapVec3(minX, min.y, minZ),
                 bounds_max = new MapVec3(maxX, max.y, maxZ),
-                aoi_cell_size = settings.aoiCellSize,
+                aoi_cell_size = aoiOverride > 0f ? aoiOverride : settings.aoiCellSize,
                 nav_sample_step = step,
                 grid_width = width,
                 grid_height = height,
@@ -81,7 +116,7 @@ namespace GameMesh.Editor
             data.spawn_points = CollectSpawns(data, cells);
 
             Directory.CreateDirectory(outputDir);
-            var fileName = settings.mapTemplateId + ".grid.json";
+            var fileName = data.map_template_id + ".grid.json";
             var jsonPath = Path.Combine(outputDir, fileName);
             var json = data.ToDeterministicJson();
             var utf8 = new UTF8Encoding(false);

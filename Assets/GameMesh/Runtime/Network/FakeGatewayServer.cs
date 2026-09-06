@@ -261,6 +261,12 @@ namespace GameMesh.Network
                         DataVersion = 1,
                         Sha256 = "ceef56586c5281dca4ce45340f511d0d577fd724b14131ae5a21d01ea7f41317"
                     });
+                    rsp.ServerHello.Maps.Add(new MapManifestEntry
+                    {
+                        MapTemplateId = 1002,
+                        DataVersion = 1,
+                        Sha256 = "46d5bb506de2f0418a85fce8d8e285dfec664023122b2692cecf818a26be75d9"
+                    });
                     break;
                 case GameRequest.BodyOneofCase.Heartbeat:
                     rsp.Heartbeat = new HeartbeatRsp

@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using GameMesh.Aoi;
 using GameMesh.Auth;
+using GameMesh.LoadTest;
 using GameMesh.Mail;
 using GameMesh.Map;
 using GameMesh.Network;
@@ -120,10 +122,16 @@ namespace GameMesh.Bootstrap
                 gameObject.AddComponent<GameMeshRuntimeUi>();
             if (GetComponent<GameMeshWorldBinder>() == null)
                 gameObject.AddComponent<GameMeshWorldBinder>();
+            if (GetComponent<GameMeshLoadTestRunner>() == null)
+                gameObject.AddComponent<GameMeshLoadTestRunner>();
             if (!string.IsNullOrEmpty(LaunchArgs.AutoScenario) &&
                 GetComponent<GameMeshAutoScenario>() == null)
                 gameObject.AddComponent<GameMeshAutoScenario>();
             _lifetime = new CancellationTokenSource();
+            if (LaunchArgs.AutoLogin && string.IsNullOrEmpty(LaunchArgs.AutoScenario))
+                _ = RegisterThenLoginAsync();
+            else
+                TryAutoEnterLiveServer();
             SceneManager.sceneLoaded += OnSceneLoaded;
             TryReadProtocolHash();
         }
@@ -499,6 +507,10 @@ namespace GameMesh.Bootstrap
                 MapBlockReason = "";
                 _enterOpId = null;
                 Connection.SetLogicalState(ConnectionState.InWorld);
+                WriteLiveEnter("INWORLD template=" + enter.MapTemplateId +
+                               " spawn=" + PendingSpawn + " yaw=" + PendingSpawnYaw +
+                               " hash=" + (enter.MapDataSha256 ?? "") +
+                               " scene=" + SceneManager.GetActiveScene().name);
                 if (string.IsNullOrEmpty(LaunchArgs.AutoScenario))
                     _ = PingMapAsync();
             }
@@ -1279,8 +1291,16 @@ namespace GameMesh.Bootstrap
             Session.DisplayName = LaunchArgs.DisplayName;
             if (Session.PlayerId == 0 && stored.PlayerId != 0)
                 Session.PlayerId = stored.PlayerId;
-            if (!string.IsNullOrEmpty(stored.Host) && Config.host == "127.0.0.1")
+            if (stored.Host == "47.96.22.16")
+            {
+                Config.host = "124.222.244.169";
+                Config.port = 8083;
+            }
+            else if (!string.IsNullOrEmpty(stored.Host) && Config.host == "127.0.0.1")
+            {
                 Config.host = stored.Host;
+            }
+
             if (stored.Port > 0 && Config.port == 8081)
                 Config.port = stored.Port;
         }
@@ -1400,6 +1420,72 @@ namespace GameMesh.Bootstrap
         {
             try { await task.ConfigureAwait(true); }
             catch (Exception ex) { GameMeshLog.Warn(ex.Message); }
+        }
+
+        const string LiveEnterPlayFlag = @"C:\Users\dongx\FirstFPS\Logs\enter-live-server-play.flag";
+        const string LiveEnterStatusAbs = @"C:\Users\dongx\FirstFPS\Logs\enter-live-server-status.txt";
+
+        void TryAutoEnterLiveServer()
+        {
+            if (!string.IsNullOrEmpty(LaunchArgs.AutoScenario))
+                return;
+
+            var flagged = false;
+            try
+            {
+                flagged = File.Exists(LiveEnterPlayFlag);
+                if (flagged)
+                    File.Delete(LiveEnterPlayFlag);
+            }
+            catch
+            {
+                flagged = false;
+            }
+
+            var scene = SceneManager.GetActiveScene().name;
+            var explore = scene == "TerrainDemoScene" || scene == "demoScene_free";
+            if (!flagged && !explore)
+                return;
+
+            WriteLiveEnter("AWAKE host=" + Config.host + ":" + Config.port +
+                           " template=" + Config.mapTemplateId + " scene=" + Config.mainSceneName +
+                           " hash=" + (Config.mapDataHash ?? "") + " flagged=" + flagged);
+            _ = AutoEnterLiveServerAsync();
+        }
+
+        async Task AutoEnterLiveServerAsync()
+        {
+            try
+            {
+                if (string.IsNullOrEmpty(LaunchArgs.DeviceId) || LaunchArgs.DeviceId == "unity-dev")
+                    LaunchArgs.DeviceId = "unity-live-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+                if (string.IsNullOrEmpty(LaunchArgs.DisplayName))
+                    LaunchArgs.DisplayName = "Luna";
+                if (string.IsNullOrEmpty(LaunchArgs.Password) || LaunchArgs.Password.Length < 6)
+                    LaunchArgs.Password = "luna123";
+                WriteLiveEnter("AUTH device=" + LaunchArgs.DeviceId + " name=" + LaunchArgs.DisplayName);
+                await RegisterThenLoginAsync().ConfigureAwait(true);
+                WriteLiveEnter("LOGIN_DONE state=" + (Connection != null ? Connection.State.ToString() : "null") +
+                               " player=" + Session.PlayerId + " err=" + LastError);
+            }
+            catch (Exception ex)
+            {
+                WriteLiveEnter("LOGIN_FAIL " + ex.GetType().Name + ": " + ex.Message);
+            }
+        }
+
+        static void WriteLiveEnter(string line)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(LiveEnterStatusAbs));
+                File.AppendAllText(LiveEnterStatusAbs,
+                    DateTime.Now.ToString("HH:mm:ss") + " " + line + Environment.NewLine);
+            }
+            catch
+            {
+                // ignored
+            }
         }
     }
 }

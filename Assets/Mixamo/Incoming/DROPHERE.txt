@@ -1,0 +1,2 @@
+Drop Mixamo FBX here (FBX for Unity, T-Pose, With Skin).
+Unity menu: GameMesh > Mixamo > Open Mixamo And Show Drop Folder

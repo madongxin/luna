@@ -21,6 +21,10 @@ Tools/GameMesh/cache/
 *.pdb
 *.mdb
 
+# Unity Terrain URP Demo is ~4GB with files over GitHub's 100MB limit.
+# Reimport locally via Assets/Editor/ImportTerrainUrpDemoOnce.cs (Asset Store 213197).
+Assets/TerrainDemoScene_URP/
+
 sysinfo.txt
 
 *.apk

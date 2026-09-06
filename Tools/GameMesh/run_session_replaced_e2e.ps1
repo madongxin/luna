@@ -1,7 +1,7 @@
 #Requires -Version 5.1
 param(
-    [string]$HostName = "127.0.0.1",
-    [int]$Port = 8081,
+    [string]$HostName = "124.222.244.169",
+    [int]$Port = 8083,
     [string]$ClientPath = ""
 )
 $ErrorActionPreference = "Stop"
