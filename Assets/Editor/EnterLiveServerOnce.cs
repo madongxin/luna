@@ -59,6 +59,20 @@ namespace GameMesh.Editor
             Run();
         }
 
+        static void PinLiveGateway()
+        {
+            const string path = "Assets/GameMesh/Resources/GameMeshClientConfig.asset";
+            var cfg = AssetDatabase.LoadAssetAtPath<GameMesh.Bootstrap.GameMeshClientConfig>(path);
+            if (cfg == null)
+                return;
+            cfg.host = "124.222.244.169";
+            cfg.port = 8081;
+            cfg.portB = 8083;
+            EditorUtility.SetDirty(cfg);
+            AssetDatabase.SaveAssets();
+            Write("PIN host=" + cfg.host + ":" + cfg.port + "/" + cfg.portB);
+        }
+
         static void Run()
         {
             try
@@ -66,6 +80,7 @@ namespace GameMesh.Editor
                 if (File.Exists(Flag))
                     File.Delete(Flag);
 
+                PinLiveGateway();
                 Directory.CreateDirectory(Path.GetDirectoryName(PlayFlag));
                 File.WriteAllText(PlayFlag, "1");
                 Write("EDITOR play IntroMenu auto-login 1002");

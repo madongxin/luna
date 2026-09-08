@@ -1,6 +1,6 @@
 # GameMesh Unity 联调说明
 
-客户端只连接 Gateway TCP（默认 `127.0.0.1:8081`），不连接 brpc / GameLogic / Redis / MySQL。
+客户端只连接 Gateway TCP（当前联调 `124.222.244.169:8081` / `8083`），不连接 brpc / GameLogic / Redis / MySQL。
 
 ## 依赖（已钉死）
 
@@ -10,8 +10,8 @@
 | protoc | 25.3 |
 | Google.Protobuf | 3.25.3（`Assets/GameMesh/Plugins/Google.Protobuf.dll`） |
 | System.Runtime.CompilerServices.Unsafe | 6.0.0 |
-| 协议来源 | [madongxin/webserver](https://github.com/madongxin/webserver) `proto/game.proto` @ `17912f2033344ee579fa388ba8f7467e1790f772` |
-| schema SHA-256 | `f16462b65fa998a1c1d63be4710b2be927c9ec1b8ef47756803b12798d6e8665` |
+| 协议来源 | [madongxin/webserver](https://github.com/madongxin/webserver) `docs/protocol/export` 分线包 |
+| schema SHA-256 | `e57e2c4afad4d5434ae398508da1ccb9c455078da9bca26a3b570b3f06695f6f` |
 | protocol_version | `1` |
 
 版本只写在 `Tools/GameMesh/versions.json`。不要手改 `Assets/GameMesh/Protocol/Generated/Game.cs`。

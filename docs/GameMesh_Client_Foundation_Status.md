@@ -3,7 +3,7 @@
 日期：2026-08-18
 客户端：本提交起的 `main`；对 live Gateway `47.96.22.16:8083` 的 E2E 修复见下文
 服务器协议 HEAD：`17912f2033344ee579fa388ba8f7467e1790f772`
-schema SHA-256：`f16462b65fa998a1c1d63be4710b2be927c9ec1b8ef47756803b12798d6e8665`
+schema SHA-256：`e57e2c4afad4d5434ae398508da1ccb9c455078da9bca26a3b570b3f06695f6f`
 descriptor SHA-256：`078461f2c0bfa23c3d806b51dff1734be06777a65e332fe772cf4aa223c4aefb`
 protocol_version：`1`
 min_supported_protocol_version：`1`

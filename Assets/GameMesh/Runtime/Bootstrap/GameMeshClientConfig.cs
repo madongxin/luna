@@ -7,7 +7,24 @@ namespace GameMesh.Bootstrap
     public sealed class GameMeshClientConfig : ScriptableObject
     {
         public string host = "124.222.244.169";
-        public int port = 8083;
+        public int port = 8081;
+        public int portB = 8083;
+
+        public void NormalizeGatewayPorts()
+        {
+            if (port <= 0)
+                port = 8081;
+            if (portB <= 0)
+                portB = 8083;
+        }
+
+        public int[] GatewayPorts()
+        {
+            NormalizeGatewayPorts();
+            if (port == portB)
+                return new[] { port };
+            return new[] { port, portB };
+        }
         public int connectTimeoutMs = 5000;
         public int requestTimeoutMs = 8000;
         public int helloTimeoutMs = 5000;
@@ -79,8 +96,10 @@ namespace GameMesh.Bootstrap
 
     public sealed class GameMeshLaunchArgs
     {
+        public const string DefaultPassword = "luna123";
+
         public string DeviceId = "unity-dev";
-        public string Password = "";
+        public string Password = DefaultPassword;
         public string DisplayName = "Luna";
         public string AutoScenario = "";
         public bool AutoLogin;
@@ -145,5 +164,11 @@ namespace GameMesh.Bootstrap
         }
 
         public void ClearPassword() => Password = "";
+
+        public void EnsureDefaultPassword()
+        {
+            if (string.IsNullOrEmpty(Password) || Password.Length < 6)
+                Password = DefaultPassword;
+        }
     }
 }

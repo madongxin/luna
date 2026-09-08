@@ -187,7 +187,72 @@ namespace GameMesh.Network
                             Hp = 100,
                             MaxHp = 100,
                             StateSeq = 1
-                        }
+                        },
+                        Kind = req.EnterMap.MapTemplateId == 1002 ? "LINE" : "LEGACY_POOL",
+                        LineNo = req.EnterMap.LineNo != 0 ? req.EnterMap.LineNo : 1,
+                        Occupancy = 1,
+                        SoftCap = 200,
+                        HardCap = 400
+                    };
+                    if (rsp.EnterMap.Kind == "LINE")
+                    {
+                        rsp.EnterMap.Lines.Add(new MapLineInfo
+                        {
+                            LineNo = rsp.EnterMap.LineNo,
+                            MapInstanceId = rsp.EnterMap.MapInstanceId,
+                            Occupancy = 1,
+                            SoftCap = 200,
+                            HardCap = 400,
+                            State = "OPEN"
+                        });
+                    }
+
+                    break;
+                case GameRequest.BodyOneofCase.QueryMapLines:
+                    rsp.QueryMapLines = new QueryMapLinesRsp
+                    {
+                        Ok = true,
+                        MapTemplateId = req.QueryMapLines.MapTemplateId,
+                        Kind = req.QueryMapLines.MapTemplateId == 1002 ? "LINE" : "LEGACY_POOL"
+                    };
+                    if (req.QueryMapLines.MapTemplateId == 1002)
+                    {
+                        rsp.QueryMapLines.Lines.Add(new MapLineInfo
+                        {
+                            LineNo = 1,
+                            MapInstanceId = 5001,
+                            Occupancy = 1,
+                            SoftCap = 200,
+                            HardCap = 400,
+                            State = "OPEN"
+                        });
+                    }
+
+                    break;
+                case GameRequest.BodyOneofCase.SwitchLine:
+                    rsp.SwitchLine = new SwitchLineRsp
+                    {
+                        Ok = true,
+                        MapTemplateId = req.SwitchLine.MapTemplateId,
+                        MapInstanceId = 5001,
+                        Kind = "LINE",
+                        LineNo = req.SwitchLine.LineNo,
+                        Occupancy = 1,
+                        SoftCap = 200,
+                        HardCap = 400,
+                        SpawnPosition = new Vec3 { X = -28.5f, Y = -0.244f, Z = -7.25f },
+                        SpawnYaw = 76.022f
+                    };
+                    break;
+                case GameRequest.BodyOneofCase.EnqueueMap:
+                    rsp.EnqueueMap = new EnqueueMapRsp
+                    {
+                        Ok = true,
+                        LineNo = req.EnqueueMap.LineNo,
+                        QueueToken = "q-1",
+                        QueuePosition = 1,
+                        QueueLength = 1,
+                        Ready = false
                     };
                     break;
                 case GameRequest.BodyOneofCase.Move:

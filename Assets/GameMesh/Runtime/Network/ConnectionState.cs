@@ -137,6 +137,9 @@ namespace GameMesh.Network
         public const string ProtocolMissing = "PROTOCOL_MISSING_TYPE";
         public const string ServerError = "SERVER_ERROR";
         public const string SessionReplaced = "ERR_SESSION_REPLACED";
+        public const string MapLineFull = "ERR_MAP_LINE_FULL";
+        public const string MapNoLine = "ERR_MAP_NO_LINE";
+        public const string MapLineLimit = "ERR_MAP_LINE_LIMIT";
     }
 
     public sealed class GameMeshException : Exception

@@ -46,6 +46,7 @@ namespace GameMesh.UI
         GUIStyle _statusWarn;
         GUIStyle _statusErr;
         GUIStyle _hint;
+        GUIStyle _hudHint;
 
         void Start()
         {
@@ -60,7 +61,10 @@ namespace GameMesh.UI
                 gameObject.AddComponent<GameMeshCursorApply>();
         }
 
-        static readonly Rect LauncherGui = new Rect(16f, 12f, 160f, 48f);
+        static Rect LauncherRect()
+        {
+            return new Rect(24f, 20f, 320f, 88f);
+        }
 
         void OnDisable()
         {
@@ -95,7 +99,7 @@ namespace GameMesh.UI
                 ApplyCursor();
             }
 
-            var overLauncher = !_panelOpen && GuiToScreen(LauncherGui).Contains(Input.mousePosition);
+            var overLauncher = !_panelOpen && GuiToScreen(LauncherRect()).Contains(Input.mousePosition);
             var altUi = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
             CursorCapture.UiOwnsCursor = _panelOpen || altUi;
 
@@ -144,19 +148,19 @@ namespace GameMesh.UI
                 return;
             }
 
-            var width = Mathf.Clamp(Screen.width * 0.36f, 460f, 620f);
-            var height = Screen.height - 24f;
-            var area = new Rect(16f, 12f, width, height);
+            var width = Mathf.Clamp(Screen.width * 0.52f, 860f, 1200f);
+            var height = Screen.height - 16f;
+            var area = new Rect(16f, 8f, width, height);
 
             GUI.DrawTexture(area, _bg);
-            GUI.DrawTexture(new Rect(area.x, area.y, area.width, 64f), _header);
-            GUI.DrawTexture(new Rect(area.x, area.y + 64f, 6f, area.height - 64f), _accent);
+            GUI.DrawTexture(new Rect(area.x, area.y, area.width, 96f), _header);
+            GUI.DrawTexture(new Rect(area.x, area.y + 96f, 10f, area.height - 96f), _accent);
 
-            GUILayout.BeginArea(new Rect(area.x + 16f, area.y + 10f, area.width - 28f, area.height - 20f));
+            GUILayout.BeginArea(new Rect(area.x + 24f, area.y + 14f, area.width - 44f, area.height - 28f));
             GUILayout.BeginHorizontal();
             GUILayout.Label("LUNA / GameMesh 联调", _title);
             GUILayout.FlexibleSpace();
-            if (GUILayout.Button("隐  藏", _logoutStyle, GUILayout.Width(96), GUILayout.Height(40)))
+            if (GUILayout.Button("隐  藏", _logoutStyle, GUILayout.Width(160), GUILayout.Height(60)))
                 SetPanelOpen(false);
             GUILayout.EndHorizontal();
             GUILayout.Label("F2 或 Tab 打开/关闭    按住 Alt 再点「F2 联调」    隐藏后面板外点击才射击", _hint);
@@ -164,6 +168,7 @@ namespace GameMesh.UI
             _panelScroll = GUILayout.BeginScrollView(_panelScroll);
             DrawStatus(client);
             DrawAuth(client);
+            DrawLines(client);
             DrawLoadTest();
             DrawWorld(client);
             DrawMail(client);
@@ -176,11 +181,11 @@ namespace GameMesh.UI
         {
             var state = client.Connection != null ? client.Connection.State : ConnectionState.Disconnected;
             var label = state == ConnectionState.InWorld ? "F2  联调" : "F2  登录";
-            if (GUI.Button(LauncherGui, label, _loginStyle))
+            var launcher = LauncherRect();
+            if (GUI.Button(launcher, label, _loginStyle))
                 SetPanelOpen(true);
-            EatMouseOver(LauncherGui);
+            EatMouseOver(launcher);
 
-            var hint = new Rect(16f, 64f, 640f, 56f);
             string text;
             if (state != ConnectionState.InWorld)
                 text = "还没进服，压测机器人不会出现。进游戏会自动登录，或按 F2。";
@@ -192,12 +197,22 @@ namespace GameMesh.UI
                 var near = "";
                 if (binder != null && binder.TryNearestRemote(out var botName, out var dist))
                     near = "    最近 " + botName + " " + dist.ToString("0") + "m";
-                text = "已拉回出生点    AOI " + client.Aoi.Entities.Count +
-                       "    压测在线 " + bots + near +
-                       (bots > 0 && client.Aoi.Entities.Count == 0 ? "    正在同步视野…" : "");
+                else if (bots > 0 && client.Aoi.Entities.Count == 0)
+                    near = "    同线视野空，正在拉快照";
+                text = "已拉回出生点    " +
+                       (client.Lines.LineNo != 0 ? client.Lines.LineNo + "线 " +
+                           client.Lines.Occupancy + "/" +
+                           (client.Lines.SoftCap != 0 ? client.Lines.SoftCap : 200) + "    " : "") +
+                       "AOI " + client.Aoi.Entities.Count +
+                       "    压测在线 " + bots +
+                       (runner != null && runner.TargetLineNo != 0 ? "→" + runner.TargetLineNo + "线" : "") +
+                       near;
             }
 
-            GUI.Label(hint, text, _hint);
+            var hint = new Rect(24f, launcher.yMax + 12f, Mathf.Min(Screen.width - 48f, 1400f), 96f);
+            GUI.DrawTexture(hint, _bg);
+            GUI.Label(new Rect(hint.x + 16f, hint.y + 10f, hint.width - 32f, hint.height - 20f), text, _hudHint);
+            EatMouseOver(hint);
         }
 
         static Rect GuiToScreen(Rect gui)
@@ -226,6 +241,10 @@ namespace GameMesh.UI
             {
                 _cursorUnlocked = true;
                 ApplyCursor();
+                var client = GameMeshClient.Instance;
+                if (client != null && client.Session.HasIdentity &&
+                    (client.Lines.IsLineMap || client.Config.mapTemplateId == 1002))
+                    _ = client.QueryMapLinesAsync();
                 return;
             }
 
@@ -252,12 +271,16 @@ namespace GameMesh.UI
                     ? _statusErr
                     : _statusWarn;
             GUILayout.Space(8);
-            GUILayout.Label("连接  " + StateText(state), style);
+            GUILayout.Label(
+                "连接  " + StateText(state) +
+                "    " + client.Config.host + ":" + client.Config.port +
+                " / " + client.Config.portB, style);
             if (client.IsBusy)
                 GUILayout.Label("阶段  " + client.BusyStage, _statusWarn);
             GUILayout.Label(
                 "玩家ID  " + client.Session.PlayerId +
                 "    模板  " + client.Session.MapTemplateId +
+                "    线  " + (client.Lines.LineNo == 0 ? "-" : client.Lines.LineNo.ToString()) +
                 "    地图实例  " + client.Session.MapInstanceId +
                 "    AOI  " + client.Aoi.Entities.Count, _label);
             GUILayout.Label(
@@ -285,16 +308,19 @@ namespace GameMesh.UI
             GUILayout.Space(10);
             GUILayout.Label("账号", _section);
             client.Config.host = Field("服务器", client.Config.host);
-            client.Config.port = IntField("端口", client.Config.port);
+            client.Config.port = IntField("Gateway A", client.Config.port);
+            client.Config.portB = IntField("Gateway B", client.Config.portB);
             client.LaunchArgs.DeviceId = Field("设备ID", client.LaunchArgs.DeviceId);
             client.LaunchArgs.DisplayName = Field("显示名", client.LaunchArgs.DisplayName);
+            client.LaunchArgs.EnsureDefaultPassword();
             GUILayout.BeginHorizontal();
-            GUILayout.Label("密码", _label, GUILayout.Width(90));
+            GUILayout.Label("密码", _label, GUILayout.Width(150));
             client.LaunchArgs.Password = GUILayout.PasswordField(client.LaunchArgs.Password ?? "", '*', 64, _field,
-                GUILayout.Height(32));
+                GUILayout.Height(48));
             GUILayout.EndHorizontal();
             GUILayout.Label(
-                "密码至少 6 位。空密码或短于 6 位会被立刻拒绝。登录成功后密码框会清空，再次登录请再填一次（联调可用 demo-local）。关窗口 ≠ 登出。",
+                "默认  " + GameMeshLaunchArgs.DefaultPassword +
+                "。密码至少 6 位；空着会自动填默认密码。关窗口 ≠ 登出。",
                 _hint);
             var playerText = Field("玩家ID", client.Session.PlayerId == 0 ? "" : client.Session.PlayerId.ToString());
             if (ulong.TryParse(playerText, out var pid))
@@ -302,14 +328,14 @@ namespace GameMesh.UI
 
             GUILayout.Space(8);
             GUILayout.BeginHorizontal();
-            if (GUILayout.Button("注  册", _btnStyle, GUILayout.Height(48)))
+            if (GUILayout.Button("注  册", _btnStyle, GUILayout.Height(64)))
                 _ = client.RegisterAsync();
-            if (GUILayout.Button("登  录", _loginStyle, GUILayout.Height(48)))
+            if (GUILayout.Button("登  录", _loginStyle, GUILayout.Height(64)))
                 _ = client.LoginAsync();
-            if (GUILayout.Button("登  出", _logoutStyle, GUILayout.Height(48)))
+            if (GUILayout.Button("登  出", _logoutStyle, GUILayout.Height(64)))
                 _ = client.LogoutAsync();
             GUILayout.EndHorizontal();
-            if (GUILayout.Button("清除本地账号信息", _btnStyle, GUILayout.Height(36)))
+            if (GUILayout.Button("清除本地账号信息", _btnStyle, GUILayout.Height(52)))
                 client.ClearLocalAccount();
         }
 
@@ -324,15 +350,17 @@ namespace GameMesh.UI
 
             GUILayout.Space(12);
             GUILayout.Label("压测机器人", _section);
-            GUILayout.Label("8081 / 8083 各一半。失败或停 Play 也会 Logout，避免 Session 残存。", _hint);
+            GUILayout.Label(
+                "优先进你当前线，满员再溢出。活动范围约 16m（本图 AOI 32m）。8081/8083 各一半，上限 20000。",
+                _hint);
             _loadCount = Field("登录人数", _loadCount);
             _loadMinutes = Field("在线分钟", _loadMinutes);
             _loadStaggerMs = Field("登录间隔ms", _loadStaggerMs);
             _loadPortA = Field("Gateway A", _loadPortA);
             _loadPortB = Field("Gateway B", _loadPortB);
             GUILayout.BeginHorizontal();
-            GUILayout.Label("机器人密码", _label, GUILayout.Width(90));
-            _loadPassword = GUILayout.PasswordField(_loadPassword ?? "", '*', 64, _field, GUILayout.Height(32));
+            GUILayout.Label("机器人密码", _label, GUILayout.Width(150));
+            _loadPassword = GUILayout.PasswordField(_loadPassword ?? "", '*', 64, _field, GUILayout.Height(48));
             GUILayout.EndHorizontal();
 
             var inWorld = runner.InWorldCount;
@@ -343,6 +371,7 @@ namespace GameMesh.UI
                 "阶段  " + runner.Phase +
                 "    在线  " + inWorld +
                 " / " + Mathf.Max(runner.TargetCount, 0) +
+                (runner.TargetLineNo != 0 ? "    目标 " + runner.TargetLineNo + "线" : "") +
                 "    失败  " + failed, failed > 0 ? _statusWarn : _label);
             int.TryParse(_loadPortA, out var portA);
             int.TryParse(_loadPortB, out var portB);
@@ -361,7 +390,7 @@ namespace GameMesh.UI
             GUILayout.Space(8);
             GUILayout.BeginHorizontal();
             GUI.enabled = !runner.Busy;
-            if (GUILayout.Button("集体登录", _loginStyle, GUILayout.Height(48)))
+            if (GUILayout.Button("集体登录", _loginStyle, GUILayout.Height(64)))
             {
                 int.TryParse(_loadCount, out var count);
                 float.TryParse(_loadMinutes, out var minutes);
@@ -380,7 +409,7 @@ namespace GameMesh.UI
             }
 
             GUI.enabled = runner.Busy || runner.HoldOnline || inWorld > 0;
-            if (GUILayout.Button("集体下线", _logoutStyle, GUILayout.Height(48)))
+            if (GUILayout.Button("集体下线", _logoutStyle, GUILayout.Height(64)))
                 runner.RequestCollectiveLogout();
             GUI.enabled = true;
             GUILayout.EndHorizontal();
@@ -392,6 +421,84 @@ namespace GameMesh.UI
             var m = total / 60;
             var s = total % 60;
             return m.ToString("00") + ":" + s.ToString("00");
+        }
+
+        void DrawLines(GameMeshClient client)
+        {
+            GUILayout.Space(12);
+            GUILayout.Label("分线", _section);
+            var lineMap = client.Lines.IsLineMap || client.Config.mapTemplateId == 1002;
+            if (client.Config.mapTemplateId == 1001 && !lineMap)
+            {
+                GUILayout.Label("1001 是旧公共池，没有分线。", _hint);
+                return;
+            }
+
+            if (!lineMap)
+            {
+                GUILayout.Label("当前模板不是分线图。", _hint);
+                return;
+            }
+
+            var soft = client.Lines.SoftCap != 0 ? client.Lines.SoftCap : 200u;
+            GUILayout.Label(
+                "苏州 1002    当前 " +
+                (client.Lines.LineNo == 0 ? "未进线" : client.Lines.LineNo + " 线") +
+                "    " + client.Lines.Occupancy + " / " + soft +
+                "    " + (string.IsNullOrEmpty(client.Lines.Kind) ? "LINE" : client.Lines.Kind), _label);
+            GUILayout.Label("软顶 200 / 硬顶 400。指定线满员可换线或排队，不要当进图成功。", _hint);
+            if (client.Lines.QueuePosition > 0)
+                GUILayout.Label(
+                    "排队  第 " + client.Lines.QueuePosition + " 位" +
+                    (client.Lines.QueueReady ? "    已可进线" : ""), _statusWarn);
+
+            var canAct = !client.IsBusy && client.Session.HasIdentity;
+            GUILayout.BeginHorizontal();
+            GUI.enabled = canAct;
+            if (GUILayout.Button("刷新线列表", _btnStyle, GUILayout.Height(56)))
+                _ = client.QueryMapLinesAsync();
+            if (GUILayout.Button("系统选线进图", _loginStyle, GUILayout.Height(56)))
+                _ = client.EnterMapAsync(0, 0);
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+
+            if (client.Lines.Lines.Count == 0)
+                GUILayout.Label("还没有线列表。登录后点刷新，或先系统选线进图。", _hint);
+
+            var inWorld = client.Connection != null &&
+                          client.Connection.State == ConnectionState.InWorld;
+            for (var i = 0; i < client.Lines.Lines.Count; i++)
+            {
+                var line = client.Lines.Lines[i];
+                if (line == null || line.LineNo == 0)
+                    continue;
+                var cap = line.SoftCap != 0 ? line.SoftCap : 200u;
+                var current = inWorld && line.LineNo == client.Lines.LineNo;
+                var full = cap != 0 && line.Occupancy >= cap;
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(
+                    line.LineNo + " 线    " + line.Occupancy + " / " + cap +
+                    (full ? "  已满" : "") +
+                    (current ? "  当前" : ""),
+                    full ? _statusWarn : _label, GUILayout.Height(52));
+                GUI.enabled = canAct && !current;
+                if (GUILayout.Button(current ? "所在" : "进入", _loginStyle, GUILayout.Width(120), GUILayout.Height(52)))
+                {
+                    if (inWorld)
+                        _ = client.SwitchLineAsync(line.LineNo);
+                    else
+                        _ = client.EnterMapAsync(0, line.LineNo);
+                }
+
+                if (full && !current)
+                {
+                    if (GUILayout.Button("排队", _btnStyle, GUILayout.Width(108), GUILayout.Height(52)))
+                        _ = client.EnqueueMapAsync(line.LineNo);
+                }
+
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+            }
         }
 
         void DrawWorld(GameMeshClient client)
@@ -479,8 +586,8 @@ namespace GameMesh.UI
         string Field(string label, string value)
         {
             GUILayout.BeginHorizontal();
-            GUILayout.Label(label, _label, GUILayout.Width(90));
-            value = GUILayout.TextField(value ?? "", _field, GUILayout.Height(32));
+            GUILayout.Label(label, _label, GUILayout.Width(150));
+            value = GUILayout.TextField(value ?? "", _field, GUILayout.Height(48));
             GUILayout.EndHorizontal();
             return value;
         }
@@ -523,38 +630,46 @@ namespace GameMesh.UI
 
             _title = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 26,
+                fontSize = 40,
                 fontStyle = FontStyle.Bold,
                 normal = { textColor = Color.white }
             };
             _section = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 18,
+                fontSize = 28,
                 fontStyle = FontStyle.Bold,
-                normal = { textColor = new Color(1f, 0.85f, 0.35f) }
+                normal = { textColor = new Color(1f, 0.88f, 0.40f) }
             };
             _label = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 15,
+                fontSize = 22,
                 wordWrap = true,
-                normal = { textColor = new Color(0.92f, 0.94f, 0.98f) }
+                normal = { textColor = Color.white }
             };
             _hint = new GUIStyle(GUI.skin.label)
             {
-                fontSize = 13,
+                fontSize = 20,
                 wordWrap = true,
-                normal = { textColor = new Color(0.70f, 0.76f, 0.84f) }
+                normal = { textColor = new Color(0.92f, 0.94f, 0.98f) }
+            };
+            _hudHint = new GUIStyle(GUI.skin.label)
+            {
+                fontSize = 26,
+                fontStyle = FontStyle.Bold,
+                wordWrap = true,
+                alignment = TextAnchor.MiddleLeft,
+                normal = { textColor = new Color(1f, 0.95f, 0.45f) }
             };
             _field = new GUIStyle(GUI.skin.textField)
             {
-                fontSize = 16,
+                fontSize = 22,
                 alignment = TextAnchor.MiddleLeft
             };
             _btnStyle = ButtonStyle(_btn, Color.white);
             _loginStyle = ButtonStyle(_btnLogin, Color.white);
             _logoutStyle = ButtonStyle(_btnLogout, Color.white);
             _statusOk = Banner(new Color(0.10f, 0.38f, 0.20f, 1f), Color.white);
-            _statusWarn = Banner(new Color(0.42f, 0.32f, 0.08f, 1f), Color.white);
+            _statusWarn = Banner(new Color(0.55f, 0.38f, 0.06f, 1f), new Color(1f, 0.97f, 0.82f));
             _statusErr = Banner(new Color(0.48f, 0.12f, 0.12f, 1f), Color.white);
             _stylesReady = true;
         }
@@ -563,7 +678,7 @@ namespace GameMesh.UI
         {
             return new GUIStyle(GUI.skin.button)
             {
-                fontSize = 18,
+                fontSize = 24,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.MiddleCenter,
                 normal = { background = bg, textColor = text },
@@ -577,10 +692,10 @@ namespace GameMesh.UI
             var tex = ColorTex(bg);
             return new GUIStyle(GUI.skin.box)
             {
-                fontSize = 15,
+                fontSize = 22,
                 fontStyle = FontStyle.Bold,
                 alignment = TextAnchor.UpperLeft,
-                padding = new RectOffset(12, 12, 10, 10),
+                padding = new RectOffset(14, 14, 12, 12),
                 margin = new RectOffset(0, 0, 6, 6),
                 wordWrap = true,
                 stretchHeight = true,

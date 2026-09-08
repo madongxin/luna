@@ -19,7 +19,10 @@ namespace GameMesh.Protocol
             "MailboxChangedNotify", "ServerPushEnvelope",
             "ClientHelloReq", "ServerHelloRsp", "HeartbeatReq", "HeartbeatRsp",
             "FullStateSnapshotRsp", "WorldSnapshotReq", "RespawnReq", "RespawnRsp",
-            "MapManifestEntry", "SessionReplacedNotify"
+            "MapManifestEntry", "SessionReplacedNotify",
+            "QueryMapLinesReq", "QueryMapLinesRsp",
+            "SwitchLineReq", "SwitchLineRsp",
+            "EnqueueMapReq", "EnqueueMapRsp", "MapLineInfo"
         };
 
         public static bool HasType(string typeName)

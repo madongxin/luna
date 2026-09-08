@@ -69,6 +69,12 @@ namespace GameMesh.Protocol
                 "Auth/Session/GameDB 等依赖暂时不可用。请稍后重试；若持续失败请看服务器健康状态。"),
             ["ERR_MAP_FULL"] = new GameErrorInfo("ERR_MAP_FULL", "当前地图实例已满", false,
                 "这张地图实例人数已满。请换一个模板或稍后再进，不要改客户端硬选实例。"),
+            [GameMeshErrorCode.MapLineFull] = new GameErrorInfo(GameMeshErrorCode.MapLineFull, "该线已满，请换线或排队", true,
+                "当前分线已到软上限。请换一条线，或排队等空位。"),
+            [GameMeshErrorCode.MapNoLine] = new GameErrorInfo(GameMeshErrorCode.MapNoLine, "线号已失效，请重新查线", true,
+                "指定的线已经不存在。请刷新分线列表后再进。"),
+            [GameMeshErrorCode.MapLineLimit] = new GameErrorInfo(GameMeshErrorCode.MapLineLimit, "分线数量已到上限", false,
+                "这张地图不能再开新线。请选已有线路或稍后再进。"),
             ["ERR_MAP_DATA_MISMATCH"] = new GameErrorInfo("ERR_MAP_DATA_MISMATCH", "地图数据版本或哈希不匹配，请更新资源", false,
                 "本地地图静态数据与服务器不符。请更新地图资源后再进图。"),
             ["ERR_NOT_ON_MAP"] = new GameErrorInfo("ERR_NOT_ON_MAP", "尚未进入地图", false,
@@ -98,7 +104,7 @@ namespace GameMesh.Protocol
             ["ERR_INTERNAL"] = new GameErrorInfo("ERR_INTERNAL", "服务器内部错误", false,
                 "服务器内部异常。请带追踪号反馈；不要靠连点重试同一条非幂等写。"),
             ["ERR_BAD_CREDENTIAL"] = new GameErrorInfo("ERR_BAD_CREDENTIAL", "账号或密码错误", false,
-                "密码为空、不足 6 位，或与该玩家 ID 注册时不一致。请填回至少 6 位密码（联调可用 demo-local）后点登录；若仍失败，用同一密码先注册再登录。关窗口不会登出。"),
+                "密码为空、不足 6 位，或与该玩家 ID 注册时不一致。请用默认密码 luna123 登录；若仍失败，先点清除本地账号再注册。关窗口不会登出。"),
             ["ERR_ACCOUNT_NOT_FOUND"] = new GameErrorInfo("ERR_ACCOUNT_NOT_FOUND", "账号未注册，请先注册", false,
                 "这个玩家 ID 还没有账号。请先填至少 6 位密码点注册，成功后再登录。"),
             ["ERR_BANNED"] = new GameErrorInfo("ERR_BANNED", "账号已封禁", false,
@@ -124,8 +130,8 @@ namespace GameMesh.Protocol
             {
                 code = login ? "ERR_BAD_CREDENTIAL" : "ERR_INVALID_ARGUMENT";
                 message = login
-                    ? "密码为空。登录需要至少 6 位密码。登录成功后密码框会被清空，再次登录请再填一次（联调可用 demo-local）。关窗口不会登出。"
-                    : "密码为空。注册需要至少 6 位密码，请填好后再点注册。";
+                    ? "密码为空。登录需要至少 6 位密码。空着会自动使用默认密码 luna123。关窗口不会登出。"
+                    : "密码为空。注册需要至少 6 位密码，空着会自动使用默认密码 luna123。";
                 return true;
             }
             if (pw.Length < 6)

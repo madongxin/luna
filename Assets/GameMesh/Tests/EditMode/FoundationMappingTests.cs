@@ -350,6 +350,42 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void EnterMapReq_LineNoAndQueryMapLines_AreGenerated()
+        {
+            var enter = new EnterMapReq
+            {
+                RealmId = 1,
+                MapTemplateId = 1002,
+                LineNo = 0,
+                QueueToken = ""
+            };
+            Assert.AreEqual(0u, enter.LineNo);
+            var query = new GameRequest
+            {
+                QueryMapLines = new QueryMapLinesReq { RealmId = 1, MapTemplateId = 1002 }
+            };
+            Assert.AreEqual(GameRequest.BodyOneofCase.QueryMapLines, query.BodyCase);
+            var sw = new GameRequest
+            {
+                SwitchLine = new SwitchLineReq { MapTemplateId = 1002, LineNo = 2, OperationId = "op-line" }
+            };
+            Assert.AreEqual(2u, sw.SwitchLine.LineNo);
+            var state = new GameMesh.Map.MapLineState();
+            state.ApplyEnter(new EnterMapRsp
+            {
+                Ok = true,
+                Kind = "LINE",
+                LineNo = 3,
+                Occupancy = 12,
+                SoftCap = 200,
+                HardCap = 400
+            });
+            Assert.IsTrue(state.IsLineMap);
+            Assert.AreEqual(3u, state.LineNo);
+            Assert.AreEqual(12u, state.Occupancy);
+        }
+
+        [Test]
         public void EnterMapReq_WrongHashUsesRealFieldsNotForceMismatch()
         {
             var req = new EnterMapReq

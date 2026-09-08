@@ -79,6 +79,10 @@ if ($cs -notmatch "Heartbeat") { $missing += "oneof Heartbeat" }
 if ($cs -notmatch "WorldSnapshot") { $missing += "oneof WorldSnapshot" }
 if ($cs -notmatch "Respawn") { $missing += "oneof Respawn" }
 if ($cs -notmatch "SessionReplaced") { $missing += "oneof SessionReplaced" }
+if ($cs -notmatch "QueryMapLines") { $missing += "oneof QueryMapLines" }
+if ($cs -notmatch "SwitchLine") { $missing += "oneof SwitchLine" }
+if ($cs -notmatch "EnqueueMap") { $missing += "oneof EnqueueMap" }
+if ($cs -notmatch "MapLineInfo") { $missing += "MapLineInfo" }
 if ($cs -notmatch "MapManifestEntry") { $missing += "MapManifestEntry" }
 if ($missing.Count -gt 0) {
     throw ("required types missing: " + ($missing -join ", "))

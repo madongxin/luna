@@ -138,6 +138,14 @@ namespace GameMesh.Protocol
                     return rsp.MailList?.ErrorCode ?? "";
                 case GameResponse.BodyOneofCase.MailGet:
                     return rsp.MailGet?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.EnterMap:
+                    return rsp.EnterMap?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.QueryMapLines:
+                    return rsp.QueryMapLines?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.SwitchLine:
+                    return rsp.SwitchLine?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.EnqueueMap:
+                    return rsp.EnqueueMap?.ErrorCode ?? "";
                 default:
                     return "";
             }

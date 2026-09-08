@@ -40,6 +40,13 @@
     "RespawnReq",
     "RespawnRsp",
     "MapManifestEntry",
-    "SessionReplacedNotify"
+    "SessionReplacedNotify",
+    "QueryMapLinesReq",
+    "QueryMapLinesRsp",
+    "SwitchLineReq",
+    "SwitchLineRsp",
+    "EnqueueMapReq",
+    "EnqueueMapRsp",
+    "MapLineInfo"
   ]
 }

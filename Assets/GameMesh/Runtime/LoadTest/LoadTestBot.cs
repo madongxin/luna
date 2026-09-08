@@ -18,6 +18,7 @@ namespace GameMesh.LoadTest
         readonly CancellationTokenSource _life = new CancellationTokenSource();
 
         string _host = "";
+        uint _preferredLine;
         string _deviceId;
         string _displayName;
         string _password;
@@ -52,12 +53,13 @@ namespace GameMesh.LoadTest
         }
 
         public async Task EnterWorldAsync(string deviceId, string displayName, string password, int gatewayPort,
-            CancellationToken ct)
+            CancellationToken ct, uint preferredLine = 0)
         {
             _deviceId = deviceId;
             _displayName = displayName;
             _password = password ?? "";
             GatewayPort = gatewayPort > 0 ? gatewayPort : 8083;
+            _preferredLine = preferredLine;
             await CloseSessionAsync().ConfigureAwait(true);
             using (var linked = CancellationTokenSource.CreateLinkedTokenSource(_life.Token, ct))
             {
@@ -290,23 +292,13 @@ namespace GameMesh.LoadTest
         {
             Status = "进图";
             _conn.SetLogicalState(ConnectionState.EnteringWorld);
-            var req = new GameRequest
+            var line = _preferredLine;
+            var rsp = await SendEnterMapAsync(client, line, ct).ConfigureAwait(true);
+            if (!EnterMapAccepted(rsp) && line != 0 && IsLineOverflow(rsp))
+                rsp = await SendEnterMapAsync(client, 0, ct).ConfigureAwait(true);
+            if (!EnterMapAccepted(rsp))
             {
-                EnterMap = new EnterMapReq
-                {
-                    PlayerId = _playerId,
-                    RealmId = client.Config.realmId,
-                    MapTemplateId = client.Config.mapTemplateId,
-                    MapInstanceId = 0,
-                    MapDataVersion = client.Config.dataVersion,
-                    MapDataSha256 = client.Config.mapDataHash ?? "",
-                    OperationId = Guid.NewGuid().ToString("N")
-                }
-            };
-            var rsp = await SendAsync(req, TimeSpan.FromSeconds(8), ct).ConfigureAwait(true);
-            if (!rsp.Ok || rsp.EnterMap == null || !rsp.EnterMap.Ok)
-            {
-                var msg = rsp.EnterMap != null ? rsp.EnterMap.Message : rsp.Message;
+                var msg = rsp != null && rsp.EnterMap != null ? rsp.EnterMap.Message : rsp != null ? rsp.Message : "";
                 throw new GameMeshException(ProtocolMapper.ExtractErrorCode(rsp),
                     string.IsNullOrEmpty(msg) ? "enter map failed" : msg);
             }
@@ -316,11 +308,41 @@ namespace GameMesh.LoadTest
                 ? ProtocolMapper.ToUnity(rsp.EnterMap.SpawnPosition)
                 : new Vector3(-26f, -0.2f, -5f);
             _spawn = _pos;
+            // Stay inside map 1002's 32m AOI cell so the local player at spawn can see them.
             var angle = _index * 2.39996323f;
-            var ring = 28f + Mathf.Sqrt((_index % 80) / 79f) * 160f;
+            var ring = 4f + Mathf.Sqrt((_index % 48) / 47f) * 12f;
             _home = _spawn + new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle)) * ring;
             _yaw = rsp.EnterMap.SpawnYaw;
             _conn.SetLogicalState(ConnectionState.InWorld);
+        }
+
+        async Task<GameResponse> SendEnterMapAsync(GameMeshClient client, uint lineNo, CancellationToken ct)
+        {
+            return await SendAsync(new GameRequest
+            {
+                EnterMap = new EnterMapReq
+                {
+                    PlayerId = _playerId,
+                    RealmId = client.Config.realmId,
+                    MapTemplateId = client.Config.mapTemplateId,
+                    MapInstanceId = 0,
+                    MapDataVersion = client.Config.dataVersion,
+                    MapDataSha256 = client.Config.mapDataHash ?? "",
+                    OperationId = Guid.NewGuid().ToString("N"),
+                    LineNo = lineNo
+                }
+            }, TimeSpan.FromSeconds(8), ct).ConfigureAwait(true);
+        }
+
+        static bool EnterMapAccepted(GameResponse rsp)
+        {
+            return rsp != null && rsp.Ok && rsp.EnterMap != null && rsp.EnterMap.Ok;
+        }
+
+        static bool IsLineOverflow(GameResponse rsp)
+        {
+            var code = ProtocolMapper.ExtractErrorCode(rsp);
+            return code == GameMeshErrorCode.MapLineFull || code == GameMeshErrorCode.MapLineLimit;
         }
 
         async Task HeartbeatLoopAsync(CancellationToken ct)
@@ -387,7 +409,7 @@ namespace GameMesh.LoadTest
                     : 0.38f + (float)rnd.NextDouble() * 0.22f;
                 var next = _pos + dir * step;
                 if (Vector3.Distance(new Vector3(next.x, _home.y, next.z),
-                        new Vector3(_home.x, _home.y, _home.z)) > 55f)
+                        new Vector3(_home.x, _home.y, _home.z)) > 14f)
                 {
                     dir = (_home - _pos);
                     dir.y = 0f;

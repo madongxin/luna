@@ -26,6 +26,7 @@ namespace GameMesh.Bootstrap
         public GameSession Session { get; } = new GameSession();
         public PushReliability Push { get; } = new PushReliability();
         public AoiWorld Aoi { get; } = new AoiWorld();
+        public MapLineState Lines { get; } = new MapLineState();
         public MailClient Mail { get; private set; }
         public MoveSampler MoveSampler { get; } = new MoveSampler();
         public MoveCorrector MoveCorrector { get; } = new MoveCorrector();
@@ -77,6 +78,7 @@ namespace GameMesh.Bootstrap
         bool _snapshotInFlight;
         bool _respawnInFlight;
         string _enterOpId;
+        string _switchOpId;
         string _respawnOpId;
         ulong _lastMoveStateSeq;
         int _heartbeatMisses;
@@ -192,16 +194,26 @@ namespace GameMesh.Bootstrap
 
         public async Task RegisterThenLoginAsync()
         {
+            LaunchArgs.EnsureDefaultPassword();
             var password = LaunchArgs.Password ?? "";
-            await RegisterAsync(password).ConfigureAwait(true);
-            if (Session.PlayerId == 0)
-                return;
-            await LoginAsync(password).ConfigureAwait(true);
+            try
+            {
+                await RegisterAsync(password).ConfigureAwait(true);
+                if (Session.PlayerId == 0)
+                    return;
+                await LoginAsync(password).ConfigureAwait(true);
+            }
+            finally
+            {
+                LaunchArgs.EnsureDefaultPassword();
+            }
         }
 
         public async Task RegisterAsync()
         {
+            LaunchArgs.EnsureDefaultPassword();
             await RegisterAsync(LaunchArgs.Password).ConfigureAwait(true);
+            LaunchArgs.EnsureDefaultPassword();
         }
 
         public async Task RegisterAsync(string password)
@@ -258,7 +270,9 @@ namespace GameMesh.Bootstrap
 
         public async Task LoginAsync()
         {
+            LaunchArgs.EnsureDefaultPassword();
             await LoginAsync(LaunchArgs.Password).ConfigureAwait(true);
+            LaunchArgs.EnsureDefaultPassword();
         }
 
         public async Task LoginAsync(string password)
@@ -384,6 +398,7 @@ namespace GameMesh.Bootstrap
             {
                 Mail.Clear();
                 Aoi.Clear();
+                Lines.Clear();
                 _gapCache.Clear();
                 StopHeartbeat();
                 HelloOk = false;
@@ -409,13 +424,13 @@ namespace GameMesh.Bootstrap
         public void ClearLocalAccount()
         {
             LocalIdentityStore.Clear();
-            LaunchArgs.ClearPassword();
+            LaunchArgs.EnsureDefaultPassword();
             Session.ClearSensitive();
             Session.DeviceId = LaunchArgs.DeviceId;
             Session.DisplayName = LaunchArgs.DisplayName;
         }
 
-        public async Task EnterMapAsync(ulong mapInstanceId = 0)
+        public async Task EnterMapAsync(ulong mapInstanceId = 0, uint lineNo = 0, string queueToken = "")
         {
             if (!Session.HasIdentity)
             {
@@ -458,12 +473,16 @@ namespace GameMesh.Bootstrap
                         MapInstanceId = mapInstanceId,
                         MapDataVersion = Config.dataVersion,
                         MapDataSha256 = Config.mapDataHash ?? "",
-                        OperationId = _enterOpId
+                        OperationId = _enterOpId,
+                        LineNo = lineNo,
+                        QueueToken = queueToken ?? ""
                     }
                 };
                 var rsp = await RequestAsync(req).ConfigureAwait(true);
                 if (!rsp.Ok || rsp.EnterMap == null || !rsp.EnterMap.Ok)
                 {
+                    if (rsp.EnterMap != null)
+                        Lines.ApplyEnter(rsp.EnterMap);
                     var code = ProtocolMapper.ExtractErrorCode(rsp);
                     if (string.IsNullOrEmpty(code) &&
                         (rsp.EnterMap?.Message ?? rsp.Message ?? "").IndexOf("mismatch", StringComparison.OrdinalIgnoreCase) >= 0)
@@ -486,8 +505,9 @@ namespace GameMesh.Bootstrap
                 }
 
                 Session.ApplyMap(enter.MapTemplateId, enter.MapInstanceId, enter.OwnerEpoch, enter.RouteVersion);
+                Lines.ApplyEnter(enter);
                 Aoi.SetMapInstance(enter.MapInstanceId);
-                ProtocolMapper.ApplySnapshot(Aoi, enter.AoiSnapshot, enter.MapInstanceId, false);
+                ProtocolMapper.ApplySnapshot(Aoi, enter.AoiSnapshot, enter.MapInstanceId, true);
                 if (enter.SpawnPosition != null)
                 {
                     HasPendingSpawn = true;
@@ -508,11 +528,17 @@ namespace GameMesh.Bootstrap
                 _enterOpId = null;
                 Connection.SetLogicalState(ConnectionState.InWorld);
                 WriteLiveEnter("INWORLD template=" + enter.MapTemplateId +
+                               " kind=" + enter.Kind + " line=" + enter.LineNo +
+                               " occ=" + enter.Occupancy + "/" + enter.SoftCap +
                                " spawn=" + PendingSpawn + " yaw=" + PendingSpawnYaw +
                                " hash=" + (enter.MapDataSha256 ?? "") +
                                " scene=" + SceneManager.GetActiveScene().name);
                 if (string.IsNullOrEmpty(LaunchArgs.AutoScenario))
+                {
                     _ = PingMapAsync();
+                    if (Lines.IsLineMap || Config.mapTemplateId == 1002)
+                        _ = QueryMapLinesAsync();
+                }
             }
             catch (Exception ex)
             {
@@ -522,6 +548,182 @@ namespace GameMesh.Bootstrap
             {
                 BusyStage = "";
             }
+        }
+
+        public async Task QueryMapLinesAsync()
+        {
+            if (!Session.HasIdentity)
+            {
+                SetError(GameMeshErrorCode.ClientIllegalState, "not logged in");
+                return;
+            }
+
+            try
+            {
+                BusyStage = "查线";
+                var rsp = await RequestAsync(new GameRequest
+                {
+                    QueryMapLines = new QueryMapLinesReq
+                    {
+                        PlayerId = Session.PlayerId,
+                        RealmId = Config.realmId,
+                        MapTemplateId = Config.mapTemplateId
+                    }
+                }).ConfigureAwait(true);
+                if (!rsp.Ok || rsp.QueryMapLines == null || !rsp.QueryMapLines.Ok)
+                {
+                    var code = ProtocolMapper.ExtractErrorCode(rsp);
+                    SetError(string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code,
+                        rsp.QueryMapLines?.Message ?? rsp.Message, code);
+                    return;
+                }
+
+                Lines.ApplyQuery(rsp.QueryMapLines);
+                SetError("", "");
+            }
+            catch (Exception ex)
+            {
+                SetError(ex);
+            }
+            finally
+            {
+                BusyStage = "";
+            }
+        }
+
+        public async Task SwitchLineAsync(uint lineNo)
+        {
+            if (!Session.HasIdentity)
+            {
+                SetError(GameMeshErrorCode.ClientIllegalState, "not logged in");
+                return;
+            }
+
+            if (lineNo == 0)
+            {
+                SetError(GameMeshErrorCode.ClientIllegalState, "switch line requires line_no > 0");
+                return;
+            }
+
+            try
+            {
+                BusyStage = "切线 " + lineNo;
+                _switchOpId = Guid.NewGuid().ToString("N");
+                var rsp = await RequestAsync(new GameRequest
+                {
+                    SwitchLine = new SwitchLineReq
+                    {
+                        PlayerId = Session.PlayerId,
+                        RealmId = Config.realmId,
+                        MapTemplateId = Config.mapTemplateId,
+                        LineNo = lineNo,
+                        OperationId = _switchOpId
+                    }
+                }).ConfigureAwait(true);
+                if (!rsp.Ok || rsp.SwitchLine == null || !rsp.SwitchLine.Ok)
+                {
+                    if (rsp.SwitchLine != null)
+                        Lines.ApplySwitch(rsp.SwitchLine);
+                    var code = ProtocolMapper.ExtractErrorCode(rsp);
+                    SetError(string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code,
+                        rsp.SwitchLine?.Message ?? rsp.Message, code);
+                    return;
+                }
+
+                ApplySwitchPresence(rsp.SwitchLine);
+                SetError("", "");
+            }
+            catch (Exception ex)
+            {
+                SetError(ex);
+            }
+            finally
+            {
+                BusyStage = "";
+                _switchOpId = null;
+            }
+        }
+
+        public async Task EnqueueMapAsync(uint lineNo)
+        {
+            if (!Session.HasIdentity)
+            {
+                SetError(GameMeshErrorCode.ClientIllegalState, "not logged in");
+                return;
+            }
+
+            if (lineNo == 0)
+            {
+                SetError(GameMeshErrorCode.ClientIllegalState, "enqueue requires line_no > 0");
+                return;
+            }
+
+            try
+            {
+                BusyStage = "排队 " + lineNo;
+                var rsp = await RequestAsync(new GameRequest
+                {
+                    EnqueueMap = new EnqueueMapReq
+                    {
+                        PlayerId = Session.PlayerId,
+                        RealmId = Config.realmId,
+                        MapTemplateId = Config.mapTemplateId,
+                        LineNo = lineNo,
+                        QueueToken = Lines.QueueToken ?? ""
+                    }
+                }).ConfigureAwait(true);
+                if (!rsp.Ok || rsp.EnqueueMap == null || !rsp.EnqueueMap.Ok)
+                {
+                    var code = ProtocolMapper.ExtractErrorCode(rsp);
+                    SetError(string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code,
+                        rsp.EnqueueMap?.Message ?? rsp.Message, code);
+                    return;
+                }
+
+                Lines.ApplyEnqueue(rsp.EnqueueMap);
+                if (rsp.EnqueueMap.Ready && !string.IsNullOrEmpty(rsp.EnqueueMap.QueueToken))
+                    await EnterMapAsync(0, rsp.EnqueueMap.LineNo, rsp.EnqueueMap.QueueToken).ConfigureAwait(true);
+                else
+                    SetError("", "");
+            }
+            catch (Exception ex)
+            {
+                SetError(ex);
+            }
+            finally
+            {
+                BusyStage = "";
+            }
+        }
+
+        void ApplySwitchPresence(SwitchLineRsp switched)
+        {
+            if (switched == null)
+                return;
+            Session.ApplyMap(switched.MapTemplateId, switched.MapInstanceId, switched.OwnerEpoch,
+                switched.RouteVersion);
+            Lines.ApplySwitch(switched);
+            Aoi.Clear();
+            Aoi.SetMapInstance(switched.MapInstanceId);
+            ProtocolMapper.ApplySnapshot(Aoi, switched.AoiSnapshot, switched.MapInstanceId, true);
+            if (switched.SpawnPosition != null)
+            {
+                HasPendingSpawn = true;
+                PendingSpawn = ProtocolMapper.ToUnity(switched.SpawnPosition);
+                PendingSpawnYaw = switched.SpawnYaw;
+            }
+
+            if (switched.Self != null && switched.Self.PlayerId != 0)
+            {
+                Session.Attributes.Hp = switched.Self.Hp;
+                Session.Attributes.MaxHp = switched.Self.MaxHp;
+                if (!string.IsNullOrEmpty(switched.Self.PlayerName))
+                    Session.Attributes.Name = switched.Self.PlayerName;
+            }
+
+            if (Connection != null && Connection.State != ConnectionState.InWorld &&
+                ConnectionStateMachine.CanTransition(Connection.State, ConnectionState.InWorld))
+                Connection.SetLogicalState(ConnectionState.InWorld);
         }
 
         public async Task<bool> SendMoveAsync(Vector3 position, float yaw, CancellationToken ct)
@@ -629,10 +831,48 @@ namespace GameMesh.Bootstrap
             {
                 HelloOk = false;
                 HeartbeatOk = false;
-                using (var cts = new CancellationTokenSource(Config.connectTimeoutMs))
+                var ports = Config.GatewayPorts();
+                Exception last = null;
+                for (var i = 0; i < ports.Length; i++)
                 {
-                    await Connection.ConnectAsync(Config.host, Config.port, cts.Token).ConfigureAwait(true);
+                    var gatewayPort = ports[i];
+                    try
+                    {
+                        if (Connection.State != ConnectionState.Disconnected &&
+                            Connection.State != ConnectionState.Reconnecting)
+                        {
+                            await Connection.DisconnectAsync(DisconnectReason.Reconnect, CancellationToken.None)
+                                .ConfigureAwait(true);
+                        }
+
+                        using (var cts = new CancellationTokenSource(Config.connectTimeoutMs))
+                        {
+                            await Connection.ConnectAsync(Config.host, gatewayPort, cts.Token)
+                                .ConfigureAwait(true);
+                        }
+
+                        Config.port = gatewayPort;
+                        last = null;
+                        break;
+                    }
+                    catch (Exception ex)
+                    {
+                        last = ex;
+                        GameMeshLog.Warn("gateway :" + gatewayPort + " " + ex.Message);
+                        try
+                        {
+                            await Connection.DisconnectAsync(DisconnectReason.Reconnect, CancellationToken.None)
+                                .ConfigureAwait(true);
+                        }
+                        catch
+                        {
+                            /* try next port */
+                        }
+                    }
                 }
+
+                if (last != null)
+                    throw last;
             }
 
             await HandshakeAsync().ConfigureAwait(true);
@@ -885,6 +1125,24 @@ namespace GameMesh.Bootstrap
                 {
                     serverSeq = response.ServerPush.ServerSeq;
                     reliable = response.ServerPush.Reliable;
+                    var messageType = response.ServerPush.MessageType ?? "";
+                    if (serverSeq == 0 || messageType == "map.lines.v1")
+                    {
+                        GameResponse linePush;
+                        try
+                        {
+                            linePush = GameResponse.Parser.ParseFrom(response.ServerPush.Payload);
+                        }
+                        catch (Exception ex)
+                        {
+                            SetError(new GameMeshException(GameMeshErrorCode.ClientProtocol, "map.lines.v1 parse", ex));
+                            return;
+                        }
+
+                        ApplyInnerPush(linePush);
+                        return;
+                    }
+
                     var decision = Push.Observe(serverSeq);
                     if (decision == PushReliability.Decision.Duplicate)
                     {
@@ -949,6 +1207,12 @@ namespace GameMesh.Bootstrap
                 HandleSessionReplaced(code, notify.Message);
                 return true;
             }
+            if (inner.QueryMapLines != null)
+            {
+                Lines.ApplyQuery(inner.QueryMapLines);
+                return true;
+            }
+
             if (inner.MailboxChanged != null || inner.MailboxSummary != null || inner.MailList != null)
                 Mail.NotifyMailboxChanged(Time.unscaledTime);
             if (inner.AoiDelta != null)
@@ -1291,17 +1555,20 @@ namespace GameMesh.Bootstrap
             Session.DisplayName = LaunchArgs.DisplayName;
             if (Session.PlayerId == 0 && stored.PlayerId != 0)
                 Session.PlayerId = stored.PlayerId;
-            if (stored.Host == "47.96.22.16")
+            if (stored.Host == "47.96.22.16" || stored.Host == "10.0.0.2" ||
+                string.IsNullOrEmpty(stored.Host))
             {
                 Config.host = "124.222.244.169";
-                Config.port = 8083;
             }
             else if (!string.IsNullOrEmpty(stored.Host) && Config.host == "127.0.0.1")
             {
                 Config.host = stored.Host;
             }
 
-            if (stored.Port > 0 && Config.port == 8081)
+            if (Config.host == "10.0.0.2")
+                Config.host = "124.222.244.169";
+            Config.NormalizeGatewayPorts();
+            if (stored.Port == 8081 || stored.Port == 8083)
                 Config.port = stored.Port;
         }
 
@@ -1446,6 +1713,8 @@ namespace GameMesh.Bootstrap
             var explore = scene == "TerrainDemoScene" || scene == "demoScene_free";
             if (!flagged && !explore)
                 return;
+            Config.host = "124.222.244.169";
+            Config.NormalizeGatewayPorts();
 
             WriteLiveEnter("AWAKE host=" + Config.host + ":" + Config.port +
                            " template=" + Config.mapTemplateId + " scene=" + Config.mainSceneName +
@@ -1461,10 +1730,18 @@ namespace GameMesh.Bootstrap
                     LaunchArgs.DeviceId = "unity-live-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
                 if (string.IsNullOrEmpty(LaunchArgs.DisplayName))
                     LaunchArgs.DisplayName = "Luna";
-                if (string.IsNullOrEmpty(LaunchArgs.Password) || LaunchArgs.Password.Length < 6)
-                    LaunchArgs.Password = "luna123";
+                LaunchArgs.EnsureDefaultPassword();
                 WriteLiveEnter("AUTH device=" + LaunchArgs.DeviceId + " name=" + LaunchArgs.DisplayName);
                 await RegisterThenLoginAsync().ConfigureAwait(true);
+                if (IsBadCredential())
+                {
+                    WriteLiveEnter("BAD_CREDENTIAL player=" + Session.PlayerId + " retry-register");
+                    LocalIdentityStore.Clear();
+                    Session.PlayerId = 0;
+                    LaunchArgs.DeviceId = "unity-live-" + DateTime.UtcNow.ToString("yyyyMMddHHmmss");
+                    LaunchArgs.EnsureDefaultPassword();
+                    await RegisterThenLoginAsync().ConfigureAwait(true);
+                }
                 WriteLiveEnter("LOGIN_DONE state=" + (Connection != null ? Connection.State.ToString() : "null") +
                                " player=" + Session.PlayerId + " err=" + LastError);
             }
@@ -1472,6 +1749,15 @@ namespace GameMesh.Bootstrap
             {
                 WriteLiveEnter("LOGIN_FAIL " + ex.GetType().Name + ": " + ex.Message);
             }
+        }
+
+        bool IsBadCredential()
+        {
+            var code = LastErrorCode ?? "";
+            var text = LastError ?? "";
+            return code.IndexOf("BAD_CREDENTIAL", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("BAD_CREDENTIAL", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   text.IndexOf("invalid credential", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         static void WriteLiveEnter(string line)

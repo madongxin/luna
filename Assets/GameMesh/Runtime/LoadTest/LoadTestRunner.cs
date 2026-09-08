@@ -25,6 +25,7 @@ namespace GameMesh.LoadTest
         public bool Busy => _busy;
         public bool HoldOnline => _holdOnline;
         public int TargetCount { get; private set; }
+        public uint TargetLineNo { get; private set; }
         public int InWorldCount
         {
             get
@@ -141,11 +142,12 @@ namespace GameMesh.LoadTest
             _lastError = "";
             try
             {
-                count = Mathf.Clamp(count, 1, 200);
+                count = Mathf.Clamp(count, 1, 20000);
                 staggerMs = Mathf.Clamp(staggerMs, 0, 5000);
                 durationMinutes = Mathf.Max(0f, durationMinutes);
                 _durationSec = durationMinutes * 60f;
                 TargetCount = count;
+                TargetLineNo = ResolvePreferredLine(GameMeshClient.Instance);
                 if (string.IsNullOrEmpty(password) || password.Length < 6)
                     password = "loadtest";
                 if (portA <= 0)
@@ -178,7 +180,7 @@ namespace GameMesh.LoadTest
                     var device = "lt-" + stamp + "-" + i.ToString("D3");
                     var name = "Bot" + i.ToString("D3");
                     var port = PickPort(i, portA, portB);
-                    tasks.Add(EnterWithRetryAsync(bot, device, name, password, port, gate, ct));
+                    tasks.Add(EnterWithRetryAsync(bot, device, name, password, port, TargetLineNo, gate, ct));
                     if (i + 1 < count)
                         await Task.Delay(staggerMs, ct).ConfigureAwait(true);
                 }
@@ -212,6 +214,10 @@ namespace GameMesh.LoadTest
                     ? Time.unscaledTime + _durationSec
                     : float.PositiveInfinity;
                 _phase = _durationSec > 0f ? "在线压测" : "在线（手动下线）";
+                var live = GameMeshClient.Instance;
+                if (live != null && live.Connection != null &&
+                    live.Connection.State == ConnectionState.InWorld)
+                    _ = live.RequestWorldSnapshotAsync();
             }
             catch (Exception ex)
             {
@@ -225,7 +231,7 @@ namespace GameMesh.LoadTest
         }
 
         static async Task EnterWithRetryAsync(LoadTestBot bot, string device, string name, string password, int port,
-            SemaphoreSlim gate, CancellationToken ct)
+            uint preferredLine, SemaphoreSlim gate, CancellationToken ct)
         {
             await gate.WaitAsync(ct).ConfigureAwait(true);
             try
@@ -246,7 +252,8 @@ namespace GameMesh.LoadTest
 
                     try
                     {
-                        await bot.EnterWorldAsync(device, name, password, port, ct).ConfigureAwait(true);
+                        await bot.EnterWorldAsync(device, name, password, port, ct, preferredLine)
+                            .ConfigureAwait(true);
                         return;
                     }
                     catch (OperationCanceledException)
@@ -284,7 +291,7 @@ namespace GameMesh.LoadTest
                 var device = "lt-" + stamp + "-r" + i.ToString("D3");
                 var name = "Bot" + i.ToString("D3");
                 var port = PickBalancedPort(portA, portB);
-                tasks.Add(EnterWithRetryAsync(bot, device, name, password, port, gate, ct));
+                tasks.Add(EnterWithRetryAsync(bot, device, name, password, port, TargetLineNo, gate, ct));
             }
 
             if (tasks.Count == 0)
@@ -297,6 +304,15 @@ namespace GameMesh.LoadTest
             {
                 /* recorded on bot */
             }
+        }
+
+        static uint ResolvePreferredLine(GameMeshClient client)
+        {
+            if (client == null)
+                return 1;
+            if (client.Lines != null && client.Lines.LineNo != 0)
+                return client.Lines.LineNo;
+            return client.Config != null && client.Config.mapTemplateId == 1002 ? 1u : 0u;
         }
 
         static int PickPort(int index, int portA, int portB)

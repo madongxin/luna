@@ -45,6 +45,15 @@ namespace GameMesh.Player
             return best < float.MaxValue;
         }
 
+        static float PlanarDistance(Vector3 local, RemoteEntityState state)
+        {
+            if (state == null)
+                return float.MaxValue;
+            var dx = local.x - state.X;
+            var dz = local.z - state.Z;
+            return Mathf.Sqrt(dx * dx + dz * dz);
+        }
+
         void LateUpdate()
         {
             var client = GameMeshClient.Instance;
@@ -193,11 +202,14 @@ namespace GameMesh.Player
             var runner = GameMeshLoadTestRunner.Instance;
             if (runner == null || runner.InWorldCount <= 0)
                 return;
-            if (client.Aoi.Entities.Count > 0)
+            var empty = client.Aoi.Entities.Count == 0;
+            var far = !empty && _local != null &&
+                      TryNearestRemote(out _, out var dist) && dist > 40f;
+            if (!empty && !far)
                 return;
             if (Time.unscaledTime < _nextAoiSnapshotAt)
                 return;
-            _nextAoiSnapshotAt = Time.unscaledTime + 4f;
+            _nextAoiSnapshotAt = Time.unscaledTime + 3f;
             _ = client.RequestWorldSnapshotAsync();
         }
 
@@ -207,18 +219,20 @@ namespace GameMesh.Player
                 ? client.Aoi.LocalPlayerId
                 : client.Session.PlayerId;
             var seen = new System.Collections.Generic.HashSet<ulong>();
-            _modelBudget = 1;
+            var localPos = _local != null ? _local.position : Vector3.zero;
+            _modelBudget = 32;
             foreach (var kv in client.Aoi.Entities)
             {
                 if (localId != 0 && kv.Key == localId)
                     continue;
                 seen.Add(kv.Key);
+                var near = _local == null || PlanarDistance(localPos, kv.Value) < 48f;
                 if (!_views.TryGetValue(kv.Key, out var view) || view == null)
                 {
                     try
                     {
                         view = RemotePlayerView.Spawn(kv.Value, client.Config.interpolationDelayMs,
-                            attachModel: _modelBudget > 0);
+                            attachModel: near && _modelBudget > 0);
                         if (view != null && view.HasModel)
                             _modelBudget--;
                     }
@@ -230,7 +244,7 @@ namespace GameMesh.Player
 
                     _views[kv.Key] = view;
                 }
-                else if (!view.HasModel && _modelBudget > 0)
+                else if (!view.HasModel && near && _modelBudget > 0)
                 {
                     if (view.TryAttachModel())
                         _modelBudget--;
