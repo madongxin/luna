@@ -69,12 +69,28 @@ namespace GameMesh.Protocol
                 "Auth/Session/GameDB 等依赖暂时不可用。请稍后重试；若持续失败请看服务器健康状态。"),
             ["ERR_MAP_FULL"] = new GameErrorInfo("ERR_MAP_FULL", "当前地图实例已满", false,
                 "这张地图实例人数已满。请换一个模板或稍后再进，不要改客户端硬选实例。"),
-            [GameMeshErrorCode.MapLineFull] = new GameErrorInfo(GameMeshErrorCode.MapLineFull, "该线已满，请换线或排队", true,
-                "当前线已到开线人数（默认 100）。请换一条线，或排队等空位。"),
-            [GameMeshErrorCode.MapNoLine] = new GameErrorInfo(GameMeshErrorCode.MapNoLine, "线号已失效，请重新查线", true,
-                "指定的线已经不存在。请刷新分线列表后再进。"),
-            ["NOT_FOUND"] = new GameErrorInfo("NOT_FOUND", "资源不存在", true,
-                "常见是会话还没写上（session not found），或线号不存在。请稍等再登录并进线，不要把 line_no=0 和会话缺失混为一谈。"),
+            [GameMeshErrorCode.MapLineFull] = new GameErrorInfo(GameMeshErrorCode.MapLineFull, "该线已满，请换线或排队", false,
+                "指定分线已满。请点另一条线的「切线/进入」，或点「排队」。不要改 line_no 静默换线。"),
+            [GameMeshErrorCode.MapNoLine] = new GameErrorInfo(GameMeshErrorCode.MapNoLine, "线号已失效，请重新查线", false,
+                "指定的线已经不存在。请刷新分线列表后再选一条现有线。"),
+            [GameMeshErrorCode.MapNotReady] = new GameErrorInfo(GameMeshErrorCode.MapNotReady, "分线尚未就绪", true,
+                "线或实例还在冻结/恢复/关闭中。请稍后重试同一条线，或拉一次世界快照。"),
+            [GameMeshErrorCode.MapDraining] = new GameErrorInfo(GameMeshErrorCode.MapDraining, "该线正在排空", false,
+                "这条线正在排空，不能再进。请换线或排队，不要静默改到别的线。"),
+            [GameMeshErrorCode.QueueNeeded] = new GameErrorInfo(GameMeshErrorCode.QueueNeeded, "需要先取排队票", false,
+                "这条线要先排队。请对同一线号调用 EnqueueMap，不要改 line_no。"),
+            [GameMeshErrorCode.QueueInvalid] = new GameErrorInfo(GameMeshErrorCode.QueueInvalid, "排队票无效或过期", false,
+                "排队票无效或过期。请重新对同一线号排队。"),
+            [GameMeshErrorCode.QueueNotReady] = new GameErrorInfo(GameMeshErrorCode.QueueNotReady, "还没排到队首", true,
+                "未到队首或线仍满。请持票轮询后再用同一 queue_token 进线。"),
+            ["ERR_DUNGEON_CREATE_FORBIDDEN"] = new GameErrorInfo("ERR_DUNGEON_CREATE_FORBIDDEN", "副本须先开本", false,
+                "副本要先 CreateDungeon，不能直接进。"),
+            ["ERR_DUNGEON_NOT_FOUND"] = new GameErrorInfo("ERR_DUNGEON_NOT_FOUND", "副本不存在或已关闭", false,
+                "这个副本不存在或已关闭。请重新开本。"),
+            ["ERR_DUNGEON_NOT_MEMBER"] = new GameErrorInfo("ERR_DUNGEON_NOT_MEMBER", "不是该副本队员", false,
+                "当前账号不是这个副本的队员。"),
+            ["NOT_FOUND"] = new GameErrorInfo("NOT_FOUND", "资源不存在", false,
+                "服务器返回了非公网码 NOT_FOUND。请看 error_code 是否已提升为 ERR_SESSION_EXPIRED 或 ERR_MAP_NO_LINE，不要解析 message。"),
             [GameMeshErrorCode.MapLineLimit] = new GameErrorInfo(GameMeshErrorCode.MapLineLimit, "分线数量已到上限", false,
                 "这张地图不能再开新线。请选已有线路或稍后再进。"),
             ["ERR_MAP_DATA_MISMATCH"] = new GameErrorInfo("ERR_MAP_DATA_MISMATCH", "地图数据版本或哈希不匹配，请更新资源", false,
@@ -87,7 +103,7 @@ namespace GameMesh.Protocol
                 "你还在图里。服务器换了路由版本，客户端会拉一次世界快照，不要再点进入。"),
             ["ERR_STALE_ROUTE"] = new GameErrorInfo("ERR_STALE_ROUTE", "路由版本过期，正在同步", true,
                 "你还在图里。服务器换了路由版本，客户端会拉一次世界快照，不要再点进入。"),
-            ["ERR_MOVE_TOO_FAST"] = new GameErrorInfo("ERR_MOVE_TOO_FAST", "移动过快，已按服务器位置校正", true,
+            ["ERR_MOVE_TOO_FAST"] = new GameErrorInfo("ERR_MOVE_TOO_FAST", "移动过快，已按服务器位置校正", false,
                 "客户端移动超过允许速度。角色会被拉回服务器位置，请按校正后的坐标继续。"),
             ["ERR_UNWALKABLE"] = new GameErrorInfo("ERR_UNWALKABLE", "目标位置不可行走", false,
                 "目标格子不能走。请换一个可达位置。"),
@@ -191,23 +207,39 @@ namespace GameMesh.Protocol
             return ui;
         }
 
-        public static bool IsSessionMissing(string code, string message = "")
+        public static bool IsSessionMissing(string code)
         {
-            if (!string.IsNullOrEmpty(code) &&
-                (code == "ERR_SESSION_EXPIRED" || code == "ERR_UNAUTHENTICATED"))
-                return true;
-            return !string.IsNullOrEmpty(message) &&
-                   (message.IndexOf("session not found", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
-                    message.IndexOf("session_id mismatch", System.StringComparison.OrdinalIgnoreCase) >= 0);
+            return code == GameMeshErrorCode.SessionExpired;
         }
 
-        public static bool IsStaleRoute(string code, string message = "")
+        public static bool IsStaleRoute(string code)
         {
-            if (!string.IsNullOrEmpty(code) &&
-                (code == "STALE_ROUTE" || code == "ERR_STALE_ROUTE"))
-                return true;
-            return !string.IsNullOrEmpty(message) &&
-                   message.IndexOf("route_version", System.StringComparison.OrdinalIgnoreCase) >= 0;
+            return code == "STALE_ROUTE" || code == "ERR_STALE_ROUTE";
+        }
+
+        public static bool IsMapNoLine(string code)
+        {
+            return code == GameMeshErrorCode.MapNoLine;
+        }
+
+        public static bool IsMapLineFull(string code)
+        {
+            return code == GameMeshErrorCode.MapLineFull;
+        }
+
+        public static bool IsMapDraining(string code)
+        {
+            return code == GameMeshErrorCode.MapDraining;
+        }
+
+        public static bool IsMapNotReady(string code)
+        {
+            return code == GameMeshErrorCode.MapNotReady;
+        }
+
+        public static bool IsQueueNeeded(string code)
+        {
+            return code == GameMeshErrorCode.QueueNeeded;
         }
 
         public static bool IsSessionReplaced(string code)

@@ -343,7 +343,7 @@ namespace GameMesh.LoadTest
             }
 
             if (!client.IsOnMap &&
-                GameErrorCatalog.IsSessionMissing(client.LastErrorCode, client.LastError))
+                GameErrorCatalog.IsSessionMissing(client.LastErrorCode))
             {
                 _phase = "本号重新登录";
                 await client.LoginAsync().ConfigureAwait(true);

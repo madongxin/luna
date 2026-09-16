@@ -308,7 +308,21 @@ namespace GameMesh.Tests.EditMode
             var info = GameErrorCatalog.Resolve("ERR_UNWALKABLE", "totally different english");
             Assert.AreEqual("目标位置不可行走", info.Chinese);
             Assert.IsFalse(info.Retryable);
-            StringAssert.Contains("可重试", GameErrorCatalog.FormatUi("ERR_MOVE_TOO_FAST"));
+            StringAssert.Contains("不可重试", GameErrorCatalog.FormatUi("ERR_MOVE_TOO_FAST"));
+            Assert.IsFalse(GameErrorCatalog.Resolve("ERR_MAP_LINE_FULL").Retryable);
+            Assert.IsFalse(GameErrorCatalog.Resolve("ERR_MAP_NO_LINE").Retryable);
+            Assert.IsTrue(GameErrorCatalog.Resolve("ERR_MAP_NOT_READY").Retryable);
+            Assert.IsFalse(GameErrorCatalog.Resolve("ERR_MAP_DRAINING").Retryable);
+            Assert.IsFalse(GameErrorCatalog.Resolve("ERR_QUEUE_NEEDED").Retryable);
+            Assert.IsTrue(GameErrorCatalog.Resolve("ERR_QUEUE_NOT_READY").Retryable);
+            Assert.IsTrue(GameErrorCatalog.IsSessionMissing("ERR_SESSION_EXPIRED"));
+            Assert.IsFalse(GameErrorCatalog.IsSessionMissing(""));
+            Assert.IsFalse(GameErrorCatalog.IsSessionMissing("ERR_MAP_NO_LINE"));
+            Assert.IsFalse(GameErrorCatalog.IsMapNoLine("ERR_SESSION_EXPIRED"));
+            Assert.IsTrue(GameErrorCatalog.IsMapNoLine("ERR_MAP_NO_LINE"));
+            Assert.IsTrue(GameErrorCatalog.IsStaleRoute("STALE_ROUTE"));
+            Assert.IsFalse(GameErrorCatalog.IsStaleRoute(""));
+            Assert.AreEqual("该线已满，请换线或排队", GameErrorCatalog.Resolve("ERR_MAP_LINE_FULL").Chinese);
         }
 
         [Test]
@@ -433,6 +447,9 @@ namespace GameMesh.Tests.EditMode
             Assert.AreEqual(3u, pick.PickLineWithRoom());
             Assert.AreEqual(3u, pick.ResolveConcreteLine(0));
             Assert.AreEqual(3u, pick.ResolveConcreteLine(1));
+            Assert.IsTrue(pick.HasLine(3));
+            Assert.IsFalse(pick.HasLine(1));
+            Assert.IsFalse(pick.HasLine(0));
         }
 
         [Test]

@@ -307,24 +307,27 @@ namespace GameMesh.LoadTest
             Status = "进图";
             _conn.SetLogicalState(ConnectionState.EnteringWorld);
             var line = ResolveEnterLine(client, _preferredLine, _index);
-            if (line == 0 && client != null && client.Lines != null)
-                line = client.Lines.ResolveConcreteLine(0);
             var rsp = await SendEnterMapAsync(client, line, ct).ConfigureAwait(true);
-            if (!EnterMapAccepted(rsp) && CanRetryAnyLine(rsp))
+            if (!EnterMapAccepted(rsp))
             {
-                var retry = 0u;
-                if (client != null && client.Lines != null)
-                    retry = client.Lines.ResolveConcreteLine(line == 0 ? 0 : line);
-                if (retry != 0 && retry != line)
-                    rsp = await SendEnterMapAsync(client, retry, ct).ConfigureAwait(true);
-                else if (line != 0)
-                    rsp = await SendEnterMapAsync(client, 0, ct).ConfigureAwait(true);
+                var code = ProtocolMapper.ExtractErrorCode(rsp);
+                if (GameErrorCatalog.IsSessionMissing(code))
+                {
+                    await LoginAsync(ct).ConfigureAwait(true);
+                    rsp = await SendEnterMapAsync(client, line, ct).ConfigureAwait(true);
+                }
+                else
+                {
+                    var retry = NextEnterLine(client, line, code);
+                    if (retry != null)
+                        rsp = await SendEnterMapAsync(client, retry.Value, ct).ConfigureAwait(true);
+                }
             }
             if (!EnterMapAccepted(rsp))
             {
-                var msg = rsp != null && rsp.EnterMap != null ? rsp.EnterMap.Message : rsp != null ? rsp.Message : "";
-                throw new GameMeshException(ProtocolMapper.ExtractErrorCode(rsp),
-                    string.IsNullOrEmpty(msg) ? "enter map failed" : msg);
+                var failCode = ProtocolMapper.ExtractErrorCode(rsp);
+                throw new GameMeshException(failCode,
+                    string.IsNullOrEmpty(failCode) ? "enter map failed" : failCode);
             }
 
             _mapInstanceId = rsp.EnterMap.MapInstanceId;
@@ -370,16 +373,26 @@ namespace GameMesh.LoadTest
             return 0;
         }
 
-        static bool CanRetryAnyLine(GameResponse rsp)
+        static uint? NextEnterLine(GameMeshClient client, uint failedLine, string code)
         {
-            var code = ProtocolMapper.ExtractErrorCode(rsp);
             if (code == GameMeshErrorCode.MapHashMismatch || code == "ERR_MAP_DATA_MISMATCH")
-                return false;
-            var msg = rsp != null && rsp.EnterMap != null ? rsp.EnterMap.Message : rsp != null ? rsp.Message : "";
-            if (!string.IsNullOrEmpty(msg) &&
-                msg.IndexOf("mismatch", StringComparison.OrdinalIgnoreCase) >= 0)
-                return false;
-            return true;
+                return null;
+            if (GameErrorCatalog.IsSessionMissing(code))
+                return null;
+            if (client == null || client.Lines == null)
+                return null;
+            if (GameErrorCatalog.IsMapNoLine(code))
+                return client.Lines.ResolveConcreteLine(0);
+            if (GameErrorCatalog.IsMapLineFull(code) || GameErrorCatalog.IsMapDraining(code))
+            {
+                var room = client.Lines.PickLineWithRoom();
+                if (room != 0 && room != failedLine)
+                    return room;
+                return failedLine == 0 ? (uint?)null : 0;
+            }
+            if (GameErrorCatalog.IsMapNotReady(code))
+                return failedLine;
+            return null;
         }
 
         async Task HeartbeatLoopAsync(CancellationToken ct)

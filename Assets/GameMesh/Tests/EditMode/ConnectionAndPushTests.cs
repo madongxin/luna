@@ -23,6 +23,10 @@ namespace GameMesh.Tests.EditMode
                 ConnectionStateMachine.Transition(ConnectionState.Connecting, ConnectionState.Handshaking));
             Assert.AreEqual(ConnectionState.Connected,
                 ConnectionStateMachine.Transition(ConnectionState.Handshaking, ConnectionState.Connected));
+            Assert.AreEqual(ConnectionState.Authenticating,
+                ConnectionStateMachine.Transition(ConnectionState.Authenticated, ConnectionState.Authenticating));
+            Assert.AreEqual(ConnectionState.Authenticating,
+                ConnectionStateMachine.Transition(ConnectionState.EnteringWorld, ConnectionState.Authenticating));
         }
 
         [Test]

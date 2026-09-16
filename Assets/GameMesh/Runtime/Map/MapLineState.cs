@@ -111,6 +111,11 @@ namespace GameMesh.Map
             return best;
         }
 
+        public bool HasLine(uint lineNo)
+        {
+            return FindLine(lineNo) != null;
+        }
+
         MapLineInfo FindLine(uint lineNo)
         {
             if (lineNo == 0)

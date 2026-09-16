@@ -66,13 +66,14 @@ namespace GameMesh.Network
                 {
                     ConnectionState.EnteringWorld, ConnectionState.InWorld, ConnectionState.Closing,
                     ConnectionState.Disconnected, ConnectionState.Reconnecting,
-                    ConnectionState.Resyncing, ConnectionState.LoggingOut
+                    ConnectionState.Resyncing, ConnectionState.LoggingOut,
+                    ConnectionState.Authenticating
                 },
                 [ConnectionState.EnteringWorld] = new HashSet<ConnectionState>
                 {
                     ConnectionState.InWorld, ConnectionState.Authenticated,
                     ConnectionState.Closing, ConnectionState.Disconnected, ConnectionState.Reconnecting,
-                    ConnectionState.LoggingOut
+                    ConnectionState.LoggingOut, ConnectionState.Authenticating
                 },
                 [ConnectionState.InWorld] = new HashSet<ConnectionState>
                 {
@@ -140,6 +141,12 @@ namespace GameMesh.Network
         public const string MapLineFull = "ERR_MAP_LINE_FULL";
         public const string MapNoLine = "ERR_MAP_NO_LINE";
         public const string MapLineLimit = "ERR_MAP_LINE_LIMIT";
+        public const string MapNotReady = "ERR_MAP_NOT_READY";
+        public const string MapDraining = "ERR_MAP_DRAINING";
+        public const string QueueNeeded = "ERR_QUEUE_NEEDED";
+        public const string QueueInvalid = "ERR_QUEUE_INVALID";
+        public const string QueueNotReady = "ERR_QUEUE_NOT_READY";
+        public const string SessionExpired = "ERR_SESSION_EXPIRED";
     }
 
     public sealed class GameMeshException : Exception

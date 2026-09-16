@@ -513,7 +513,9 @@ namespace GameMesh.UI
                         _ = client.EnterMapAsync(0, line.LineNo);
                 }
 
-                if (full && !current)
+                if ((full || GameErrorCatalog.IsMapLineFull(client.LastErrorCode) ||
+                     GameErrorCatalog.IsMapDraining(client.LastErrorCode) ||
+                     GameErrorCatalog.IsQueueNeeded(client.LastErrorCode)) && !current)
                 {
                     if (GUILayout.Button("排队", _btnStyle, GUILayout.Width(108), GUILayout.Height(52)))
                         _ = client.EnqueueMapAsync(line.LineNo);

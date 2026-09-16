@@ -495,6 +495,7 @@ namespace GameMesh.Bootstrap
             {
                 BusyStage = "进图中";
                 Connection.SetLogicalState(ConnectionState.EnteringWorld);
+                var requestedLineNo = lineNo;
                 if (lineNo == 0 && Lines.Lines.Count == 0)
                 {
                     try { await QueryMapLinesAsync(true).ConfigureAwait(true); }
@@ -521,12 +522,41 @@ namespace GameMesh.Bootstrap
                     }
                 };
                 var rsp = await RequestAsync(req).ConfigureAwait(true);
-                if (!EnterMapBodyOk(rsp) && lineNo != 0 && IsMissingLine(rsp))
+                if (!EnterMapBodyOk(rsp))
                 {
-                    try { await QueryMapLinesAsync(true).ConfigureAwait(true); }
-                    catch { /* ignore */ }
-                    var retryLine = Lines.ResolveConcreteLine(0);
-                    if (retryLine != 0 && retryLine != lineNo)
+                    var failCode = ProtocolMapper.ExtractErrorCode(rsp);
+                    if (GameErrorCatalog.IsQueueNeeded(failCode) && lineNo != 0 &&
+                        string.IsNullOrEmpty(queueToken))
+                    {
+                        await EnqueueMapAsync(lineNo).ConfigureAwait(true);
+                        return;
+                    }
+
+                    var retryLine = uint.MaxValue;
+                    if (GameErrorCatalog.IsMapNoLine(failCode))
+                    {
+                        try { await QueryMapLinesAsync(true).ConfigureAwait(true); }
+                        catch { /* ignore */ }
+                        if (requestedLineNo == 0)
+                            retryLine = Lines.ResolveConcreteLine(0);
+                        else if (Lines.HasLine(requestedLineNo))
+                            retryLine = requestedLineNo;
+                    }
+                    else if (GameErrorCatalog.IsMapNotReady(failCode))
+                    {
+                        await Task.Delay(400).ConfigureAwait(true);
+                        retryLine = lineNo;
+                    }
+                    else if ((GameErrorCatalog.IsMapLineFull(failCode) ||
+                              GameErrorCatalog.IsMapDraining(failCode)) &&
+                             requestedLineNo == 0)
+                    {
+                        retryLine = Lines.PickLineWithRoom();
+                        if (retryLine == lineNo)
+                            retryLine = 0;
+                    }
+
+                    if (retryLine != uint.MaxValue)
                     {
                         lineNo = retryLine;
                         req.EnterMap.LineNo = retryLine;
@@ -541,19 +571,16 @@ namespace GameMesh.Bootstrap
                     if (rsp.EnterMap != null)
                         Lines.ApplyEnter(rsp.EnterMap);
                     var code = ProtocolMapper.ExtractErrorCode(rsp);
-                    if (string.IsNullOrEmpty(code) &&
-                        (rsp.EnterMap?.Message ?? rsp.Message ?? "").IndexOf("mismatch", StringComparison.OrdinalIgnoreCase) >= 0)
-                        code = GameMeshErrorCode.MapHashMismatch;
                     SetError(string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code,
                         rsp.EnterMap?.Message ?? rsp.Message, code);
                     WriteLiveEnter("ENTER_FAIL code=" + code + " msg=" + (rsp.EnterMap?.Message ?? rsp.Message) +
-                                   " line=" + lineNo);
-                    if (GameErrorCatalog.IsStaleRoute(code, rsp.EnterMap?.Message ?? rsp.Message) ||
-                        Session.MapInstanceId != 0)
+                                   " line=" + lineNo + " requested=" + requestedLineNo);
+                    if (GameErrorCatalog.IsStaleRoute(code) ||
+                        (Session.MapInstanceId != 0 && !GameErrorCatalog.IsSessionMissing(code)))
                         RestoreMapPresence();
                     else
                         Connection.SetLogicalState(ConnectionState.Authenticated);
-                    if (GameErrorCatalog.IsStaleRoute(code, rsp.EnterMap?.Message ?? rsp.Message))
+                    if (GameErrorCatalog.IsStaleRoute(code))
                         _ = RecoverStaleRouteAsync();
                     return;
                 }
@@ -621,32 +648,70 @@ namespace GameMesh.Bootstrap
             return rsp != null && rsp.Ok && rsp.EnterMap != null && rsp.EnterMap.Ok;
         }
 
-        static bool IsMissingLine(GameResponse rsp)
-        {
-            if (GameErrorCatalog.IsSessionMissing(ProtocolMapper.ExtractErrorCode(rsp),
-                    rsp != null && rsp.EnterMap != null ? rsp.EnterMap.Message : rsp != null ? rsp.Message : ""))
-                return false;
-            var code = ProtocolMapper.ExtractErrorCode(rsp);
-            if (code == GameMeshErrorCode.MapNoLine)
-                return true;
-            var msg = rsp != null && rsp.EnterMap != null ? rsp.EnterMap.Message : rsp != null ? rsp.Message : "";
-            return !string.IsNullOrEmpty(msg) &&
-                   msg.IndexOf("line not found", StringComparison.OrdinalIgnoreCase) >= 0 &&
-                   msg.IndexOf("session", StringComparison.OrdinalIgnoreCase) < 0;
-        }
-
         public async Task TryEnterWorldAfterLoginAsync()
         {
             for (var attempt = 0; attempt < 4 && !IsOnMap; attempt++)
             {
                 if (attempt > 0)
-                    await Task.Delay(400 * attempt).ConfigureAwait(true);
-                await EnterMapAsync(0, Lines.PickLineWithRoom()).ConfigureAwait(true);
+                {
+                    if (GameErrorCatalog.IsSessionMissing(LastErrorCode))
+                    {
+                        if (!await ReloginPreservingBusyAsync().ConfigureAwait(true))
+                            return;
+                    }
+                    else if (GameErrorCatalog.IsMapNoLine(LastErrorCode) ||
+                             GameErrorCatalog.IsMapNotReady(LastErrorCode))
+                        await Task.Delay(400 * attempt).ConfigureAwait(true);
+                    else
+                        return;
+                }
+
+                await EnterMapAsync(0, 0).ConfigureAwait(true);
                 if (IsOnMap)
                     return;
-                if (!GameErrorCatalog.IsSessionMissing(LastErrorCode, LastError))
-                    return;
+                if (GameErrorCatalog.IsSessionMissing(LastErrorCode) ||
+                    GameErrorCatalog.IsMapNoLine(LastErrorCode) ||
+                    GameErrorCatalog.IsMapNotReady(LastErrorCode))
+                    continue;
+                return;
             }
+        }
+
+        async Task<bool> ReloginPreservingBusyAsync()
+        {
+            LaunchArgs.EnsureDefaultPassword();
+            BusyStage = "会话过期，重新登录";
+            Connection.SetLogicalState(ConnectionState.Authenticating);
+            var rsp = await RequestAsync(new GameRequest
+            {
+                Login = new LoginReq
+                {
+                    PlayerId = Session.PlayerId,
+                    DeviceId = LaunchArgs.DeviceId ?? "",
+                    ServerId = 1,
+                    TtlSec = 3600,
+                    KickOtherDevice = true,
+                    Credential = LaunchArgs.Password ?? ""
+                }
+            }).ConfigureAwait(true);
+            if (!AuthResponse.TryAcceptLogin(rsp, Session.PlayerId, out var playerId, out var login,
+                    out var errorCode, out var message))
+            {
+                SetError(errorCode, message, errorCode);
+                Connection.SetLogicalState(ConnectionState.Connected);
+                return false;
+            }
+
+            Session.ApplyLogin(playerId, login.SessionId, login.Token, login.Generation,
+                LaunchArgs.DisplayName);
+            if (!ApplyProfile(login.Profile))
+                await LoadSelfProfileAsync().ConfigureAwait(true);
+            Session.AutoReconnect = true;
+            Session.SessionReplaced = false;
+            PersistIdentity();
+            ClearError();
+            Connection.SetLogicalState(ConnectionState.Authenticated);
+            return true;
         }
 
         public async Task QueryMapLinesAsync(bool quiet = false)
@@ -939,7 +1004,7 @@ namespace GameMesh.Bootstrap
                 GameMeshLog.Info($"rsp seq={rsp.Seq} type={rsp.BodyCase} ok={rsp.Ok} code={code} rtt_ms={LastRttMs}");
                 if (GameErrorCatalog.IsSessionReplaced(code))
                     HandleSessionReplaced(code);
-                else if (GameErrorCatalog.IsStaleRoute(code, rsp.Message))
+                else if (GameErrorCatalog.IsStaleRoute(code))
                 {
                     SetError(string.IsNullOrEmpty(code) ? "STALE_ROUTE" : code, rsp.Message, code, trace);
                     RestoreMapPresence();
@@ -1238,7 +1303,7 @@ namespace GameMesh.Bootstrap
             {
                 var code = string.IsNullOrEmpty(move.ErrorCode) ? GameMeshErrorCode.ServerError : move.ErrorCode;
                 SetError(code, move.Message, code);
-                if (GameErrorCatalog.IsStaleRoute(code, move.Message))
+                if (GameErrorCatalog.IsStaleRoute(code))
                     _ = RecoverStaleRouteAsync();
             }
         }
@@ -1953,11 +2018,7 @@ namespace GameMesh.Bootstrap
 
         bool IsBadCredential()
         {
-            var code = LastErrorCode ?? "";
-            var text = LastError ?? "";
-            return code.IndexOf("BAD_CREDENTIAL", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                   text.IndexOf("BAD_CREDENTIAL", StringComparison.OrdinalIgnoreCase) >= 0 ||
-                   text.IndexOf("invalid credential", StringComparison.OrdinalIgnoreCase) >= 0;
+            return LastErrorCode == "ERR_BAD_CREDENTIAL" || LastErrorCode == "BAD_CREDENTIAL";
         }
 
         static void WriteLiveEnter(string line)

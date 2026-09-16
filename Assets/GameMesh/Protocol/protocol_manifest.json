@@ -13,7 +13,7 @@
     "google_protobuf":  "3.25.3",
     "source_repo":  "https://github.com/madongxin/webserver",
     "source_path":  "proto/game.proto",
-    "source_commit":  "",
+    "source_commit":  "c8550639c75b97abce6ed137a6354a7e151a8a45",
     "required_types_present":  [
                                    "RegisterReq",
                                    "LoginReq",
