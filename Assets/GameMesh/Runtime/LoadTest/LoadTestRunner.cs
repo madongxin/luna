@@ -3,7 +3,9 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using GameMesh.Bootstrap;
+using GameMesh.Map;
 using GameMesh.Network;
+using GameMesh.Protocol;
 using UnityEngine;
 
 namespace GameMesh.LoadTest
@@ -14,11 +16,13 @@ namespace GameMesh.LoadTest
 
         readonly List<LoadTestBot> _bots = new List<LoadTestBot>();
         CancellationTokenSource _waveCts;
+        CancellationTokenSource _sweepCts;
         bool _busy;
         bool _logoutInFlight;
         bool _holdOnline;
         float _holdUntil;
         float _durationSec = 300f;
+        float _nextLineRefresh;
         string _lastError = "";
         string _phase = "空闲";
 
@@ -67,30 +71,10 @@ namespace GameMesh.LoadTest
             Instance = this;
         }
 
-        void Start()
+        void AbortSweep()
         {
-            _ = SweepOrphansOnStartAsync();
-        }
-
-        async Task SweepOrphansOnStartAsync()
-        {
-            if (_busy || _logoutInFlight)
-                return;
-            _busy = true;
-            _phase = "清理残留 Session";
-            try
-            {
-                await SweepLedgerAsync(CancellationToken.None).ConfigureAwait(true);
-                _phase = "空闲";
-            }
-            catch
-            {
-                _phase = "空闲";
-            }
-            finally
-            {
-                _busy = false;
-            }
+            try { _sweepCts?.Cancel(); }
+            catch { /* ignore */ }
         }
 
         void OnDestroy()
@@ -109,6 +93,13 @@ namespace GameMesh.LoadTest
         {
             if (_holdOnline && Time.unscaledTime >= _holdUntil)
                 _ = LogoutAllAsync();
+            if (InWorldCount > 0 && Time.unscaledTime >= _nextLineRefresh)
+            {
+                _nextLineRefresh = Time.unscaledTime + 4f;
+                var live = GameMeshClient.Instance;
+                if (live != null && live.Session != null && live.Session.HasIdentity)
+                    _ = live.QueryMapLinesAsync(true);
+            }
         }
 
         public void StartCollectiveLogin(int count, float durationMinutes, int staggerMs, string password,
@@ -147,7 +138,6 @@ namespace GameMesh.LoadTest
                 durationMinutes = Mathf.Max(0f, durationMinutes);
                 _durationSec = durationMinutes * 60f;
                 TargetCount = count;
-                TargetLineNo = ResolvePreferredLine(GameMeshClient.Instance);
                 if (string.IsNullOrEmpty(password) || password.Length < 6)
                     password = "loadtest";
                 if (portA <= 0)
@@ -159,12 +149,28 @@ namespace GameMesh.LoadTest
                 catch { /* ignore */ }
                 _waveCts?.Dispose();
                 _waveCts = new CancellationTokenSource();
+                AbortSweep();
                 var ct = _waveCts.Token;
-                _phase = "清理残留 Session";
-                await SweepLedgerAsync(ct).ConfigureAwait(true);
+                var client = GameMeshClient.Instance;
+                if (client != null && client.Session != null && client.Session.HasIdentity)
+                {
+                    try { await client.QueryMapLinesAsync(true).ConfigureAwait(true); }
+                    catch { /* occupancy may be stale */ }
+                    await EnsureLocalPlayerOnLineAsync(client).ConfigureAwait(true);
+                    try { await client.QueryMapLinesAsync(true).ConfigureAwait(true); }
+                    catch { /* ignore */ }
+                    client.Lines.BindPresence(client.Session.MapInstanceId);
+                }
+
+                TargetLineNo = ResolvePreferredLine(GameMeshClient.Instance);
+                if (client != null && client.Config.port > 0)
+                {
+                    portA = client.Config.port;
+                    portB = client.Config.port;
+                }
+
                 _phase = "集体登录 " + count + "  端口 " + portA + "/" + portB;
 
-                var client = GameMeshClient.Instance;
                 var dispatcher = client != null
                     ? GameMeshMainThreadDispatcher.Ensure(client.gameObject)
                     : null;
@@ -217,7 +223,10 @@ namespace GameMesh.LoadTest
                 var live = GameMeshClient.Instance;
                 if (live != null && live.Connection != null &&
                     live.Connection.State == ConnectionState.InWorld)
+                {
                     _ = live.RequestWorldSnapshotAsync();
+                    _ = live.QueryMapLinesAsync(true);
+                }
             }
             catch (Exception ex)
             {
@@ -236,7 +245,7 @@ namespace GameMesh.LoadTest
             await gate.WaitAsync(ct).ConfigureAwait(true);
             try
             {
-                for (var attempt = 0; attempt < 3; attempt++)
+                for (var attempt = 0; attempt < 5; attempt++)
                 {
                     if (ct.IsCancellationRequested)
                     {
@@ -247,7 +256,7 @@ namespace GameMesh.LoadTest
                     if (attempt > 0)
                     {
                         await bot.PrepareRetryAsync().ConfigureAwait(true);
-                        await Task.Delay(400 * attempt, ct).ConfigureAwait(true);
+                        await Task.Delay(500 * attempt, ct).ConfigureAwait(true);
                     }
 
                     try
@@ -264,7 +273,7 @@ namespace GameMesh.LoadTest
                     }
                     catch
                     {
-                        if (attempt == 2)
+                        if (attempt == 4)
                         {
                             try { await bot.CloseSessionAsync().ConfigureAwait(true); }
                             catch { /* ignore */ }
@@ -308,11 +317,59 @@ namespace GameMesh.LoadTest
 
         static uint ResolvePreferredLine(GameMeshClient client)
         {
-            if (client == null)
-                return 1;
-            if (client.Lines != null && client.Lines.LineNo != 0)
+            if (client == null || client.Lines == null)
+                return 0;
+            if (client.Lines.LineNo != 0)
                 return client.Lines.LineNo;
-            return client.Config != null && client.Config.mapTemplateId == 1002 ? 1u : 0u;
+            if (client.IsOnMap)
+                return client.Lines.PickLoadTestLine(0, 0);
+            return 0;
+        }
+
+        async Task EnsureLocalPlayerOnLineAsync(GameMeshClient client)
+        {
+            if (client == null || client.Session == null || !client.Session.HasIdentity)
+                throw new InvalidOperationException("请先登录本号，再集体登录");
+            if (client.Connection == null ||
+                client.Connection.State == ConnectionState.Disconnected ||
+                client.Connection.State == ConnectionState.Closing ||
+                client.Connection.State == ConnectionState.LoggingOut)
+                throw new InvalidOperationException("本号还没连上 Gateway");
+
+            if (!client.IsOnMap)
+            {
+                _phase = "本号进线";
+                await client.TryEnterWorldAfterLoginAsync().ConfigureAwait(true);
+            }
+
+            if (!client.IsOnMap &&
+                GameErrorCatalog.IsSessionMissing(client.LastErrorCode, client.LastError))
+            {
+                _phase = "本号重新登录";
+                await client.LoginAsync().ConfigureAwait(true);
+            }
+
+            if (client.IsOnMap && client.Lines.LineNo == 0)
+            {
+                try { await client.QueryMapLinesAsync(true).ConfigureAwait(true); }
+                catch { /* ignore */ }
+                client.Lines.BindPresence(client.Session.MapInstanceId);
+            }
+
+            if (!client.IsOnMap)
+            {
+                var why = client.LastErrorUi;
+                if (string.IsNullOrEmpty(why))
+                    why = client.LastError;
+                if (string.IsNullOrEmpty(why))
+                    why = "本号未能进线，周围看不到机器人。请先点登录，再点「系统选线进图」。";
+                throw new InvalidOperationException(why);
+            }
+
+            var now = client.Lines.LineNo;
+            client.SetNotice(now != 0
+                ? "本号已在 " + now + " 线，机器人会进同一条线"
+                : "本号已进图，正在拉视野");
         }
 
         static int PickPort(int index, int portA, int portB)
@@ -361,6 +418,7 @@ namespace GameMesh.LoadTest
             {
                 try { _waveCts?.Cancel(); }
                 catch { /* ignore */ }
+                AbortSweep();
 
                 var snapshot = _bots.ToArray();
                 var tasks = new List<Task>(snapshot.Length);
@@ -385,7 +443,7 @@ namespace GameMesh.LoadTest
                 TargetCount = 0;
                 try
                 {
-                    await SweepLedgerAsync(CancellationToken.None).ConfigureAwait(true);
+                    await SweepLedgerAsync(CancellationToken.None, 2000).ConfigureAwait(true);
                 }
                 catch
                 {
@@ -401,39 +459,59 @@ namespace GameMesh.LoadTest
             }
         }
 
-        async Task SweepLedgerAsync(CancellationToken ct)
+        async Task SweepLedgerAsync(CancellationToken ct, int budgetMs = 2000)
         {
+            AbortSweep();
+            _sweepCts = new CancellationTokenSource();
             var entries = LoadTestSessionLedger.Snapshot();
             if (entries == null || entries.Length == 0)
                 return;
             var client = GameMeshClient.Instance;
             if (client == null)
-                return;
-            var dispatcher = GameMeshMainThreadDispatcher.Ensure(client.gameObject);
-            var gate = new SemaphoreSlim(10);
-            var tasks = new List<Task>(entries.Length);
-            for (var i = 0; i < entries.Length; i++)
             {
-                var entry = entries[i];
-                if (entry == null || string.IsNullOrEmpty(entry.token))
-                    continue;
-                if (!ulong.TryParse(entry.playerId, out var playerId) || playerId == 0)
-                    continue;
-                var host = string.IsNullOrEmpty(entry.host) ? client.Config.host : entry.host;
-                var port = entry.port > 0 ? entry.port : 8083;
-                tasks.Add(SweepOneAsync(dispatcher, host, port, playerId, entry.token, gate, ct));
+                LoadTestSessionLedger.ForgetMany(entries);
+                return;
             }
 
-            if (tasks.Count == 0)
-                return;
-            try
+            var dispatcher = GameMeshMainThreadDispatcher.Ensure(client.gameObject);
+            var gate = new SemaphoreSlim(8);
+            var tasks = new List<Task>(entries.Length);
+            var budgetMsClamped = Mathf.Clamp(budgetMs, 250, 5000);
+            using (var budget = CancellationTokenSource.CreateLinkedTokenSource(ct, _sweepCts.Token))
             {
-                await Task.WhenAll(tasks).ConfigureAwait(true);
+                budget.CancelAfter(budgetMsClamped);
+                var token = budget.Token;
+                for (var i = 0; i < entries.Length; i++)
+                {
+                    var entry = entries[i];
+                    if (entry == null || string.IsNullOrEmpty(entry.token))
+                        continue;
+                    if (!ulong.TryParse(entry.playerId, out var playerId) || playerId == 0)
+                        continue;
+                    var host = string.IsNullOrEmpty(entry.host) ? client.Config.host : entry.host;
+                    var port = entry.port > 0 ? entry.port : 8083;
+                    tasks.Add(SweepOneAsync(dispatcher, host, port, playerId, entry.token, gate, token));
+                }
+
+                if (tasks.Count > 0)
+                {
+                    var all = Task.WhenAll(tasks);
+                    var cap = Task.Delay(budgetMsClamped);
+                    try
+                    {
+                        await Task.WhenAny(all, cap).ConfigureAwait(true);
+                    }
+                    catch
+                    {
+                        /* per-entry */
+                    }
+
+                    try { budget.Cancel(); }
+                    catch { /* ignore */ }
+                }
             }
-            catch
-            {
-                /* per-entry */
-            }
+
+            LoadTestSessionLedger.ForgetMany(entries);
         }
 
         static async Task SweepOneAsync(IMainThreadDispatcher dispatcher, string host, int port, ulong playerId,
@@ -442,7 +520,8 @@ namespace GameMesh.LoadTest
             await gate.WaitAsync(ct).ConfigureAwait(true);
             try
             {
-                await LoadTestBot.LogoutOrphanAsync(dispatcher, host, port, playerId, token).ConfigureAwait(true);
+                await LoadTestBot.LogoutOrphanAsync(dispatcher, host, port, playerId, token, ct)
+                    .ConfigureAwait(true);
             }
             catch
             {
@@ -470,13 +549,34 @@ namespace GameMesh.LoadTest
         {
             if (!string.IsNullOrEmpty(_lastError))
                 return _lastError;
+            var counts = new Dictionary<string, int>();
+            var first = "";
             for (var i = 0; i < _bots.Count; i++)
             {
-                if (_bots[i] != null && !string.IsNullOrEmpty(_bots[i].LastError))
-                    return _bots[i].LastError;
+                var err = _bots[i] != null ? _bots[i].LastError : "";
+                if (string.IsNullOrEmpty(err))
+                    continue;
+                if (string.IsNullOrEmpty(first))
+                    first = err;
+                int n;
+                counts.TryGetValue(err, out n);
+                counts[err] = n + 1;
             }
 
-            return "";
+            if (counts.Count == 0)
+                return "";
+            var top = first;
+            var topN = 0;
+            foreach (var pair in counts)
+            {
+                if (pair.Value > topN)
+                {
+                    top = pair.Key;
+                    topN = pair.Value;
+                }
+            }
+
+            return topN > 1 ? top + " ×" + topN : top;
         }
     }
 }

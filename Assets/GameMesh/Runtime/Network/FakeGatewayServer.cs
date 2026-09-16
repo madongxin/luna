@@ -191,7 +191,7 @@ namespace GameMesh.Network
                         Kind = req.EnterMap.MapTemplateId == 1002 ? "LINE" : "LEGACY_POOL",
                         LineNo = req.EnterMap.LineNo != 0 ? req.EnterMap.LineNo : 1,
                         Occupancy = 1,
-                        SoftCap = 200,
+                        SoftCap = 100,
                         HardCap = 400
                     };
                     if (rsp.EnterMap.Kind == "LINE")
@@ -201,7 +201,7 @@ namespace GameMesh.Network
                             LineNo = rsp.EnterMap.LineNo,
                             MapInstanceId = rsp.EnterMap.MapInstanceId,
                             Occupancy = 1,
-                            SoftCap = 200,
+                            SoftCap = 100,
                             HardCap = 400,
                             State = "OPEN"
                         });
@@ -222,7 +222,7 @@ namespace GameMesh.Network
                             LineNo = 1,
                             MapInstanceId = 5001,
                             Occupancy = 1,
-                            SoftCap = 200,
+                            SoftCap = 100,
                             HardCap = 400,
                             State = "OPEN"
                         });
@@ -238,7 +238,7 @@ namespace GameMesh.Network
                         Kind = "LINE",
                         LineNo = req.SwitchLine.LineNo,
                         Occupancy = 1,
-                        SoftCap = 200,
+                        SoftCap = 100,
                         HardCap = 400,
                         SpawnPosition = new Vec3 { X = -28.5f, Y = -0.244f, Z = -7.25f },
                         SpawnYaw = 76.022f

@@ -35,12 +35,19 @@ namespace GameMesh.Bootstrap
         public string LastError { get; private set; } = "";
         public string LastErrorCode { get; private set; } = "";
         public string LastErrorUi { get; private set; } = "";
+        public string LastNotice { get; private set; } = "";
         public bool MapBlocked { get; private set; }
         public string MapBlockReason { get; private set; } = "";
         public uint LastPlayerCount { get; private set; }
         public ulong ExpectedMapHashVersion { get; set; }
         public bool IsBusy => _busy;
         public string BusyStage { get; private set; } = "";
+        public bool IsOnMap =>
+            Session.MapInstanceId != 0 &&
+            Connection != null &&
+            Connection.State != ConnectionState.Disconnected &&
+            Connection.State != ConnectionState.Closing &&
+            Connection.State != ConnectionState.LoggingOut;
         public bool HasPendingSpawn;
         public Vector3 PendingSpawn;
         public float PendingSpawnYaw;
@@ -76,6 +83,7 @@ namespace GameMesh.Bootstrap
         bool _busy;
         bool _helloInFlight;
         bool _snapshotInFlight;
+        bool _staleRouteInFlight;
         bool _respawnInFlight;
         string _enterOpId;
         string _switchOpId;
@@ -190,6 +198,8 @@ namespace GameMesh.Bootstrap
                 _lastMailPoll = Time.unscaledTime;
                 _ = Safe(Mail.RefreshAsync(_lifetime.Token));
             }
+
+            RestoreMapPresence();
         }
 
         public async Task RegisterThenLoginAsync()
@@ -324,13 +334,25 @@ namespace GameMesh.Bootstrap
                 Aoi.LocalPlayerId = Session.PlayerId;
                 PersistIdentity();
                 ClearError();
-                LaunchArgs.ClearPassword();
-                Connection.SetLogicalState(ConnectionState.Authenticated);
+                LaunchArgs.EnsureDefaultPassword();
+                var alreadyOnMap = Session.MapInstanceId != 0;
+                if (alreadyOnMap)
+                    RestoreMapPresence();
+                else
+                    Connection.SetLogicalState(ConnectionState.Authenticated);
                 GameMeshLog.Info($"login ok {Session.DebugSummary()}");
                 if (SceneManager.GetActiveScene().name != Config.mainSceneName)
                     SceneManager.LoadScene(Config.mainSceneName);
+                else if (alreadyOnMap)
+                {
+                    Lines.BindPresence(Session.MapInstanceId);
+                    SetNotice(Lines.LineNo != 0
+                        ? "已在地图中    " + Lines.LineNo + " 线"
+                        : "已在地图中");
+                    _ = QueryMapLinesAsync();
+                }
                 else
-                    _ = EnterMapAsync();
+                    await TryEnterWorldAfterLoginAsync().ConfigureAwait(true);
             }
             catch (Exception ex)
             {
@@ -444,6 +466,18 @@ namespace GameMesh.Bootstrap
                 return;
             }
 
+            if (IsOnMap)
+            {
+                if (lineNo != 0)
+                {
+                    await SwitchLineAsync(lineNo).ConfigureAwait(true);
+                    return;
+                }
+
+                SetError(GameMeshErrorCode.ClientIllegalState, "已在图中，请点某一线的「切线」");
+                return;
+            }
+
             Config.ResolveMapContract();
             var mapMatched = ProtocolHandshake.TryMatchMap(_helloMaps, Config.mapTemplateId, Config.mapDataHash,
                 Config.dataVersion, out _, out var mapCode);
@@ -461,6 +495,14 @@ namespace GameMesh.Bootstrap
             {
                 BusyStage = "进图中";
                 Connection.SetLogicalState(ConnectionState.EnteringWorld);
+                if (lineNo == 0 && Lines.Lines.Count == 0)
+                {
+                    try { await QueryMapLinesAsync(true).ConfigureAwait(true); }
+                    catch { /* list may stay empty */ }
+                }
+
+                if (lineNo == 0)
+                    lineNo = Lines.ResolveConcreteLine(0);
                 if (string.IsNullOrEmpty(_enterOpId))
                     _enterOpId = Guid.NewGuid().ToString("N");
                 var req = new GameRequest
@@ -479,7 +521,22 @@ namespace GameMesh.Bootstrap
                     }
                 };
                 var rsp = await RequestAsync(req).ConfigureAwait(true);
-                if (!rsp.Ok || rsp.EnterMap == null || !rsp.EnterMap.Ok)
+                if (!EnterMapBodyOk(rsp) && lineNo != 0 && IsMissingLine(rsp))
+                {
+                    try { await QueryMapLinesAsync(true).ConfigureAwait(true); }
+                    catch { /* ignore */ }
+                    var retryLine = Lines.ResolveConcreteLine(0);
+                    if (retryLine != 0 && retryLine != lineNo)
+                    {
+                        lineNo = retryLine;
+                        req.EnterMap.LineNo = retryLine;
+                        req.EnterMap.OperationId = Guid.NewGuid().ToString("N");
+                        _enterOpId = req.EnterMap.OperationId;
+                        rsp = await RequestAsync(req).ConfigureAwait(true);
+                    }
+                }
+
+                if (!EnterMapBodyOk(rsp))
                 {
                     if (rsp.EnterMap != null)
                         Lines.ApplyEnter(rsp.EnterMap);
@@ -489,7 +546,15 @@ namespace GameMesh.Bootstrap
                         code = GameMeshErrorCode.MapHashMismatch;
                     SetError(string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code,
                         rsp.EnterMap?.Message ?? rsp.Message, code);
-                    Connection.SetLogicalState(ConnectionState.Authenticated);
+                    WriteLiveEnter("ENTER_FAIL code=" + code + " msg=" + (rsp.EnterMap?.Message ?? rsp.Message) +
+                                   " line=" + lineNo);
+                    if (GameErrorCatalog.IsStaleRoute(code, rsp.EnterMap?.Message ?? rsp.Message) ||
+                        Session.MapInstanceId != 0)
+                        RestoreMapPresence();
+                    else
+                        Connection.SetLogicalState(ConnectionState.Authenticated);
+                    if (GameErrorCatalog.IsStaleRoute(code, rsp.EnterMap?.Message ?? rsp.Message))
+                        _ = RecoverStaleRouteAsync();
                     return;
                 }
 
@@ -506,6 +571,7 @@ namespace GameMesh.Bootstrap
 
                 Session.ApplyMap(enter.MapTemplateId, enter.MapInstanceId, enter.OwnerEpoch, enter.RouteVersion);
                 Lines.ApplyEnter(enter);
+                Lines.BindPresence(enter.MapInstanceId);
                 Aoi.SetMapInstance(enter.MapInstanceId);
                 ProtocolMapper.ApplySnapshot(Aoi, enter.AoiSnapshot, enter.MapInstanceId, true);
                 if (enter.SpawnPosition != null)
@@ -550,7 +616,40 @@ namespace GameMesh.Bootstrap
             }
         }
 
-        public async Task QueryMapLinesAsync()
+        static bool EnterMapBodyOk(GameResponse rsp)
+        {
+            return rsp != null && rsp.Ok && rsp.EnterMap != null && rsp.EnterMap.Ok;
+        }
+
+        static bool IsMissingLine(GameResponse rsp)
+        {
+            if (GameErrorCatalog.IsSessionMissing(ProtocolMapper.ExtractErrorCode(rsp),
+                    rsp != null && rsp.EnterMap != null ? rsp.EnterMap.Message : rsp != null ? rsp.Message : ""))
+                return false;
+            var code = ProtocolMapper.ExtractErrorCode(rsp);
+            if (code == GameMeshErrorCode.MapNoLine)
+                return true;
+            var msg = rsp != null && rsp.EnterMap != null ? rsp.EnterMap.Message : rsp != null ? rsp.Message : "";
+            return !string.IsNullOrEmpty(msg) &&
+                   msg.IndexOf("line not found", StringComparison.OrdinalIgnoreCase) >= 0 &&
+                   msg.IndexOf("session", StringComparison.OrdinalIgnoreCase) < 0;
+        }
+
+        public async Task TryEnterWorldAfterLoginAsync()
+        {
+            for (var attempt = 0; attempt < 4 && !IsOnMap; attempt++)
+            {
+                if (attempt > 0)
+                    await Task.Delay(400 * attempt).ConfigureAwait(true);
+                await EnterMapAsync(0, Lines.PickLineWithRoom()).ConfigureAwait(true);
+                if (IsOnMap)
+                    return;
+                if (!GameErrorCatalog.IsSessionMissing(LastErrorCode, LastError))
+                    return;
+            }
+        }
+
+        public async Task QueryMapLinesAsync(bool quiet = false)
         {
             if (!Session.HasIdentity)
             {
@@ -579,7 +678,18 @@ namespace GameMesh.Bootstrap
                 }
 
                 Lines.ApplyQuery(rsp.QueryMapLines);
-                SetError("", "");
+                Lines.BindPresence(Session.MapInstanceId);
+                if (Session.MapInstanceId != 0)
+                {
+                    RestoreMapPresence();
+                    if (!quiet)
+                        SetNotice(Lines.LineNo != 0
+                        ? "已在地图中    " + Lines.LineNo + " 线    " +
+                          Lines.Occupancy + "/" + Lines.EffectiveSplitAt
+                            : "已在地图中");
+                }
+                else if (!quiet)
+                    SetError("", "");
             }
             catch (Exception ex)
             {
@@ -595,18 +705,35 @@ namespace GameMesh.Bootstrap
         {
             if (!Session.HasIdentity)
             {
-                SetError(GameMeshErrorCode.ClientIllegalState, "not logged in");
+                SetError(GameMeshErrorCode.ClientIllegalState, "还没登录，不能切线");
                 return;
             }
 
             if (lineNo == 0)
             {
-                SetError(GameMeshErrorCode.ClientIllegalState, "switch line requires line_no > 0");
+                SetError(GameMeshErrorCode.ClientIllegalState, "切线必须指定线号");
                 return;
             }
 
+            if (!IsOnMap)
+            {
+                SetError(GameMeshErrorCode.ClientIllegalState, "还没进图。请先点「进入」，进图后再切线。");
+                return;
+            }
+
+            if (Lines.LineNo == lineNo)
+            {
+                SetNotice("已在 " + lineNo + " 线");
+                return;
+            }
+
+            if (_busy)
+                return;
+
+            var switchedOk = false;
             try
             {
+                _busy = true;
                 BusyStage = "切线 " + lineNo;
                 _switchOpId = Guid.NewGuid().ToString("N");
                 var rsp = await RequestAsync(new GameRequest
@@ -615,23 +742,32 @@ namespace GameMesh.Bootstrap
                     {
                         PlayerId = Session.PlayerId,
                         RealmId = Config.realmId,
-                        MapTemplateId = Config.mapTemplateId,
+                        MapTemplateId = Config.mapTemplateId != 0
+                            ? Config.mapTemplateId
+                            : Session.MapTemplateId,
                         LineNo = lineNo,
                         OperationId = _switchOpId
                     }
                 }).ConfigureAwait(true);
-                if (!rsp.Ok || rsp.SwitchLine == null || !rsp.SwitchLine.Ok)
+                var switched = rsp != null ? rsp.SwitchLine : null;
+                if (switched == null || !switched.Ok)
                 {
-                    if (rsp.SwitchLine != null)
-                        Lines.ApplySwitch(rsp.SwitchLine);
+                    if (switched != null)
+                        Lines.ApplySwitch(switched, lineNo);
                     var code = ProtocolMapper.ExtractErrorCode(rsp);
                     SetError(string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code,
-                        rsp.SwitchLine?.Message ?? rsp.Message, code);
+                        switched != null ? switched.Message : rsp != null ? rsp.Message : "切线失败",
+                        code);
                     return;
                 }
 
-                ApplySwitchPresence(rsp.SwitchLine);
-                SetError("", "");
+                ApplySwitchPresence(switched, lineNo);
+                var now = Lines.LineNo != 0 ? Lines.LineNo : lineNo;
+                SetNotice("切线成功    已到 " + now + " 线");
+                WriteLiveEnter("SWITCH line=" + now +
+                               " instance=" + Session.MapInstanceId +
+                               " occ=" + Lines.Occupancy + "/" + Lines.SoftCap);
+                switchedOk = true;
             }
             catch (Exception ex)
             {
@@ -639,9 +775,13 @@ namespace GameMesh.Bootstrap
             }
             finally
             {
+                _busy = false;
                 BusyStage = "";
                 _switchOpId = null;
             }
+
+            if (switchedOk)
+                _ = QueryMapLinesAsync();
         }
 
         public async Task EnqueueMapAsync(uint lineNo)
@@ -696,16 +836,20 @@ namespace GameMesh.Bootstrap
             }
         }
 
-        void ApplySwitchPresence(SwitchLineRsp switched)
+        void ApplySwitchPresence(SwitchLineRsp switched, uint requestedLineNo = 0)
         {
             if (switched == null)
                 return;
-            Session.ApplyMap(switched.MapTemplateId, switched.MapInstanceId, switched.OwnerEpoch,
-                switched.RouteVersion);
-            Lines.ApplySwitch(switched);
+            var template = switched.MapTemplateId != 0 ? switched.MapTemplateId : Session.MapTemplateId;
+            var instance = switched.MapInstanceId != 0 ? switched.MapInstanceId : Session.MapInstanceId;
+            Session.ApplyMap(template, instance,
+                switched.OwnerEpoch != 0 ? switched.OwnerEpoch : Session.OwnerEpoch,
+                switched.RouteVersion != 0 ? switched.RouteVersion : Session.RouteVersion);
+            Lines.ApplySwitch(switched, requestedLineNo);
+            Lines.BindPresence(instance);
             Aoi.Clear();
-            Aoi.SetMapInstance(switched.MapInstanceId);
-            ProtocolMapper.ApplySnapshot(Aoi, switched.AoiSnapshot, switched.MapInstanceId, true);
+            Aoi.SetMapInstance(instance);
+            ProtocolMapper.ApplySnapshot(Aoi, switched.AoiSnapshot, instance, true);
             if (switched.SpawnPosition != null)
             {
                 HasPendingSpawn = true;
@@ -795,6 +939,12 @@ namespace GameMesh.Bootstrap
                 GameMeshLog.Info($"rsp seq={rsp.Seq} type={rsp.BodyCase} ok={rsp.Ok} code={code} rtt_ms={LastRttMs}");
                 if (GameErrorCatalog.IsSessionReplaced(code))
                     HandleSessionReplaced(code);
+                else if (GameErrorCatalog.IsStaleRoute(code, rsp.Message))
+                {
+                    SetError(string.IsNullOrEmpty(code) ? "STALE_ROUTE" : code, rsp.Message, code, trace);
+                    RestoreMapPresence();
+                    _ = RecoverStaleRouteAsync();
+                }
                 else if (!rsp.Ok &&
                          request.BodyCase != GameRequest.BodyOneofCase.Heartbeat &&
                          request.BodyCase != GameRequest.BodyOneofCase.MapPing)
@@ -1088,6 +1238,8 @@ namespace GameMesh.Bootstrap
             {
                 var code = string.IsNullOrEmpty(move.ErrorCode) ? GameMeshErrorCode.ServerError : move.ErrorCode;
                 SetError(code, move.Message, code);
+                if (GameErrorCatalog.IsStaleRoute(code, move.Message))
+                    _ = RecoverStaleRouteAsync();
             }
         }
 
@@ -1210,6 +1362,7 @@ namespace GameMesh.Bootstrap
             if (inner.QueryMapLines != null)
             {
                 Lines.ApplyQuery(inner.QueryMapLines);
+                Lines.BindPresence(Session.MapInstanceId);
                 return true;
             }
 
@@ -1421,8 +1574,48 @@ namespace GameMesh.Bootstrap
             DrainGapCache();
             if (Session.MapInstanceId != 0)
                 Connection.SetLogicalState(ConnectionState.InWorld);
+            Lines.BindPresence(Session.MapInstanceId);
             GameMeshLog.Info($"full snapshot player={Session.PlayerId} seq={Session.LastServerSeq} ver={Session.SnapshotVersion}");
             return true;
+        }
+
+        void RestoreMapPresence()
+        {
+            if (Session.MapInstanceId == 0 || Connection == null)
+                return;
+            Lines.BindPresence(Session.MapInstanceId);
+            if (Connection.State == ConnectionState.Authenticated)
+                Connection.SetLogicalState(ConnectionState.InWorld);
+        }
+
+        async Task RecoverStaleRouteAsync()
+        {
+            if (_staleRouteInFlight || Session.MapInstanceId == 0)
+                return;
+            _staleRouteInFlight = true;
+            try
+            {
+                BusyStage = "同步路由";
+                RestoreMapPresence();
+                await RequestWorldSnapshotAsync().ConfigureAwait(true);
+                Lines.BindPresence(Session.MapInstanceId);
+                RestoreMapPresence();
+                if (Session.MapInstanceId != 0)
+                    SetNotice(Lines.LineNo != 0
+                        ? "已在地图中    " + Lines.LineNo + " 线"
+                        : "已在地图中    路由已同步");
+            }
+            catch (Exception ex)
+            {
+                GameMeshLog.Warn("stale route recover " + ex.Message);
+                RestoreMapPresence();
+            }
+            finally
+            {
+                _staleRouteInFlight = false;
+                if (BusyStage == "同步路由")
+                    BusyStage = "";
+            }
         }
 
         void StartHeartbeat(int connectionGeneration)
@@ -1659,6 +1852,12 @@ namespace GameMesh.Bootstrap
             LastErrorUi = "";
         }
 
+        public void SetNotice(string text)
+        {
+            LastNotice = text ?? "";
+            ClearError();
+        }
+
         void SetError(Exception ex)
         {
             var code = ex is GameMeshException ge ? ge.ErrorCode : GameMeshErrorCode.ServerError;
@@ -1675,6 +1874,7 @@ namespace GameMesh.Bootstrap
                 ClearError();
                 return;
             }
+            LastNotice = "";
             var resolved = !string.IsNullOrEmpty(serverCode) ? serverCode : code;
             LastErrorCode = resolved ?? "";
             LastError = GameMeshLog.Redact(message ?? "");

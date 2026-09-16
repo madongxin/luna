@@ -1,5 +1,6 @@
 using GameMesh.Bootstrap;
 using GameMesh.LoadTest;
+using GameMesh.Map;
 using GameMesh.Network;
 using GameMesh.Player;
 using GameMesh.Protocol;
@@ -187,7 +188,7 @@ namespace GameMesh.UI
             EatMouseOver(launcher);
 
             string text;
-            if (state != ConnectionState.InWorld)
+            if (state != ConnectionState.InWorld && client.Session.MapInstanceId == 0)
                 text = "还没进服，压测机器人不会出现。进游戏会自动登录，或按 F2。";
             else
             {
@@ -201,12 +202,13 @@ namespace GameMesh.UI
                     near = "    同线视野空，正在拉快照";
                 text = "已拉回出生点    " +
                        (client.Lines.LineNo != 0 ? client.Lines.LineNo + "线 " +
-                           client.Lines.Occupancy + "/" +
-                           (client.Lines.SoftCap != 0 ? client.Lines.SoftCap : 200) + "    " : "") +
+                           client.Lines.Occupancy + "/" + client.Lines.EffectiveSplitAt + "    " : "") +
                        "AOI " + client.Aoi.Entities.Count +
                        "    压测在线 " + bots +
                        (runner != null && runner.TargetLineNo != 0 ? "→" + runner.TargetLineNo + "线" : "") +
                        near;
+                if (!string.IsNullOrEmpty(client.LastNotice))
+                    text += "    " + client.LastNotice;
             }
 
             var hint = new Rect(24f, launcher.yMax + 12f, Mathf.Min(Screen.width - 48f, 1400f), 96f);
@@ -275,12 +277,14 @@ namespace GameMesh.UI
                 "连接  " + StateText(state) +
                 "    " + client.Config.host + ":" + client.Config.port +
                 " / " + client.Config.portB, style);
-            if (client.IsBusy)
+            if (!string.IsNullOrEmpty(client.BusyStage))
                 GUILayout.Label("阶段  " + client.BusyStage, _statusWarn);
             GUILayout.Label(
                 "玩家ID  " + client.Session.PlayerId +
                 "    模板  " + client.Session.MapTemplateId +
-                "    线  " + (client.Lines.LineNo == 0 ? "-" : client.Lines.LineNo.ToString()) +
+                "    线  " + (client.Lines.LineNo != 0
+                    ? client.Lines.LineNo.ToString()
+                    : (client.Session.MapInstanceId != 0 ? "在图" : "-")) +
                 "    地图实例  " + client.Session.MapInstanceId +
                 "    AOI  " + client.Aoi.Entities.Count, _label);
             GUILayout.Label(
@@ -297,6 +301,8 @@ namespace GameMesh.UI
                 "生命  " + (client.Session.Attributes.LifeState ?? "ALIVE") +
                 (client.Session.SessionReplaced ? "    已被顶号" : ""), _hint);
 
+            if (!string.IsNullOrEmpty(client.LastNotice))
+                GUILayout.Label(client.LastNotice, _statusOk);
             if (!string.IsNullOrEmpty(client.LastErrorUi))
                 GUILayout.Label(client.LastErrorUi, _statusErr);
             if (client.MapBlocked)
@@ -351,7 +357,8 @@ namespace GameMesh.UI
             GUILayout.Space(12);
             GUILayout.Label("压测机器人", _section);
             GUILayout.Label(
-                "优先进你当前线，满员再溢出。活动范围约 16m（本图 AOI 32m）。8081/8083 各一半，上限 20000。",
+                "先把你送进一条未满的线，机器人跟你进同一条。满 " + MapLineState.DefaultSplitAt +
+                " 人开下一线。活动约 8m（本图 AOI 32m）。你未进线时周围看不到人。8081/8083 各一半，上限 20000。",
                 _hint);
             _loadCount = Field("登录人数", _loadCount);
             _loadMinutes = Field("在线分钟", _loadMinutes);
@@ -371,7 +378,7 @@ namespace GameMesh.UI
                 "阶段  " + runner.Phase +
                 "    在线  " + inWorld +
                 " / " + Mathf.Max(runner.TargetCount, 0) +
-                (runner.TargetLineNo != 0 ? "    目标 " + runner.TargetLineNo + "线" : "") +
+                (runner.TargetLineNo != 0 ? "    目标 " + runner.TargetLineNo + "线" : "    目标 自动分线") +
                 "    失败  " + failed, failed > 0 ? _statusWarn : _label);
             int.TryParse(_loadPortA, out var portA);
             int.TryParse(_loadPortB, out var portB);
@@ -440,17 +447,28 @@ namespace GameMesh.UI
                 return;
             }
 
-            var soft = client.Lines.SoftCap != 0 ? client.Lines.SoftCap : 200u;
+            var soft = client.Lines.EffectiveSplitAt;
+            var currentLine = client.Lines.LineNo == 0
+                ? (client.Session.MapInstanceId != 0 ? "已在图中" : "未进线")
+                : client.Lines.LineNo + " 线";
             GUILayout.Label(
-                "苏州 1002    当前 " +
-                (client.Lines.LineNo == 0 ? "未进线" : client.Lines.LineNo + " 线") +
+                "苏州 1002    当前 " + currentLine +
                 "    " + client.Lines.Occupancy + " / " + soft +
                 "    " + (string.IsNullOrEmpty(client.Lines.Kind) ? "LINE" : client.Lines.Kind), _label);
-            GUILayout.Label("软顶 200 / 硬顶 400。指定线满员可换线或排队，不要当进图成功。", _hint);
+            GUILayout.Label(
+                "满 " + MapLineState.DefaultSplitAt +
+                " 人开新线（以服务器回包为准）。进图后点「切线」换线；没进图点「进入」。不要把已满当进图成功。",
+                _hint);
+            GUILayout.Label(
+                "分线列表  " + client.Lines.Lines.Count +
+                " 条。一线满 " + MapLineState.DefaultSplitAt + " 人后应出现下一线，点刷新可看到。",
+                _hint);
             if (client.Lines.QueuePosition > 0)
                 GUILayout.Label(
                     "排队  第 " + client.Lines.QueuePosition + " 位" +
                     (client.Lines.QueueReady ? "    已可进线" : ""), _statusWarn);
+            if (!string.IsNullOrEmpty(client.LastNotice))
+                GUILayout.Label(client.LastNotice, _statusOk);
 
             var canAct = !client.IsBusy && client.Session.HasIdentity;
             GUILayout.BeginHorizontal();
@@ -458,22 +476,26 @@ namespace GameMesh.UI
             if (GUILayout.Button("刷新线列表", _btnStyle, GUILayout.Height(56)))
                 _ = client.QueryMapLinesAsync();
             if (GUILayout.Button("系统选线进图", _loginStyle, GUILayout.Height(56)))
-                _ = client.EnterMapAsync(0, 0);
+            {
+                if (client.IsOnMap)
+                    client.SetNotice("已在图中，请点某一线的「切线」");
+                else
+                    _ = client.EnterMapAsync(0, 0);
+            }
             GUI.enabled = true;
             GUILayout.EndHorizontal();
 
             if (client.Lines.Lines.Count == 0)
                 GUILayout.Label("还没有线列表。登录后点刷新，或先系统选线进图。", _hint);
 
-            var inWorld = client.Connection != null &&
-                          client.Connection.State == ConnectionState.InWorld;
+            var onMap = client.IsOnMap;
             for (var i = 0; i < client.Lines.Lines.Count; i++)
             {
                 var line = client.Lines.Lines[i];
                 if (line == null || line.LineNo == 0)
                     continue;
-                var cap = line.SoftCap != 0 ? line.SoftCap : 200u;
-                var current = inWorld && line.LineNo == client.Lines.LineNo;
+                var cap = MapLineState.SplitAt(line.SoftCap);
+                var current = onMap && line.LineNo == client.Lines.LineNo;
                 var full = cap != 0 && line.Occupancy >= cap;
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(
@@ -482,9 +504,10 @@ namespace GameMesh.UI
                     (current ? "  当前" : ""),
                     full ? _statusWarn : _label, GUILayout.Height(52));
                 GUI.enabled = canAct && !current;
-                if (GUILayout.Button(current ? "所在" : "进入", _loginStyle, GUILayout.Width(120), GUILayout.Height(52)))
+                if (GUILayout.Button(current ? "所在" : (onMap ? "切线" : "进入"), _loginStyle, GUILayout.Width(120),
+                        GUILayout.Height(52)))
                 {
-                    if (inWorld)
+                    if (onMap)
                         _ = client.SwitchLineAsync(line.LineNo);
                     else
                         _ = client.EnterMapAsync(0, line.LineNo);

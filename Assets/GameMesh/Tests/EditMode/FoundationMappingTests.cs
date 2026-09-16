@@ -383,6 +383,56 @@ namespace GameMesh.Tests.EditMode
             Assert.IsTrue(state.IsLineMap);
             Assert.AreEqual(3u, state.LineNo);
             Assert.AreEqual(12u, state.Occupancy);
+            state.ApplyQuery(new QueryMapLinesRsp
+            {
+                Ok = true,
+                Kind = "LINE",
+                Lines = { new MapLineInfo { LineNo = 1 }, new MapLineInfo { LineNo = 2 } }
+            });
+            Assert.AreEqual(2, state.Lines.Count);
+            state.ApplySwitch(new SwitchLineRsp { Ok = true, Kind = "LINE" }, 2);
+            Assert.AreEqual(2u, state.LineNo);
+            Assert.AreEqual(2, state.Lines.Count);
+            var unbound = new GameMesh.Map.MapLineState();
+            unbound.ApplyQuery(new QueryMapLinesRsp
+            {
+                Ok = true,
+                Kind = "LINE",
+                Lines =
+                {
+                    new MapLineInfo { LineNo = 1, MapInstanceId = 63, Occupancy = 151, SoftCap = 200 }
+                }
+            });
+            unbound.BindPresence(63);
+            Assert.AreEqual(1u, unbound.LineNo);
+            Assert.AreEqual(151u, unbound.Occupancy);
+            unbound.ApplyEnter(new EnterMapRsp
+            {
+                Ok = true,
+                Kind = "LINE",
+                LineNo = 2,
+                Lines = { new MapLineInfo { LineNo = 2, Occupancy = 21, SoftCap = 200 } }
+            });
+            Assert.AreEqual(2, unbound.Lines.Count);
+            Assert.AreEqual(1u, unbound.Lines[0].LineNo);
+            Assert.AreEqual(2u, unbound.Lines[1].LineNo);
+
+            var pick = new GameMesh.Map.MapLineState();
+            pick.ApplyQuery(new QueryMapLinesRsp
+            {
+                Ok = true,
+                Kind = "LINE",
+                Lines =
+                {
+                    new MapLineInfo { LineNo = 3, Occupancy = 1, SoftCap = 100 }
+                }
+            });
+            pick.ApplyEnter(new EnterMapRsp { Ok = true, Kind = "LINE", LineNo = 1, Occupancy = 1, SoftCap = 100 });
+            Assert.AreEqual(3u, pick.PickLoadTestLine(1, 0));
+            Assert.AreEqual(0u, pick.PickLoadTestLine(3, 100));
+            Assert.AreEqual(3u, pick.PickLineWithRoom());
+            Assert.AreEqual(3u, pick.ResolveConcreteLine(0));
+            Assert.AreEqual(3u, pick.ResolveConcreteLine(1));
         }
 
         [Test]

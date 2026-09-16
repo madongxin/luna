@@ -70,9 +70,11 @@ namespace GameMesh.Protocol
             ["ERR_MAP_FULL"] = new GameErrorInfo("ERR_MAP_FULL", "当前地图实例已满", false,
                 "这张地图实例人数已满。请换一个模板或稍后再进，不要改客户端硬选实例。"),
             [GameMeshErrorCode.MapLineFull] = new GameErrorInfo(GameMeshErrorCode.MapLineFull, "该线已满，请换线或排队", true,
-                "当前分线已到软上限。请换一条线，或排队等空位。"),
+                "当前线已到开线人数（默认 100）。请换一条线，或排队等空位。"),
             [GameMeshErrorCode.MapNoLine] = new GameErrorInfo(GameMeshErrorCode.MapNoLine, "线号已失效，请重新查线", true,
                 "指定的线已经不存在。请刷新分线列表后再进。"),
+            ["NOT_FOUND"] = new GameErrorInfo("NOT_FOUND", "资源不存在", true,
+                "常见是会话还没写上（session not found），或线号不存在。请稍等再登录并进线，不要把 line_no=0 和会话缺失混为一谈。"),
             [GameMeshErrorCode.MapLineLimit] = new GameErrorInfo(GameMeshErrorCode.MapLineLimit, "分线数量已到上限", false,
                 "这张地图不能再开新线。请选已有线路或稍后再进。"),
             ["ERR_MAP_DATA_MISMATCH"] = new GameErrorInfo("ERR_MAP_DATA_MISMATCH", "地图数据版本或哈希不匹配，请更新资源", false,
@@ -81,6 +83,10 @@ namespace GameMesh.Protocol
                 "还没进图。请先登录成功，等自动进图或再点进图。"),
             ["ERR_STALE_SEQ"] = new GameErrorInfo("ERR_STALE_SEQ", "客户端序号过旧", false,
                 "这条请求的 seq 比服务器记录的旧。以服务器为准，下一条用新 seq。"),
+            ["STALE_ROUTE"] = new GameErrorInfo("STALE_ROUTE", "路由版本过期，正在同步", true,
+                "你还在图里。服务器换了路由版本，客户端会拉一次世界快照，不要再点进入。"),
+            ["ERR_STALE_ROUTE"] = new GameErrorInfo("ERR_STALE_ROUTE", "路由版本过期，正在同步", true,
+                "你还在图里。服务器换了路由版本，客户端会拉一次世界快照，不要再点进入。"),
             ["ERR_MOVE_TOO_FAST"] = new GameErrorInfo("ERR_MOVE_TOO_FAST", "移动过快，已按服务器位置校正", true,
                 "客户端移动超过允许速度。角色会被拉回服务器位置，请按校正后的坐标继续。"),
             ["ERR_UNWALKABLE"] = new GameErrorInfo("ERR_UNWALKABLE", "目标位置不可行走", false,
@@ -185,6 +191,25 @@ namespace GameMesh.Protocol
             return ui;
         }
 
+        public static bool IsSessionMissing(string code, string message = "")
+        {
+            if (!string.IsNullOrEmpty(code) &&
+                (code == "ERR_SESSION_EXPIRED" || code == "ERR_UNAUTHENTICATED"))
+                return true;
+            return !string.IsNullOrEmpty(message) &&
+                   (message.IndexOf("session not found", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    message.IndexOf("session_id mismatch", System.StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        public static bool IsStaleRoute(string code, string message = "")
+        {
+            if (!string.IsNullOrEmpty(code) &&
+                (code == "STALE_ROUTE" || code == "ERR_STALE_ROUTE"))
+                return true;
+            return !string.IsNullOrEmpty(message) &&
+                   message.IndexOf("route_version", System.StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
         public static bool IsSessionReplaced(string code)
         {
             return code == GameMeshErrorCode.SessionReplaced ||
@@ -218,6 +243,9 @@ namespace GameMesh.Protocol
             if (s.IndexOf("password(>=6)", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 s.IndexOf("device_id and password", System.StringComparison.OrdinalIgnoreCase) >= 0)
                 return "服务器要求：设备 ID 必填，密码至少 6 位。当前密码为空或太短，所以注册被拒绝。请填好后再点注册。";
+            if (s.IndexOf("route_version", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                s.IndexOf("stale_route", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return "你已经在地图里。路由版本过期会显示 STALE_ROUTE，不代表没进图。等同步完成后看当前线，不要再点进入。";
             if (s.IndexOf("invalid credential", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
                 s.IndexOf("bad credential", System.StringComparison.OrdinalIgnoreCase) >= 0)
                 return "服务器判定凭证无效。密码为空、不足 6 位，或和这个玩家 ID 注册时不一致，都会这样。请填回至少 6 位密码后点登录；若仍失败，用同一密码先注册再登录。";
@@ -228,8 +256,8 @@ namespace GameMesh.Protocol
                 return "这个账号还没有密码（非正式模式遗留）。请带至少 6 位密码重新注册后再登录。";
             if (s.IndexOf("missing login response", System.StringComparison.OrdinalIgnoreCase) >= 0)
                 return "没有收到登录回包。请确认已连上 Gateway 后再点登录。";
-            if (s.IndexOf("login body missing", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                return "登录成功包缺少 session/token。请重试登录；若反复出现，看服务器日志。";
+            if (s.IndexOf("session not found", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return "登录成功了，但进图时服务器还找不到这个会话。请再点一次登录，等进线成功后再集体登录。";
             if (s.IndexOf("设备ID和密码", System.StringComparison.Ordinal) >= 0)
                 return "设备 ID 和密码都要填。密码至少 6 位；空着点按钮会被直接拒绝，不会发到服务器。";
             if (ContainsCjk(s))

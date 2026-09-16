@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using GameMesh.Auth;
 using GameMesh.Bootstrap;
+using GameMesh.Map;
 using GameMesh.Network;
 using GameMesh.Protocol;
 using UnityEngine;
@@ -126,7 +127,12 @@ namespace GameMesh.LoadTest
             }
         }
 
-        public async Task CloseSessionAsync()
+        public Task CloseSessionAsync()
+        {
+            return CloseSessionAsync(CancellationToken.None, 1200, 800);
+        }
+
+        public async Task CloseSessionAsync(CancellationToken ct, int connectMs, int rpcMs)
         {
             _stopMoves = true;
             InWorld = false;
@@ -138,7 +144,8 @@ namespace GameMesh.LoadTest
             try
             {
                 if (playerId != 0 && !string.IsNullOrEmpty(token))
-                    await SendLogoutAsync(host, port, playerId, token).ConfigureAwait(true);
+                    await SendLogoutAsync(host, port, playerId, token, ct, connectMs, rpcMs)
+                        .ConfigureAwait(true);
             }
             catch
             {
@@ -163,7 +170,8 @@ namespace GameMesh.LoadTest
             }
         }
 
-        async Task SendLogoutAsync(string host, int port, ulong playerId, string token)
+        async Task SendLogoutAsync(string host, int port, ulong playerId, string token,
+            CancellationToken ct, int connectMs, int rpcMs)
         {
             var live = _conn.State != ConnectionState.Disconnected &&
                        _conn.State != ConnectionState.Closing &&
@@ -184,13 +192,16 @@ namespace GameMesh.LoadTest
                     /* ignore */
                 }
 
-                using (var cts = new CancellationTokenSource(8000))
+                using (var linked = CancellationTokenSource.CreateLinkedTokenSource(ct))
                 {
-                    await _conn.ConnectAsync(host, port, cts.Token).ConfigureAwait(true);
-                    await HelloAsync(client, cts.Token).ConfigureAwait(true);
+                    linked.CancelAfter(Math.Max(250, connectMs));
+                    await _conn.ConnectAsync(host, port, linked.Token).ConfigureAwait(true);
+                    await HelloAsync(client, linked.Token, Math.Max(250, rpcMs)).ConfigureAwait(true);
                 }
             }
 
+            if (ct.IsCancellationRequested)
+                return;
             if (ConnectionStateMachine.CanTransition(_conn.State, ConnectionState.LoggingOut))
                 _conn.SetLogicalState(ConnectionState.LoggingOut);
             var req = new GameRequest
@@ -198,13 +209,13 @@ namespace GameMesh.LoadTest
                 SessionToken = token,
                 Logout = new LogoutReq { PlayerId = playerId, Token = token }
             };
-            var rsp = await _conn.RequestAsync(req, TimeSpan.FromSeconds(3), CancellationToken.None)
+            var rsp = await _conn.RequestAsync(req, TimeSpan.FromMilliseconds(Math.Max(250, rpcMs)), ct)
                 .ConfigureAwait(true);
             if (AuthResponse.FromLogout(rsp, true).AuthorityOk)
                 LoadTestSessionLedger.Forget(playerId, token);
         }
 
-        async Task HelloAsync(GameMeshClient client, CancellationToken ct)
+        async Task HelloAsync(GameMeshClient client, CancellationToken ct, int timeoutMs = 0)
         {
             Status = "握手";
             var hello = new ClientHelloReq
@@ -217,8 +228,11 @@ namespace GameMesh.LoadTest
             };
             foreach (var cap in ProtocolHandshake.ClientCapabilities)
                 hello.Capabilities.Add(cap);
+            var helloMs = timeoutMs > 0
+                ? timeoutMs
+                : Math.Max(3000, client.Config.helloTimeoutMs);
             var rsp = await SendAsync(new GameRequest { ClientHello = hello },
-                TimeSpan.FromMilliseconds(Math.Max(3000, client.Config.helloTimeoutMs)), ct).ConfigureAwait(true);
+                TimeSpan.FromMilliseconds(helloMs), ct).ConfigureAwait(true);
             var helloRsp = rsp.ServerHello;
             if (!ProtocolHandshake.TryValidate(helloRsp, client.ProtocolSchemaSha256,
                     ProtocolHandshake.ProtocolVersion, out var code, out var message))
@@ -292,10 +306,20 @@ namespace GameMesh.LoadTest
         {
             Status = "进图";
             _conn.SetLogicalState(ConnectionState.EnteringWorld);
-            var line = _preferredLine;
+            var line = ResolveEnterLine(client, _preferredLine, _index);
+            if (line == 0 && client != null && client.Lines != null)
+                line = client.Lines.ResolveConcreteLine(0);
             var rsp = await SendEnterMapAsync(client, line, ct).ConfigureAwait(true);
-            if (!EnterMapAccepted(rsp) && line != 0 && IsLineOverflow(rsp))
-                rsp = await SendEnterMapAsync(client, 0, ct).ConfigureAwait(true);
+            if (!EnterMapAccepted(rsp) && CanRetryAnyLine(rsp))
+            {
+                var retry = 0u;
+                if (client != null && client.Lines != null)
+                    retry = client.Lines.ResolveConcreteLine(line == 0 ? 0 : line);
+                if (retry != 0 && retry != line)
+                    rsp = await SendEnterMapAsync(client, retry, ct).ConfigureAwait(true);
+                else if (line != 0)
+                    rsp = await SendEnterMapAsync(client, 0, ct).ConfigureAwait(true);
+            }
             if (!EnterMapAccepted(rsp))
             {
                 var msg = rsp != null && rsp.EnterMap != null ? rsp.EnterMap.Message : rsp != null ? rsp.Message : "";
@@ -310,7 +334,7 @@ namespace GameMesh.LoadTest
             _spawn = _pos;
             // Stay inside map 1002's 32m AOI cell so the local player at spawn can see them.
             var angle = _index * 2.39996323f;
-            var ring = 4f + Mathf.Sqrt((_index % 48) / 47f) * 12f;
+            var ring = 2f + Mathf.Sqrt((_index % 48) / 47f) * 6f;
             _home = _spawn + new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle)) * ring;
             _yaw = rsp.EnterMap.SpawnYaw;
             _conn.SetLogicalState(ConnectionState.InWorld);
@@ -339,10 +363,23 @@ namespace GameMesh.LoadTest
             return rsp != null && rsp.Ok && rsp.EnterMap != null && rsp.EnterMap.Ok;
         }
 
-        static bool IsLineOverflow(GameResponse rsp)
+        static uint ResolveEnterLine(GameMeshClient client, uint preferred, int index)
+        {
+            if (client != null && client.Lines != null)
+                return client.Lines.PickLoadTestLine(preferred, index);
+            return 0;
+        }
+
+        static bool CanRetryAnyLine(GameResponse rsp)
         {
             var code = ProtocolMapper.ExtractErrorCode(rsp);
-            return code == GameMeshErrorCode.MapLineFull || code == GameMeshErrorCode.MapLineLimit;
+            if (code == GameMeshErrorCode.MapHashMismatch || code == "ERR_MAP_DATA_MISMATCH")
+                return false;
+            var msg = rsp != null && rsp.EnterMap != null ? rsp.EnterMap.Message : rsp != null ? rsp.Message : "";
+            if (!string.IsNullOrEmpty(msg) &&
+                msg.IndexOf("mismatch", StringComparison.OrdinalIgnoreCase) >= 0)
+                return false;
+            return true;
         }
 
         async Task HeartbeatLoopAsync(CancellationToken ct)
@@ -399,7 +436,7 @@ namespace GameMesh.LoadTest
                     return;
                 var toHome = _home - _pos;
                 toHome.y = 0f;
-                var far = toHome.magnitude > 10f;
+                var far = toHome.magnitude > 5f;
                 if (far && rnd.NextDouble() < 0.78)
                     dir = toHome.normalized;
                 else if (rnd.NextDouble() < 0.16)
@@ -409,7 +446,7 @@ namespace GameMesh.LoadTest
                     : 0.38f + (float)rnd.NextDouble() * 0.22f;
                 var next = _pos + dir * step;
                 if (Vector3.Distance(new Vector3(next.x, _home.y, next.z),
-                        new Vector3(_home.x, _home.y, _home.z)) > 14f)
+                        new Vector3(_home.x, _home.y, _home.z)) > 8f)
                 {
                     dir = (_home - _pos);
                     dir.y = 0f;
@@ -492,14 +529,14 @@ namespace GameMesh.LoadTest
         }
 
         public static async Task LogoutOrphanAsync(IMainThreadDispatcher dispatcher, string host, int port,
-            ulong playerId, string token)
+            ulong playerId, string token, CancellationToken ct)
         {
             var bot = new LoadTestBot(-1, dispatcher);
             bot._host = host ?? "";
             bot.GatewayPort = port > 0 ? port : 8083;
             bot._playerId = playerId;
             bot._token = token ?? "";
-            await bot.CloseSessionAsync().ConfigureAwait(true);
+            await bot.CloseSessionAsync(ct, 800, 800).ConfigureAwait(true);
         }
     }
 
@@ -578,6 +615,55 @@ namespace GameMesh.LoadTest
                 if (changed)
                     SaveUnlocked(list);
             }
+        }
+
+        public static void Clear()
+        {
+            lock (Gate)
+                SaveUnlocked(new List<Entry>());
+        }
+
+        public static void ForgetMany(Entry[] entries)
+        {
+            if (entries == null || entries.Length == 0)
+                return;
+            lock (Gate)
+            {
+                var list = new List<Entry>(LoadUnlocked());
+                var changed = false;
+                for (var s = 0; s < entries.Length; s++)
+                {
+                    var target = entries[s];
+                    if (target == null)
+                        continue;
+                    for (var i = list.Count - 1; i >= 0; i--)
+                    {
+                        var entry = list[i];
+                        if (entry == null)
+                        {
+                            list.RemoveAt(i);
+                            changed = true;
+                            continue;
+                        }
+
+                        if ((!string.IsNullOrEmpty(target.playerId) && entry.playerId == target.playerId) ||
+                            (!string.IsNullOrEmpty(target.token) && entry.token == target.token))
+                        {
+                            list.RemoveAt(i);
+                            changed = true;
+                        }
+                    }
+                }
+
+                if (changed)
+                    SaveUnlocked(list);
+            }
+        }
+
+        public static int Count()
+        {
+            lock (Gate)
+                return LoadUnlocked().Length;
         }
 
         public static Entry[] Snapshot()

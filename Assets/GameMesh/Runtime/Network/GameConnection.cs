@@ -352,7 +352,8 @@ namespace GameMesh.Network
             if (_failClosed)
                 return;
             _failClosed = true;
-            GameMeshLog.Info($"fail-closed {Redact(ex.Message)}");
+            if (!Quiet)
+                GameMeshLog.Info($"fail-closed {Redact(ex.Message)}");
             FailPending(ex is GameMeshException ge
                 ? ge
                 : new GameMeshException(GameMeshErrorCode.ClientDisconnected, ex.Message, ex));
