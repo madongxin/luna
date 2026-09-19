@@ -47,6 +47,9 @@
     "SwitchLineRsp",
     "EnqueueMapReq",
     "EnqueueMapRsp",
-    "MapLineInfo"
+    "MapLineInfo",
+    "InteractPortalReq",
+    "InteractPortalRsp",
+    "PortalDef"
   ]
 }

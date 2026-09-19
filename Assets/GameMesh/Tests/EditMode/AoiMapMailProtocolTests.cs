@@ -44,6 +44,19 @@ namespace GameMesh.Tests.EditMode
             Assert.AreEqual(GameResponse.BodyOneofCase.SessionReplaced,
                 new GameResponse { SessionReplaced = new SessionReplacedNotify() }.BodyCase);
             Assert.AreEqual(GameResponse.BodyOneofCase.FullSnapshot, new GameResponse { FullSnapshot = new FullStateSnapshotRsp() }.BodyCase);
+            Assert.AreEqual(80, GameRequest.InteractPortalFieldNumber);
+            Assert.AreEqual(81, GameResponse.InteractPortalFieldNumber);
+            Assert.AreEqual(4, MapManifestEntry.SceneNameFieldNumber);
+            Assert.AreEqual(5, MapManifestEntry.KindFieldNumber);
+            Assert.AreEqual(6, MapManifestEntry.VisualMapTemplateIdFieldNumber);
+            Assert.AreEqual(7, MapManifestEntry.PortalsFieldNumber);
+            Assert.IsTrue(ProtocolCapabilities.HasType("InteractPortalReq"));
+            Assert.IsTrue(ProtocolCapabilities.HasType("InteractPortalRsp"));
+            Assert.IsTrue(ProtocolCapabilities.HasType("PortalDef"));
+            Assert.AreEqual(GameRequest.BodyOneofCase.InteractPortal,
+                new GameRequest { InteractPortal = new InteractPortalReq() }.BodyCase);
+            Assert.AreEqual(GameResponse.BodyOneofCase.InteractPortal,
+                new GameResponse { InteractPortal = new InteractPortalRsp() }.BodyCase);
             var rsp = new GameResponse
             {
                 AoiDelta = new AoiDelta(),

@@ -146,6 +146,7 @@ namespace GameMesh.UI
             if (!_panelOpen)
             {
                 DrawLauncher(client);
+                DrawDungeonBanner(client);
                 return;
             }
 
@@ -176,6 +177,23 @@ namespace GameMesh.UI
             GUILayout.EndScrollView();
             GUILayout.EndArea();
             EatMouseOver(area);
+            DrawDungeonBanner(client);
+        }
+
+        void DrawDungeonBanner(GameMeshClient client)
+        {
+            if (client == null || !client.IsDungeon)
+                return;
+            var tint = new Rect(0f, 0f, Screen.width, Screen.height);
+            var overlay = _bg;
+            var old = GUI.color;
+            GUI.color = new Color(0.35f, 0.12f, 0.55f, 0.12f);
+            GUI.DrawTexture(tint, overlay);
+            GUI.color = old;
+            var banner = new Rect(Screen.width * 0.5f - 140f, 18f, 280f, 64f);
+            GUI.DrawTexture(banner, _header);
+            GUI.Label(new Rect(banner.x + 16f, banner.y + 8f, banner.width - 32f, banner.height - 16f),
+                "副本", _title);
         }
 
         void DrawLauncher(GameMeshClient client)
@@ -282,11 +300,14 @@ namespace GameMesh.UI
             GUILayout.Label(
                 "玩家ID  " + client.Session.PlayerId +
                 "    模板  " + client.Session.MapTemplateId +
+                "    类型  " + (string.IsNullOrEmpty(client.Lines.Kind) ? "-" : client.Lines.Kind) +
                 "    线  " + (client.Lines.LineNo != 0
                     ? client.Lines.LineNo.ToString()
                     : (client.Session.MapInstanceId != 0 ? "在图" : "-")) +
                 "    地图实例  " + client.Session.MapInstanceId +
                 "    AOI  " + client.Aoi.Entities.Count, _label);
+            if (client.IsDungeon)
+                GUILayout.Label("当前在副本 2102（画面是 1001）。点「返回 1001」离开副本。", _statusWarn);
             GUILayout.Label(
                 "client_seq  " + (client.Connection != null ? client.Connection.LastClientSeq.ToString() : "0") +
                 "    server_seq  " + client.Session.LastServerSeq +
@@ -433,14 +454,51 @@ namespace GameMesh.UI
         void DrawLines(GameMeshClient client)
         {
             GUILayout.Space(12);
-            GUILayout.Label("分线", _section);
-            var lineMap = client.Lines.IsLineMap || client.Config.mapTemplateId == 1002;
-            if (client.Config.mapTemplateId == 1001 && !lineMap)
+            GUILayout.Label("苏州 1002  ↔  副本 2102", _section);
+            var canAct = !client.IsBusy && client.Session.HasIdentity;
+            var canDungeon = canAct && client.IsOnMap && !client.IsDungeon;
+            GUILayout.BeginHorizontal();
+            GUI.enabled = canDungeon;
+            if (GUILayout.Button(client.IsDungeon ? "已在副本" : "进入副本", _loginStyle, GUILayout.Height(56)))
+                _ = client.EnterDungeonAsync();
+            GUI.enabled = canAct && (client.IsDungeon || !client.IsOnSuzhou);
+            var leaveLabel = client.IsDungeon ? "返回 1001" : client.IsOnSuzhou ? "已在 1002" : "返回 1002";
+            if (GUILayout.Button(leaveLabel, _loginStyle, GUILayout.Height(56)))
             {
-                GUILayout.Label("1001 是旧公共池，没有分线。", _hint);
+                if (client.IsDungeon)
+                    _ = client.SwitchPublicMapAsync(HelloMapCatalog.HubTemplateId);
+                else
+                    _ = client.EnterSuzhouAsync();
+            }
+            GUI.enabled = true;
+            GUILayout.EndHorizontal();
+            GUILayout.Label(
+                client.IsDungeon
+                    ? "当前在副本 2102。点「返回 1001」回主城。"
+                    : !client.IsOnMap
+                        ? "现在未进线，进不了副本。先登录进苏州 1002，再点「进入副本」。"
+                        : client.IsOnSuzhou
+                            ? "已在 1002。点「进入副本」立刻创建 1001 地图的副本 2102。"
+                            : client.IsOnHub
+                                ? "已在 1001。点「进入副本」立刻开 2102，或点「返回 1002」回苏州。"
+                                : "先进苏州 1002，再点「进入副本」。",
+                _hint);
+
+            GUILayout.Space(12);
+            GUILayout.Label("分线", _section);
+            if (client.IsOnHub || client.IsDungeon)
+            {
+                GUILayout.Label(
+                    client.IsDungeon
+                        ? "当前不在苏州 1002。点「返回 1001」离开副本。"
+                        : "当前不在苏州 1002。点「返回 1002」后再切线。",
+                    _hint);
                 return;
             }
 
+            var lineMap = client.Lines.IsLineMap ||
+                          client.Session.MapTemplateId == HelloMapCatalog.LineTemplateId ||
+                          client.Config.mapTemplateId == HelloMapCatalog.LineTemplateId;
             if (!lineMap)
             {
                 GUILayout.Label("当前模板不是分线图。", _hint);
@@ -470,7 +528,6 @@ namespace GameMesh.UI
             if (!string.IsNullOrEmpty(client.LastNotice))
                 GUILayout.Label(client.LastNotice, _statusOk);
 
-            var canAct = !client.IsBusy && client.Session.HasIdentity;
             GUILayout.BeginHorizontal();
             GUI.enabled = canAct;
             if (GUILayout.Button("刷新线列表", _btnStyle, GUILayout.Height(56)))

@@ -192,6 +192,47 @@ namespace GameMesh.Network
             }
         }
 
+        public void SendBestEffort(GameRequest request, TimeSpan timeout)
+        {
+            if (request == null)
+                return;
+            var state = State;
+            if (state == ConnectionState.Disconnected || state == ConnectionState.Closing ||
+                state == ConnectionState.Connecting)
+                return;
+
+            if (request.Seq == 0)
+                request.Seq = NextSeq();
+
+            byte[] frame;
+            try
+            {
+                frame = FrameCodec.Encode(request.ToByteArray());
+            }
+            catch
+            {
+                return;
+            }
+
+            NetworkStream stream;
+            lock (_stateGate)
+                stream = _stream;
+            if (stream == null)
+                return;
+
+            try
+            {
+                try { stream.WriteTimeout = (int)Math.Max(100, timeout.TotalMilliseconds); }
+                catch { /* some platforms ignore WriteTimeout */ }
+                stream.Write(frame, 0, frame.Length);
+                stream.Flush();
+            }
+            catch
+            {
+                /* quit path: ignore */
+            }
+        }
+
         public async Task DisconnectAsync(DisconnectReason reason, CancellationToken ct)
         {
             SetState(ConnectionState.Closing);
@@ -218,6 +259,7 @@ namespace GameMesh.Network
             }
 
             DrainSendQueue();
+            Interlocked.Exchange(ref _seq, 0);
             SetState(ConnectionState.Disconnected);
             if (!Quiet)
                 GameMeshLog.Info($"disconnected reason={reason} lastSeq={LastClientSeq}");

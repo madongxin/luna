@@ -60,7 +60,7 @@ for t in required:
 for token in ("error_code", "retryable", "EnterMap", "GetSelfProfile", "PlayerMailSend",
               "MailboxChanged", "ClientHello", "Heartbeat", "WorldSnapshot", "Respawn",
               "SessionReplaced", "MapManifestEntry", "QueryMapLines", "SwitchLine",
-              "EnqueueMap", "MapLineInfo"):
+              "EnqueueMap", "InteractPortal", "PortalDef", "MapLineInfo"):
     if token not in cs:
         missing.append("field/oneof " + token)
 if missing:

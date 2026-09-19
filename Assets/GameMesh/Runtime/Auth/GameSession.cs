@@ -12,6 +12,7 @@ namespace GameMesh.Auth
         public ulong Generation;
         public ulong LastServerSeq;
         public ulong MapTemplateId;
+        public string MapKind = "";
         public ulong MapInstanceId;
         public ulong OwnerEpoch;
         public ulong RouteVersion;
@@ -71,6 +72,7 @@ namespace GameMesh.Auth
             LastServerSeq = 0;
             MapInstanceId = 0;
             MapTemplateId = 0;
+            MapKind = "";
             OwnerEpoch = 0;
             RouteVersion = 0;
             RealmId = 0;

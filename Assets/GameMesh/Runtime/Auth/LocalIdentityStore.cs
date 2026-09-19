@@ -56,6 +56,35 @@ namespace GameMesh.Auth
             PlayerPrefs.Save();
         }
 
+        const string MapInstanceKey = "GameMesh.LastMapInstanceId";
+        const string MapTemplateKey = "GameMesh.LastMapTemplateId";
+
+        public static void SaveLastMap(ulong templateId, ulong instanceId)
+        {
+            if (instanceId == 0)
+                return;
+            PlayerPrefs.SetString(MapInstanceKey, instanceId.ToString());
+            PlayerPrefs.SetString(MapTemplateKey, templateId.ToString());
+            PlayerPrefs.Save();
+        }
+
+        public static ulong LoadLastMapInstance()
+        {
+            return ParseUlong(PlayerPrefs.GetString(MapInstanceKey, "0"));
+        }
+
+        public static ulong LoadLastMapTemplate()
+        {
+            return ParseUlong(PlayerPrefs.GetString(MapTemplateKey, "0"));
+        }
+
+        public static void ClearLastMap()
+        {
+            PlayerPrefs.DeleteKey(MapInstanceKey);
+            PlayerPrefs.DeleteKey(MapTemplateKey);
+            PlayerPrefs.Save();
+        }
+
         static ulong ParseUlong(string text)
         {
             return ulong.TryParse(text, out var v) ? v : 0UL;

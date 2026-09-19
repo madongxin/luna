@@ -147,6 +147,9 @@ namespace GameMesh.Network
         public const string QueueInvalid = "ERR_QUEUE_INVALID";
         public const string QueueNotReady = "ERR_QUEUE_NOT_READY";
         public const string SessionExpired = "ERR_SESSION_EXPIRED";
+        public const string PortalTooFar = "ERR_PORTAL_TOO_FAR";
+        public const string PortalUnknown = "ERR_PORTAL_UNKNOWN";
+        public const string PortalRequired = "ERR_PORTAL_REQUIRED";
     }
 
     public sealed class GameMeshException : Exception

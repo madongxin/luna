@@ -285,112 +285,135 @@ namespace GameMesh.Protocol {
             "cRIYChBwcm90b2NvbF92ZXJzaW9uGAEgASgNEhUKDXNjaGVtYV9zaGEyNTYY",
             "AiABKAkSFgoOY2xpZW50X3ZlcnNpb24YAyABKAkSEAoIcGxhdGZvcm0YBCAB",
             "KAkSFQoNYnVpbGRfY2hhbm5lbBgFIAEoCRIUCgxjYXBhYmlsaXRpZXMYBiAD",
-            "KAkiUQoQTWFwTWFuaWZlc3RFbnRyeRIXCg9tYXBfdGVtcGxhdGVfaWQYASAB",
-            "KAQSFAoMZGF0YV92ZXJzaW9uGAIgASgEEg4KBnNoYTI1NhgDIAEoCSL7AgoO",
-            "U2VydmVySGVsbG9Sc3ASCgoCb2sYASABKAgSEgoKZXJyb3JfY29kZRgCIAEo",
-            "CRIPCgdtZXNzYWdlGAMgASgJEhgKEHByb3RvY29sX3ZlcnNpb24YBCABKA0S",
-            "JgoebWluX3N1cHBvcnRlZF9wcm90b2NvbF92ZXJzaW9uGAUgASgNEhUKDXNj",
-            "aGVtYV9zaGEyNTYYBiABKAkSFAoMc2VydmVyX2J1aWxkGAcgASgJEhYKDnNl",
-            "cnZlcl90aW1lX21zGAggASgDEh0KFWhlYXJ0YmVhdF9pbnRlcnZhbF9tcxgJ",
-            "IAEoDRIXCg9pZGxlX3RpbWVvdXRfbXMYCiABKA0SFAoMY2FwYWJpbGl0aWVz",
-            "GAsgAygJEh8KF2dhbWVwbGF5X2NvbmZpZ192ZXJzaW9uGAwgASgNEhwKFG1h",
-            "cF9tYW5pZmVzdF92ZXJzaW9uGA0gASgNEiQKBG1hcHMYDiADKAsyFi5nYW1l",
-            "Lk1hcE1hbmlmZXN0RW50cnkiVQoVU2Vzc2lvblJlcGxhY2VkTm90aWZ5EhMK",
-            "C3JlYXNvbl9jb2RlGAEgASgJEhYKDnNlcnZlcl90aW1lX21zGAIgASgDEg8K",
-            "B21lc3NhZ2UYAyABKAkiVQoMSGVhcnRiZWF0UmVxEhsKE2NsaWVudF9tb25v",
-            "dG9uaWNfbXMYASABKAMSFwoPbGFzdF9zZXJ2ZXJfc2VxGAIgASgEEg8KB2Vj",
-            "aG9fbXMYAyABKAMihwEKDEhlYXJ0YmVhdFJzcBIKCgJvaxgBIAEoCBISCgpl",
-            "cnJvcl9jb2RlGAIgASgJEhYKDnNlcnZlcl90aW1lX21zGAMgASgDEg8KB2Vj",
-            "aG9fbXMYBCABKAMSFgoOc2VydmVyX3JlY3ZfbXMYBSABKAMSFgoOaml0dGVy",
-            "X2hpbnRfbXMYBiABKA0ihA4KC0dhbWVSZXF1ZXN0EgsKA3NlcRgBIAEoBBIV",
-            "Cg1zZXNzaW9uX3Rva2VuGAIgASgJEiwKDGNvbnN1bWVfaXRlbRgKIAEoCzIU",
-            "LmdhbWUuQ29uc3VtZUl0ZW1SZXFIABIuCg1yZWxlYXNlX3NraWxsGAsgASgL",
-            "MhUuZ2FtZS5SZWxlYXNlU2tpbGxSZXFIABIoCgpncmFudF9pdGVtGAwgASgL",
-            "MhIuZ2FtZS5HcmFudEl0ZW1SZXFIABIfCgVsb2dpbhgUIAEoCzIOLmdhbWUu",
-            "TG9naW5SZXFIABI0ChB2YWxpZGF0ZV9zZXNzaW9uGBUgASgLMhguZ2FtZS5W",
-            "YWxpZGF0ZVNlc3Npb25SZXFIABIsCgxjaGVja19vbmxpbmUYFiABKAsyFC5n",
-            "YW1lLkNoZWNrT25saW5lUmVxSAASIQoGbG9nb3V0GBcgASgLMg8uZ2FtZS5M",
-            "b2dvdXRSZXFIABInCglyZWNvbm5lY3QYGCABKAsyEi5nYW1lLlJlY29ubmVj",
-            "dFJlcUgAEiUKCHJlZ2lzdGVyGBkgASgLMhEuZ2FtZS5SZWdpc3RlclJlcUgA",
-            "EiYKCWZsdXNoX2JhZxgaIAEoCzIRLmdhbWUuRmx1c2hCYWdSZXFIABIyCg9t",
-            "YWlsYm94X3N1bW1hcnkYHiABKAsyFy5nYW1lLk1haWxib3hTdW1tYXJ5UmVx",
-            "SAASJgoJbWFpbF9saXN0GB8gASgLMhEuZ2FtZS5NYWlsTGlzdFJlcUgAEiQK",
-            "CG1haWxfZ2V0GCAgASgLMhAuZ2FtZS5NYWlsR2V0UmVxSAASJgoJbWFpbF9y",
-            "ZWFkGCEgASgLMhEuZ2FtZS5NYWlsUmVhZFJlcUgAEigKCm1haWxfY2xhaW0Y",
-            "IiABKAsyEi5nYW1lLk1haWxDbGFpbVJlcUgAEjMKEG1haWxfYmF0Y2hfY2xh",
-            "aW0YIyABKAsyFy5nYW1lLk1haWxCYXRjaENsYWltUmVxSAASLgoNbWFpbF9m",
-            "YXZvcml0ZRgkIAEoCzIVLmdhbWUuTWFpbEZhdm9yaXRlUmVxSAASMQoPbWFp",
-            "bF9iYXRjaF9yZWFkGCUgASgLMhYuZ2FtZS5NYWlsQmF0Y2hSZWFkUmVxSAAS",
-            "NQoRbWFpbF9iYXRjaF9kZWxldGUYJiABKAsyGC5nYW1lLk1haWxCYXRjaERl",
-            "bGV0ZVJlcUgAEiwKDG1haWxfZGVsaXZlchgnIAEoCzIULmdhbWUuTWFpbERl",
-            "bGl2ZXJSZXFIABImCgllbnRlcl9tYXAYKCABKAsyES5nYW1lLkVudGVyTWFw",
-            "UmVxSAASJgoJbGVhdmVfbWFwGCkgASgLMhEuZ2FtZS5MZWF2ZU1hcFJlcUgA",
-            "EiQKCG1hcF9waW5nGCogASgLMhAuZ2FtZS5NYXBQaW5nUmVxSAASJgoJY2hh",
-            "dF9zZW5kGDIgASgLMhEuZ2FtZS5DaGF0U2VuZFJlcUgAEioKC2ZyaWVuZF9s",
-            "aXN0GDMgASgLMhMuZ2FtZS5GcmllbmRMaXN0UmVxSAASJAoIcHVzaF9hY2sY",
-            "NCABKAsyEC5nYW1lLlB1c2hBY2tSZXFIABIzChBnZXRfc2VsZl9wcm9maWxl",
-            "GDwgASgLMhcuZ2FtZS5HZXRTZWxmUHJvZmlsZVJlcUgAEh0KBG1vdmUYPSAB",
-            "KAsyDS5nYW1lLk1vdmVSZXFIABIzChBwbGF5ZXJfbWFpbF9zZW5kGD8gASgL",
-            "MhcuZ2FtZS5QbGF5ZXJNYWlsU2VuZFJlcUgAEiwKDGNsaWVudF9oZWxsbxhG",
-            "IAEoCzIULmdhbWUuQ2xpZW50SGVsbG9SZXFIABInCgloZWFydGJlYXQYRyAB",
-            "KAsyEi5nYW1lLkhlYXJ0YmVhdFJlcUgAEjAKDndvcmxkX3NuYXBzaG90GEgg",
-            "ASgLMhYuZ2FtZS5Xb3JsZFNuYXBzaG90UmVxSAASIwoHcmVzcGF3bhhJIAEo",
-            "CzIQLmdhbWUuUmVzcGF3blJlcUgAEjMKEGdldF9wbGF5ZXJfYnJpZWYYSiAB",
-            "KAsyFy5nYW1lLkdldFBsYXllckJyaWVmUmVxSAASNwoScXVlcnlfb25saW5l",
-            "X3N0YXRlGEsgASgLMhkuZ2FtZS5RdWVyeU9ubGluZVN0YXRlUmVxSAASMQoP",
-            "cXVlcnlfbWFwX2xpbmVzGEwgASgLMhYuZ2FtZS5RdWVyeU1hcExpbmVzUmVx",
-            "SAASMAoOY3JlYXRlX2R1bmdlb24YTSABKAsyFi5nYW1lLkNyZWF0ZUR1bmdl",
-            "b25SZXFIABIqCgtzd2l0Y2hfbGluZRhOIAEoCzITLmdhbWUuU3dpdGNoTGlu",
-            "ZVJlcUgAEioKC2VucXVldWVfbWFwGE8gASgLMhMuZ2FtZS5FbnF1ZXVlTWFw",
-            "UmVxSABCBgoEYm9keSLOEAoMR2FtZVJlc3BvbnNlEgsKA3NlcRgBIAEoBBIK",
-            "CgJvaxgCIAEoCBIPCgdtZXNzYWdlGAMgASgJEhIKCmVycm9yX2NvZGUYBCAB",
-            "KAkSEQoJcmV0cnlhYmxlGAUgASgIEhYKDnNlcnZlcl90aW1lX21zGAYgASgD",
-            "EhAKCHRyYWNlX2lkGAcgASgJEiwKDGNvbnN1bWVfaXRlbRgKIAEoCzIULmdh",
-            "bWUuQ29uc3VtZUl0ZW1Sc3BIABIuCg1yZWxlYXNlX3NraWxsGAsgASgLMhUu",
-            "Z2FtZS5SZWxlYXNlU2tpbGxSc3BIABIoCgpncmFudF9pdGVtGAwgASgLMhIu",
-            "Z2FtZS5HcmFudEl0ZW1Sc3BIABIfCgVsb2dpbhgUIAEoCzIOLmdhbWUuTG9n",
-            "aW5Sc3BIABI0ChB2YWxpZGF0ZV9zZXNzaW9uGBUgASgLMhguZ2FtZS5WYWxp",
-            "ZGF0ZVNlc3Npb25Sc3BIABIsCgxjaGVja19vbmxpbmUYFiABKAsyFC5nYW1l",
-            "LkNoZWNrT25saW5lUnNwSAASIQoGbG9nb3V0GBcgASgLMg8uZ2FtZS5Mb2dv",
-            "dXRSc3BIABInCglyZWNvbm5lY3QYGCABKAsyEi5nYW1lLlJlY29ubmVjdFJz",
-            "cEgAEiUKCHJlZ2lzdGVyGBkgASgLMhEuZ2FtZS5SZWdpc3RlclJzcEgAEiYK",
-            "CWZsdXNoX2JhZxgaIAEoCzIRLmdhbWUuRmx1c2hCYWdSc3BIABIyCg9tYWls",
-            "Ym94X3N1bW1hcnkYHiABKAsyFy5nYW1lLk1haWxib3hTdW1tYXJ5UnNwSAAS",
-            "JgoJbWFpbF9saXN0GB8gASgLMhEuZ2FtZS5NYWlsTGlzdFJzcEgAEiQKCG1h",
-            "aWxfZ2V0GCAgASgLMhAuZ2FtZS5NYWlsR2V0UnNwSAASJgoJbWFpbF9yZWFk",
-            "GCEgASgLMhEuZ2FtZS5NYWlsUmVhZFJzcEgAEigKCm1haWxfY2xhaW0YIiAB",
-            "KAsyEi5nYW1lLk1haWxDbGFpbVJzcEgAEjMKEG1haWxfYmF0Y2hfY2xhaW0Y",
-            "IyABKAsyFy5nYW1lLk1haWxCYXRjaENsYWltUnNwSAASLgoNbWFpbF9mYXZv",
-            "cml0ZRgkIAEoCzIVLmdhbWUuTWFpbEZhdm9yaXRlUnNwSAASMQoPbWFpbF9i",
-            "YXRjaF9yZWFkGCUgASgLMhYuZ2FtZS5NYWlsQmF0Y2hSZWFkUnNwSAASNQoR",
-            "bWFpbF9iYXRjaF9kZWxldGUYJiABKAsyGC5nYW1lLk1haWxCYXRjaERlbGV0",
-            "ZVJzcEgAEiwKDG1haWxfZGVsaXZlchgnIAEoCzIULmdhbWUuTWFpbERlbGl2",
-            "ZXJSc3BIABImCgllbnRlcl9tYXAYKCABKAsyES5nYW1lLkVudGVyTWFwUnNw",
-            "SAASJgoJbGVhdmVfbWFwGCkgASgLMhEuZ2FtZS5MZWF2ZU1hcFJzcEgAEiQK",
-            "CG1hcF9waW5nGCogASgLMhAuZ2FtZS5NYXBQaW5nUnNwSAASJgoJY2hhdF9z",
-            "ZW5kGDIgASgLMhEuZ2FtZS5DaGF0U2VuZFJzcEgAEioKC2ZyaWVuZF9saXN0",
-            "GDMgASgLMhMuZ2FtZS5GcmllbmRMaXN0UnNwSAASJAoIcHVzaF9hY2sYNCAB",
-            "KAsyEC5nYW1lLlB1c2hBY2tSc3BIABIvCgtzZXJ2ZXJfcHVzaBg1IAEoCzIY",
-            "LmdhbWUuU2VydmVyUHVzaEVudmVsb3BlSAASMwoNZnVsbF9zbmFwc2hvdBg2",
-            "IAEoCzIaLmdhbWUuRnVsbFN0YXRlU25hcHNob3RSc3BIABIzChBnZXRfc2Vs",
-            "Zl9wcm9maWxlGDwgASgLMhcuZ2FtZS5HZXRTZWxmUHJvZmlsZVJzcEgAEh0K",
-            "BG1vdmUYPSABKAsyDS5nYW1lLk1vdmVSc3BIABIjCglhb2lfZGVsdGEYPiAB",
-            "KAsyDi5nYW1lLkFvaURlbHRhSAASMwoQcGxheWVyX21haWxfc2VuZBg/IAEo",
-            "CzIXLmdhbWUuUGxheWVyTWFpbFNlbmRSc3BIABI1Cg9tYWlsYm94X2NoYW5n",
-            "ZWQYQCABKAsyGi5nYW1lLk1haWxib3hDaGFuZ2VkTm90aWZ5SAASLAoMc2Vy",
-            "dmVyX2hlbGxvGEYgASgLMhQuZ2FtZS5TZXJ2ZXJIZWxsb1JzcEgAEicKCWhl",
-            "YXJ0YmVhdBhHIAEoCzISLmdhbWUuSGVhcnRiZWF0UnNwSAASIwoHcmVzcGF3",
-            "bhhIIAEoCzIQLmdhbWUuUmVzcGF3blJzcEgAEicKC2NoYXRfbm90aWZ5GEkg",
-            "ASgLMhAuZ2FtZS5DaGF0Tm90aWZ5SAASMwoQZ2V0X3BsYXllcl9icmllZhhK",
-            "IAEoCzIXLmdhbWUuR2V0UGxheWVyQnJpZWZSc3BIABI3ChJxdWVyeV9vbmxp",
-            "bmVfc3RhdGUYSyABKAsyGS5nYW1lLlF1ZXJ5T25saW5lU3RhdGVSc3BIABI3",
-            "ChBzZXNzaW9uX3JlcGxhY2VkGEwgASgLMhsuZ2FtZS5TZXNzaW9uUmVwbGFj",
-            "ZWROb3RpZnlIABIxCg9xdWVyeV9tYXBfbGluZXMYTSABKAsyFi5nYW1lLlF1",
-            "ZXJ5TWFwTGluZXNSc3BIABIwCg5jcmVhdGVfZHVuZ2VvbhhOIAEoCzIWLmdh",
-            "bWUuQ3JlYXRlRHVuZ2VvblJzcEgAEioKC3N3aXRjaF9saW5lGE8gASgLMhMu",
-            "Z2FtZS5Td2l0Y2hMaW5lUnNwSAASKgoLZW5xdWV1ZV9tYXAYUCABKAsyEy5n",
-            "YW1lLkVucXVldWVNYXBSc3BIAEIGCgRib2R5QhSqAhFHYW1lTWVzaC5Qcm90",
-            "b2NvbGIGcHJvdG8z"));
+            "KAkimwEKCVBvcnRhbERlZhIRCglwb3J0YWxfaWQYASABKAkSHAoUZnJvbV9t",
+            "YXBfdGVtcGxhdGVfaWQYAiABKAQSGgoSdG9fbWFwX3RlbXBsYXRlX2lkGAMg",
+            "ASgEEhwKCHBvc2l0aW9uGAQgASgLMgouZ2FtZS5WZWMzEgsKA3lhdxgFIAEo",
+            "AhIWCg50cmlnZ2VyX3JhZGl1cxgGIAEoAiK1AQoQTWFwTWFuaWZlc3RFbnRy",
+            "eRIXCg9tYXBfdGVtcGxhdGVfaWQYASABKAQSFAoMZGF0YV92ZXJzaW9uGAIg",
+            "ASgEEg4KBnNoYTI1NhgDIAEoCRISCgpzY2VuZV9uYW1lGAQgASgJEgwKBGtp",
+            "bmQYBSABKAkSHgoWdmlzdWFsX21hcF90ZW1wbGF0ZV9pZBgGIAEoBBIgCgdw",
+            "b3J0YWxzGAcgAygLMg8uZ2FtZS5Qb3J0YWxEZWYilAEKEUludGVyYWN0UG9y",
+            "dGFsUmVxEhEKCXBsYXllcl9pZBgBIAEoBBIQCghyZWFsbV9pZBgCIAEoDRIR",
+            "Cglwb3J0YWxfaWQYAyABKAkSFAoMb3BlcmF0aW9uX2lkGAQgASgJEhgKEG1h",
+            "cF9kYXRhX3ZlcnNpb24YBSABKAQSFwoPbWFwX2RhdGFfc2hhMjU2GAYgASgJ",
+            "IoIEChFJbnRlcmFjdFBvcnRhbFJzcBIKCgJvaxgBIAEoCBIPCgdtZXNzYWdl",
+            "GAIgASgJEhIKCmVycm9yX2NvZGUYAyABKAkSFwoPbWFwX3RlbXBsYXRlX2lk",
+            "GAQgASgEEhcKD21hcF9pbnN0YW5jZV9pZBgFIAEoBBIdChVnYW1lbG9naWNf",
+            "aW5zdGFuY2VfaWQYBiABKAkSEwoLb3duZXJfZXBvY2gYByABKAQSFQoNcm91",
+            "dGVfdmVyc2lvbhgIIAEoBBIiCg5zcGF3bl9wb3NpdGlvbhgJIAEoCzIKLmdh",
+            "bWUuVmVjMxIRCglzcGF3bl95YXcYCiABKAISGAoQbWFwX2RhdGFfdmVyc2lv",
+            "bhgLIAEoBBIXCg9tYXBfZGF0YV9zaGEyNTYYDCABKAkSIgoEc2VsZhgNIAEo",
+            "CzIULmdhbWUuRW50aXR5U25hcHNob3QSKgoMYW9pX3NuYXBzaG90GA4gAygL",
+            "MhQuZ2FtZS5FbnRpdHlTbmFwc2hvdBIMCgRraW5kGA8gASgJEg8KB2xpbmVf",
+            "bm8YECABKA0SEQoJb2NjdXBhbmN5GBEgASgNEhAKCHNvZnRfY2FwGBIgASgN",
+            "EhAKCGhhcmRfY2FwGBMgASgNEhEKCXBvcnRhbF9pZBgUIAEoCRIcChRmcm9t",
+            "X21hcF90ZW1wbGF0ZV9pZBgVIAEoBCL7AgoOU2VydmVySGVsbG9Sc3ASCgoC",
+            "b2sYASABKAgSEgoKZXJyb3JfY29kZRgCIAEoCRIPCgdtZXNzYWdlGAMgASgJ",
+            "EhgKEHByb3RvY29sX3ZlcnNpb24YBCABKA0SJgoebWluX3N1cHBvcnRlZF9w",
+            "cm90b2NvbF92ZXJzaW9uGAUgASgNEhUKDXNjaGVtYV9zaGEyNTYYBiABKAkS",
+            "FAoMc2VydmVyX2J1aWxkGAcgASgJEhYKDnNlcnZlcl90aW1lX21zGAggASgD",
+            "Eh0KFWhlYXJ0YmVhdF9pbnRlcnZhbF9tcxgJIAEoDRIXCg9pZGxlX3RpbWVv",
+            "dXRfbXMYCiABKA0SFAoMY2FwYWJpbGl0aWVzGAsgAygJEh8KF2dhbWVwbGF5",
+            "X2NvbmZpZ192ZXJzaW9uGAwgASgNEhwKFG1hcF9tYW5pZmVzdF92ZXJzaW9u",
+            "GA0gASgNEiQKBG1hcHMYDiADKAsyFi5nYW1lLk1hcE1hbmlmZXN0RW50cnki",
+            "VQoVU2Vzc2lvblJlcGxhY2VkTm90aWZ5EhMKC3JlYXNvbl9jb2RlGAEgASgJ",
+            "EhYKDnNlcnZlcl90aW1lX21zGAIgASgDEg8KB21lc3NhZ2UYAyABKAkiVQoM",
+            "SGVhcnRiZWF0UmVxEhsKE2NsaWVudF9tb25vdG9uaWNfbXMYASABKAMSFwoP",
+            "bGFzdF9zZXJ2ZXJfc2VxGAIgASgEEg8KB2VjaG9fbXMYAyABKAMihwEKDEhl",
+            "YXJ0YmVhdFJzcBIKCgJvaxgBIAEoCBISCgplcnJvcl9jb2RlGAIgASgJEhYK",
+            "DnNlcnZlcl90aW1lX21zGAMgASgDEg8KB2VjaG9fbXMYBCABKAMSFgoOc2Vy",
+            "dmVyX3JlY3ZfbXMYBSABKAMSFgoOaml0dGVyX2hpbnRfbXMYBiABKA0iuA4K",
+            "C0dhbWVSZXF1ZXN0EgsKA3NlcRgBIAEoBBIVCg1zZXNzaW9uX3Rva2VuGAIg",
+            "ASgJEiwKDGNvbnN1bWVfaXRlbRgKIAEoCzIULmdhbWUuQ29uc3VtZUl0ZW1S",
+            "ZXFIABIuCg1yZWxlYXNlX3NraWxsGAsgASgLMhUuZ2FtZS5SZWxlYXNlU2tp",
+            "bGxSZXFIABIoCgpncmFudF9pdGVtGAwgASgLMhIuZ2FtZS5HcmFudEl0ZW1S",
+            "ZXFIABIfCgVsb2dpbhgUIAEoCzIOLmdhbWUuTG9naW5SZXFIABI0ChB2YWxp",
+            "ZGF0ZV9zZXNzaW9uGBUgASgLMhguZ2FtZS5WYWxpZGF0ZVNlc3Npb25SZXFI",
+            "ABIsCgxjaGVja19vbmxpbmUYFiABKAsyFC5nYW1lLkNoZWNrT25saW5lUmVx",
+            "SAASIQoGbG9nb3V0GBcgASgLMg8uZ2FtZS5Mb2dvdXRSZXFIABInCglyZWNv",
+            "bm5lY3QYGCABKAsyEi5nYW1lLlJlY29ubmVjdFJlcUgAEiUKCHJlZ2lzdGVy",
+            "GBkgASgLMhEuZ2FtZS5SZWdpc3RlclJlcUgAEiYKCWZsdXNoX2JhZxgaIAEo",
+            "CzIRLmdhbWUuRmx1c2hCYWdSZXFIABIyCg9tYWlsYm94X3N1bW1hcnkYHiAB",
+            "KAsyFy5nYW1lLk1haWxib3hTdW1tYXJ5UmVxSAASJgoJbWFpbF9saXN0GB8g",
+            "ASgLMhEuZ2FtZS5NYWlsTGlzdFJlcUgAEiQKCG1haWxfZ2V0GCAgASgLMhAu",
+            "Z2FtZS5NYWlsR2V0UmVxSAASJgoJbWFpbF9yZWFkGCEgASgLMhEuZ2FtZS5N",
+            "YWlsUmVhZFJlcUgAEigKCm1haWxfY2xhaW0YIiABKAsyEi5nYW1lLk1haWxD",
+            "bGFpbVJlcUgAEjMKEG1haWxfYmF0Y2hfY2xhaW0YIyABKAsyFy5nYW1lLk1h",
+            "aWxCYXRjaENsYWltUmVxSAASLgoNbWFpbF9mYXZvcml0ZRgkIAEoCzIVLmdh",
+            "bWUuTWFpbEZhdm9yaXRlUmVxSAASMQoPbWFpbF9iYXRjaF9yZWFkGCUgASgL",
+            "MhYuZ2FtZS5NYWlsQmF0Y2hSZWFkUmVxSAASNQoRbWFpbF9iYXRjaF9kZWxl",
+            "dGUYJiABKAsyGC5nYW1lLk1haWxCYXRjaERlbGV0ZVJlcUgAEiwKDG1haWxf",
+            "ZGVsaXZlchgnIAEoCzIULmdhbWUuTWFpbERlbGl2ZXJSZXFIABImCgllbnRl",
+            "cl9tYXAYKCABKAsyES5nYW1lLkVudGVyTWFwUmVxSAASJgoJbGVhdmVfbWFw",
+            "GCkgASgLMhEuZ2FtZS5MZWF2ZU1hcFJlcUgAEiQKCG1hcF9waW5nGCogASgL",
+            "MhAuZ2FtZS5NYXBQaW5nUmVxSAASJgoJY2hhdF9zZW5kGDIgASgLMhEuZ2Ft",
+            "ZS5DaGF0U2VuZFJlcUgAEioKC2ZyaWVuZF9saXN0GDMgASgLMhMuZ2FtZS5G",
+            "cmllbmRMaXN0UmVxSAASJAoIcHVzaF9hY2sYNCABKAsyEC5nYW1lLlB1c2hB",
+            "Y2tSZXFIABIzChBnZXRfc2VsZl9wcm9maWxlGDwgASgLMhcuZ2FtZS5HZXRT",
+            "ZWxmUHJvZmlsZVJlcUgAEh0KBG1vdmUYPSABKAsyDS5nYW1lLk1vdmVSZXFI",
+            "ABIzChBwbGF5ZXJfbWFpbF9zZW5kGD8gASgLMhcuZ2FtZS5QbGF5ZXJNYWls",
+            "U2VuZFJlcUgAEiwKDGNsaWVudF9oZWxsbxhGIAEoCzIULmdhbWUuQ2xpZW50",
+            "SGVsbG9SZXFIABInCgloZWFydGJlYXQYRyABKAsyEi5nYW1lLkhlYXJ0YmVh",
+            "dFJlcUgAEjAKDndvcmxkX3NuYXBzaG90GEggASgLMhYuZ2FtZS5Xb3JsZFNu",
+            "YXBzaG90UmVxSAASIwoHcmVzcGF3bhhJIAEoCzIQLmdhbWUuUmVzcGF3blJl",
+            "cUgAEjMKEGdldF9wbGF5ZXJfYnJpZWYYSiABKAsyFy5nYW1lLkdldFBsYXll",
+            "ckJyaWVmUmVxSAASNwoScXVlcnlfb25saW5lX3N0YXRlGEsgASgLMhkuZ2Ft",
+            "ZS5RdWVyeU9ubGluZVN0YXRlUmVxSAASMQoPcXVlcnlfbWFwX2xpbmVzGEwg",
+            "ASgLMhYuZ2FtZS5RdWVyeU1hcExpbmVzUmVxSAASMAoOY3JlYXRlX2R1bmdl",
+            "b24YTSABKAsyFi5nYW1lLkNyZWF0ZUR1bmdlb25SZXFIABIqCgtzd2l0Y2hf",
+            "bGluZRhOIAEoCzITLmdhbWUuU3dpdGNoTGluZVJlcUgAEioKC2VucXVldWVf",
+            "bWFwGE8gASgLMhMuZ2FtZS5FbnF1ZXVlTWFwUmVxSAASMgoPaW50ZXJhY3Rf",
+            "cG9ydGFsGFAgASgLMhcuZ2FtZS5JbnRlcmFjdFBvcnRhbFJlcUgAQgYKBGJv",
+            "ZHkighEKDEdhbWVSZXNwb25zZRILCgNzZXEYASABKAQSCgoCb2sYAiABKAgS",
+            "DwoHbWVzc2FnZRgDIAEoCRISCgplcnJvcl9jb2RlGAQgASgJEhEKCXJldHJ5",
+            "YWJsZRgFIAEoCBIWCg5zZXJ2ZXJfdGltZV9tcxgGIAEoAxIQCgh0cmFjZV9p",
+            "ZBgHIAEoCRIsCgxjb25zdW1lX2l0ZW0YCiABKAsyFC5nYW1lLkNvbnN1bWVJ",
+            "dGVtUnNwSAASLgoNcmVsZWFzZV9za2lsbBgLIAEoCzIVLmdhbWUuUmVsZWFz",
+            "ZVNraWxsUnNwSAASKAoKZ3JhbnRfaXRlbRgMIAEoCzISLmdhbWUuR3JhbnRJ",
+            "dGVtUnNwSAASHwoFbG9naW4YFCABKAsyDi5nYW1lLkxvZ2luUnNwSAASNAoQ",
+            "dmFsaWRhdGVfc2Vzc2lvbhgVIAEoCzIYLmdhbWUuVmFsaWRhdGVTZXNzaW9u",
+            "UnNwSAASLAoMY2hlY2tfb25saW5lGBYgASgLMhQuZ2FtZS5DaGVja09ubGlu",
+            "ZVJzcEgAEiEKBmxvZ291dBgXIAEoCzIPLmdhbWUuTG9nb3V0UnNwSAASJwoJ",
+            "cmVjb25uZWN0GBggASgLMhIuZ2FtZS5SZWNvbm5lY3RSc3BIABIlCghyZWdp",
+            "c3RlchgZIAEoCzIRLmdhbWUuUmVnaXN0ZXJSc3BIABImCglmbHVzaF9iYWcY",
+            "GiABKAsyES5nYW1lLkZsdXNoQmFnUnNwSAASMgoPbWFpbGJveF9zdW1tYXJ5",
+            "GB4gASgLMhcuZ2FtZS5NYWlsYm94U3VtbWFyeVJzcEgAEiYKCW1haWxfbGlz",
+            "dBgfIAEoCzIRLmdhbWUuTWFpbExpc3RSc3BIABIkCghtYWlsX2dldBggIAEo",
+            "CzIQLmdhbWUuTWFpbEdldFJzcEgAEiYKCW1haWxfcmVhZBghIAEoCzIRLmdh",
+            "bWUuTWFpbFJlYWRSc3BIABIoCgptYWlsX2NsYWltGCIgASgLMhIuZ2FtZS5N",
+            "YWlsQ2xhaW1Sc3BIABIzChBtYWlsX2JhdGNoX2NsYWltGCMgASgLMhcuZ2Ft",
+            "ZS5NYWlsQmF0Y2hDbGFpbVJzcEgAEi4KDW1haWxfZmF2b3JpdGUYJCABKAsy",
+            "FS5nYW1lLk1haWxGYXZvcml0ZVJzcEgAEjEKD21haWxfYmF0Y2hfcmVhZBgl",
+            "IAEoCzIWLmdhbWUuTWFpbEJhdGNoUmVhZFJzcEgAEjUKEW1haWxfYmF0Y2hf",
+            "ZGVsZXRlGCYgASgLMhguZ2FtZS5NYWlsQmF0Y2hEZWxldGVSc3BIABIsCgxt",
+            "YWlsX2RlbGl2ZXIYJyABKAsyFC5nYW1lLk1haWxEZWxpdmVyUnNwSAASJgoJ",
+            "ZW50ZXJfbWFwGCggASgLMhEuZ2FtZS5FbnRlck1hcFJzcEgAEiYKCWxlYXZl",
+            "X21hcBgpIAEoCzIRLmdhbWUuTGVhdmVNYXBSc3BIABIkCghtYXBfcGluZxgq",
+            "IAEoCzIQLmdhbWUuTWFwUGluZ1JzcEgAEiYKCWNoYXRfc2VuZBgyIAEoCzIR",
+            "LmdhbWUuQ2hhdFNlbmRSc3BIABIqCgtmcmllbmRfbGlzdBgzIAEoCzITLmdh",
+            "bWUuRnJpZW5kTGlzdFJzcEgAEiQKCHB1c2hfYWNrGDQgASgLMhAuZ2FtZS5Q",
+            "dXNoQWNrUnNwSAASLwoLc2VydmVyX3B1c2gYNSABKAsyGC5nYW1lLlNlcnZl",
+            "clB1c2hFbnZlbG9wZUgAEjMKDWZ1bGxfc25hcHNob3QYNiABKAsyGi5nYW1l",
+            "LkZ1bGxTdGF0ZVNuYXBzaG90UnNwSAASMwoQZ2V0X3NlbGZfcHJvZmlsZRg8",
+            "IAEoCzIXLmdhbWUuR2V0U2VsZlByb2ZpbGVSc3BIABIdCgRtb3ZlGD0gASgL",
+            "Mg0uZ2FtZS5Nb3ZlUnNwSAASIwoJYW9pX2RlbHRhGD4gASgLMg4uZ2FtZS5B",
+            "b2lEZWx0YUgAEjMKEHBsYXllcl9tYWlsX3NlbmQYPyABKAsyFy5nYW1lLlBs",
+            "YXllck1haWxTZW5kUnNwSAASNQoPbWFpbGJveF9jaGFuZ2VkGEAgASgLMhou",
+            "Z2FtZS5NYWlsYm94Q2hhbmdlZE5vdGlmeUgAEiwKDHNlcnZlcl9oZWxsbxhG",
+            "IAEoCzIULmdhbWUuU2VydmVySGVsbG9Sc3BIABInCgloZWFydGJlYXQYRyAB",
+            "KAsyEi5nYW1lLkhlYXJ0YmVhdFJzcEgAEiMKB3Jlc3Bhd24YSCABKAsyEC5n",
+            "YW1lLlJlc3Bhd25Sc3BIABInCgtjaGF0X25vdGlmeRhJIAEoCzIQLmdhbWUu",
+            "Q2hhdE5vdGlmeUgAEjMKEGdldF9wbGF5ZXJfYnJpZWYYSiABKAsyFy5nYW1l",
+            "LkdldFBsYXllckJyaWVmUnNwSAASNwoScXVlcnlfb25saW5lX3N0YXRlGEsg",
+            "ASgLMhkuZ2FtZS5RdWVyeU9ubGluZVN0YXRlUnNwSAASNwoQc2Vzc2lvbl9y",
+            "ZXBsYWNlZBhMIAEoCzIbLmdhbWUuU2Vzc2lvblJlcGxhY2VkTm90aWZ5SAAS",
+            "MQoPcXVlcnlfbWFwX2xpbmVzGE0gASgLMhYuZ2FtZS5RdWVyeU1hcExpbmVz",
+            "UnNwSAASMAoOY3JlYXRlX2R1bmdlb24YTiABKAsyFi5nYW1lLkNyZWF0ZUR1",
+            "bmdlb25Sc3BIABIqCgtzd2l0Y2hfbGluZRhPIAEoCzITLmdhbWUuU3dpdGNo",
+            "TGluZVJzcEgAEioKC2VucXVldWVfbWFwGFAgASgLMhMuZ2FtZS5FbnF1ZXVl",
+            "TWFwUnNwSAASMgoPaW50ZXJhY3RfcG9ydGFsGFEgASgLMhcuZ2FtZS5JbnRl",
+            "cmFjdFBvcnRhbFJzcEgAQgYKBGJvZHlCFKoCEUdhbWVNZXNoLlByb3RvY29s",
+            "YgZwcm90bzM="));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
@@ -484,13 +507,16 @@ namespace GameMesh.Protocol {
             new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.PlayerMailSendRsp), global::GameMesh.Protocol.PlayerMailSendRsp.Parser, new[]{ "Ok", "Message", "ErrorCode", "MailId", "IdempotentHit" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.MailboxChangedNotify), global::GameMesh.Protocol.MailboxChangedNotify.Parser, new[]{ "PlayerId", "MailboxVersion", "UnreadCount" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.ClientHelloReq), global::GameMesh.Protocol.ClientHelloReq.Parser, new[]{ "ProtocolVersion", "SchemaSha256", "ClientVersion", "Platform", "BuildChannel", "Capabilities" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.MapManifestEntry), global::GameMesh.Protocol.MapManifestEntry.Parser, new[]{ "MapTemplateId", "DataVersion", "Sha256" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.PortalDef), global::GameMesh.Protocol.PortalDef.Parser, new[]{ "PortalId", "FromMapTemplateId", "ToMapTemplateId", "Position", "Yaw", "TriggerRadius" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.MapManifestEntry), global::GameMesh.Protocol.MapManifestEntry.Parser, new[]{ "MapTemplateId", "DataVersion", "Sha256", "SceneName", "Kind", "VisualMapTemplateId", "Portals" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.InteractPortalReq), global::GameMesh.Protocol.InteractPortalReq.Parser, new[]{ "PlayerId", "RealmId", "PortalId", "OperationId", "MapDataVersion", "MapDataSha256" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.InteractPortalRsp), global::GameMesh.Protocol.InteractPortalRsp.Parser, new[]{ "Ok", "Message", "ErrorCode", "MapTemplateId", "MapInstanceId", "GamelogicInstanceId", "OwnerEpoch", "RouteVersion", "SpawnPosition", "SpawnYaw", "MapDataVersion", "MapDataSha256", "Self", "AoiSnapshot", "Kind", "LineNo", "Occupancy", "SoftCap", "HardCap", "PortalId", "FromMapTemplateId" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.ServerHelloRsp), global::GameMesh.Protocol.ServerHelloRsp.Parser, new[]{ "Ok", "ErrorCode", "Message", "ProtocolVersion", "MinSupportedProtocolVersion", "SchemaSha256", "ServerBuild", "ServerTimeMs", "HeartbeatIntervalMs", "IdleTimeoutMs", "Capabilities", "GameplayConfigVersion", "MapManifestVersion", "Maps" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.SessionReplacedNotify), global::GameMesh.Protocol.SessionReplacedNotify.Parser, new[]{ "ReasonCode", "ServerTimeMs", "Message" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.HeartbeatReq), global::GameMesh.Protocol.HeartbeatReq.Parser, new[]{ "ClientMonotonicMs", "LastServerSeq", "EchoMs" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.HeartbeatRsp), global::GameMesh.Protocol.HeartbeatRsp.Parser, new[]{ "Ok", "ErrorCode", "ServerTimeMs", "EchoMs", "ServerRecvMs", "JitterHintMs" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.GameRequest), global::GameMesh.Protocol.GameRequest.Parser, new[]{ "Seq", "SessionToken", "ConsumeItem", "ReleaseSkill", "GrantItem", "Login", "ValidateSession", "CheckOnline", "Logout", "Reconnect", "Register", "FlushBag", "MailboxSummary", "MailList", "MailGet", "MailRead", "MailClaim", "MailBatchClaim", "MailFavorite", "MailBatchRead", "MailBatchDelete", "MailDeliver", "EnterMap", "LeaveMap", "MapPing", "ChatSend", "FriendList", "PushAck", "GetSelfProfile", "Move", "PlayerMailSend", "ClientHello", "Heartbeat", "WorldSnapshot", "Respawn", "GetPlayerBrief", "QueryOnlineState", "QueryMapLines", "CreateDungeon", "SwitchLine", "EnqueueMap" }, new[]{ "Body" }, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.GameResponse), global::GameMesh.Protocol.GameResponse.Parser, new[]{ "Seq", "Ok", "Message", "ErrorCode", "Retryable", "ServerTimeMs", "TraceId", "ConsumeItem", "ReleaseSkill", "GrantItem", "Login", "ValidateSession", "CheckOnline", "Logout", "Reconnect", "Register", "FlushBag", "MailboxSummary", "MailList", "MailGet", "MailRead", "MailClaim", "MailBatchClaim", "MailFavorite", "MailBatchRead", "MailBatchDelete", "MailDeliver", "EnterMap", "LeaveMap", "MapPing", "ChatSend", "FriendList", "PushAck", "ServerPush", "FullSnapshot", "GetSelfProfile", "Move", "AoiDelta", "PlayerMailSend", "MailboxChanged", "ServerHello", "Heartbeat", "Respawn", "ChatNotify", "GetPlayerBrief", "QueryOnlineState", "SessionReplaced", "QueryMapLines", "CreateDungeon", "SwitchLine", "EnqueueMap" }, new[]{ "Body" }, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.GameRequest), global::GameMesh.Protocol.GameRequest.Parser, new[]{ "Seq", "SessionToken", "ConsumeItem", "ReleaseSkill", "GrantItem", "Login", "ValidateSession", "CheckOnline", "Logout", "Reconnect", "Register", "FlushBag", "MailboxSummary", "MailList", "MailGet", "MailRead", "MailClaim", "MailBatchClaim", "MailFavorite", "MailBatchRead", "MailBatchDelete", "MailDeliver", "EnterMap", "LeaveMap", "MapPing", "ChatSend", "FriendList", "PushAck", "GetSelfProfile", "Move", "PlayerMailSend", "ClientHello", "Heartbeat", "WorldSnapshot", "Respawn", "GetPlayerBrief", "QueryOnlineState", "QueryMapLines", "CreateDungeon", "SwitchLine", "EnqueueMap", "InteractPortal" }, new[]{ "Body" }, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::GameMesh.Protocol.GameResponse), global::GameMesh.Protocol.GameResponse.Parser, new[]{ "Seq", "Ok", "Message", "ErrorCode", "Retryable", "ServerTimeMs", "TraceId", "ConsumeItem", "ReleaseSkill", "GrantItem", "Login", "ValidateSession", "CheckOnline", "Logout", "Reconnect", "Register", "FlushBag", "MailboxSummary", "MailList", "MailGet", "MailRead", "MailClaim", "MailBatchClaim", "MailFavorite", "MailBatchRead", "MailBatchDelete", "MailDeliver", "EnterMap", "LeaveMap", "MapPing", "ChatSend", "FriendList", "PushAck", "ServerPush", "FullSnapshot", "GetSelfProfile", "Move", "AoiDelta", "PlayerMailSend", "MailboxChanged", "ServerHello", "Heartbeat", "Respawn", "ChatNotify", "GetPlayerBrief", "QueryOnlineState", "SessionReplaced", "QueryMapLines", "CreateDungeon", "SwitchLine", "EnqueueMap", "InteractPortal" }, new[]{ "Body" }, null, null, null)
           }));
     }
     #endregion
@@ -32557,6 +32583,399 @@ namespace GameMesh.Protocol {
 
   }
 
+  /// <summary>
+  /// 主城/副本传送门。Hello 下发坐标；靠近后发 InteractPortal，不要直打 CreateDungeon(2102)。
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class PortalDef : pb::IMessage<PortalDef>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<PortalDef> _parser = new pb::MessageParser<PortalDef>(() => new PortalDef());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<PortalDef> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[90]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PortalDef() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PortalDef(PortalDef other) : this() {
+      portalId_ = other.portalId_;
+      fromMapTemplateId_ = other.fromMapTemplateId_;
+      toMapTemplateId_ = other.toMapTemplateId_;
+      position_ = other.position_ != null ? other.position_.Clone() : null;
+      yaw_ = other.yaw_;
+      triggerRadius_ = other.triggerRadius_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public PortalDef Clone() {
+      return new PortalDef(this);
+    }
+
+    /// <summary>Field number for the "portal_id" field.</summary>
+    public const int PortalIdFieldNumber = 1;
+    private string portalId_ = "";
+    /// <summary>
+    /// spawn_to_dungeon | dungeon_to_spawn
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string PortalId {
+      get { return portalId_; }
+      set {
+        portalId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "from_map_template_id" field.</summary>
+    public const int FromMapTemplateIdFieldNumber = 2;
+    private ulong fromMapTemplateId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong FromMapTemplateId {
+      get { return fromMapTemplateId_; }
+      set {
+        fromMapTemplateId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "to_map_template_id" field.</summary>
+    public const int ToMapTemplateIdFieldNumber = 3;
+    private ulong toMapTemplateId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong ToMapTemplateId {
+      get { return toMapTemplateId_; }
+      set {
+        toMapTemplateId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "position" field.</summary>
+    public const int PositionFieldNumber = 4;
+    private global::GameMesh.Protocol.Vec3 position_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::GameMesh.Protocol.Vec3 Position {
+      get { return position_; }
+      set {
+        position_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "yaw" field.</summary>
+    public const int YawFieldNumber = 5;
+    private float yaw_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float Yaw {
+      get { return yaw_; }
+      set {
+        yaw_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "trigger_radius" field.</summary>
+    public const int TriggerRadiusFieldNumber = 6;
+    private float triggerRadius_;
+    /// <summary>
+    /// 水平面 X/Z 米
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float TriggerRadius {
+      get { return triggerRadius_; }
+      set {
+        triggerRadius_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as PortalDef);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(PortalDef other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (PortalId != other.PortalId) return false;
+      if (FromMapTemplateId != other.FromMapTemplateId) return false;
+      if (ToMapTemplateId != other.ToMapTemplateId) return false;
+      if (!object.Equals(Position, other.Position)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(Yaw, other.Yaw)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(TriggerRadius, other.TriggerRadius)) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (PortalId.Length != 0) hash ^= PortalId.GetHashCode();
+      if (FromMapTemplateId != 0UL) hash ^= FromMapTemplateId.GetHashCode();
+      if (ToMapTemplateId != 0UL) hash ^= ToMapTemplateId.GetHashCode();
+      if (position_ != null) hash ^= Position.GetHashCode();
+      if (Yaw != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(Yaw);
+      if (TriggerRadius != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(TriggerRadius);
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (PortalId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(PortalId);
+      }
+      if (FromMapTemplateId != 0UL) {
+        output.WriteRawTag(16);
+        output.WriteUInt64(FromMapTemplateId);
+      }
+      if (ToMapTemplateId != 0UL) {
+        output.WriteRawTag(24);
+        output.WriteUInt64(ToMapTemplateId);
+      }
+      if (position_ != null) {
+        output.WriteRawTag(34);
+        output.WriteMessage(Position);
+      }
+      if (Yaw != 0F) {
+        output.WriteRawTag(45);
+        output.WriteFloat(Yaw);
+      }
+      if (TriggerRadius != 0F) {
+        output.WriteRawTag(53);
+        output.WriteFloat(TriggerRadius);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (PortalId.Length != 0) {
+        output.WriteRawTag(10);
+        output.WriteString(PortalId);
+      }
+      if (FromMapTemplateId != 0UL) {
+        output.WriteRawTag(16);
+        output.WriteUInt64(FromMapTemplateId);
+      }
+      if (ToMapTemplateId != 0UL) {
+        output.WriteRawTag(24);
+        output.WriteUInt64(ToMapTemplateId);
+      }
+      if (position_ != null) {
+        output.WriteRawTag(34);
+        output.WriteMessage(Position);
+      }
+      if (Yaw != 0F) {
+        output.WriteRawTag(45);
+        output.WriteFloat(Yaw);
+      }
+      if (TriggerRadius != 0F) {
+        output.WriteRawTag(53);
+        output.WriteFloat(TriggerRadius);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (PortalId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(PortalId);
+      }
+      if (FromMapTemplateId != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(FromMapTemplateId);
+      }
+      if (ToMapTemplateId != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(ToMapTemplateId);
+      }
+      if (position_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Position);
+      }
+      if (Yaw != 0F) {
+        size += 1 + 4;
+      }
+      if (TriggerRadius != 0F) {
+        size += 1 + 4;
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(PortalDef other) {
+      if (other == null) {
+        return;
+      }
+      if (other.PortalId.Length != 0) {
+        PortalId = other.PortalId;
+      }
+      if (other.FromMapTemplateId != 0UL) {
+        FromMapTemplateId = other.FromMapTemplateId;
+      }
+      if (other.ToMapTemplateId != 0UL) {
+        ToMapTemplateId = other.ToMapTemplateId;
+      }
+      if (other.position_ != null) {
+        if (position_ == null) {
+          Position = new global::GameMesh.Protocol.Vec3();
+        }
+        Position.MergeFrom(other.Position);
+      }
+      if (other.Yaw != 0F) {
+        Yaw = other.Yaw;
+      }
+      if (other.TriggerRadius != 0F) {
+        TriggerRadius = other.TriggerRadius;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 10: {
+            PortalId = input.ReadString();
+            break;
+          }
+          case 16: {
+            FromMapTemplateId = input.ReadUInt64();
+            break;
+          }
+          case 24: {
+            ToMapTemplateId = input.ReadUInt64();
+            break;
+          }
+          case 34: {
+            if (position_ == null) {
+              Position = new global::GameMesh.Protocol.Vec3();
+            }
+            input.ReadMessage(Position);
+            break;
+          }
+          case 45: {
+            Yaw = input.ReadFloat();
+            break;
+          }
+          case 53: {
+            TriggerRadius = input.ReadFloat();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 10: {
+            PortalId = input.ReadString();
+            break;
+          }
+          case 16: {
+            FromMapTemplateId = input.ReadUInt64();
+            break;
+          }
+          case 24: {
+            ToMapTemplateId = input.ReadUInt64();
+            break;
+          }
+          case 34: {
+            if (position_ == null) {
+              Position = new global::GameMesh.Protocol.Vec3();
+            }
+            input.ReadMessage(Position);
+            break;
+          }
+          case 45: {
+            Yaw = input.ReadFloat();
+            break;
+          }
+          case 53: {
+            TriggerRadius = input.ReadFloat();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
   [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
   public sealed partial class MapManifestEntry : pb::IMessage<MapManifestEntry>
   #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
@@ -32572,7 +32991,7 @@ namespace GameMesh.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[90]; }
+      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[91]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -32595,6 +33014,10 @@ namespace GameMesh.Protocol {
       mapTemplateId_ = other.mapTemplateId_;
       dataVersion_ = other.dataVersion_;
       sha256_ = other.sha256_;
+      sceneName_ = other.sceneName_;
+      kind_ = other.kind_;
+      visualMapTemplateId_ = other.visualMapTemplateId_;
+      portals_ = other.portals_.Clone();
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -32640,6 +33063,62 @@ namespace GameMesh.Protocol {
       }
     }
 
+    /// <summary>Field number for the "scene_name" field.</summary>
+    public const int SceneNameFieldNumber = 4;
+    private string sceneName_ = "";
+    /// <summary>
+    /// Unity 场景；2102 与 1001 同为 MainScene
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string SceneName {
+      get { return sceneName_; }
+      set {
+        sceneName_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "kind" field.</summary>
+    public const int KindFieldNumber = 5;
+    private string kind_ = "";
+    /// <summary>
+    /// LEGACY_POOL | LINE | DUNGEON
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Kind {
+      get { return kind_; }
+      set {
+        kind_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "visual_map_template_id" field.</summary>
+    public const int VisualMapTemplateIdFieldNumber = 6;
+    private ulong visualMapTemplateId_;
+    /// <summary>
+    /// 非 0：客户端加载该模板的场景/网格资源
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong VisualMapTemplateId {
+      get { return visualMapTemplateId_; }
+      set {
+        visualMapTemplateId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "portals" field.</summary>
+    public const int PortalsFieldNumber = 7;
+    private static readonly pb::FieldCodec<global::GameMesh.Protocol.PortalDef> _repeated_portals_codec
+        = pb::FieldCodec.ForMessage(58, global::GameMesh.Protocol.PortalDef.Parser);
+    private readonly pbc::RepeatedField<global::GameMesh.Protocol.PortalDef> portals_ = new pbc::RepeatedField<global::GameMesh.Protocol.PortalDef>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::GameMesh.Protocol.PortalDef> Portals {
+      get { return portals_; }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -32658,6 +33137,10 @@ namespace GameMesh.Protocol {
       if (MapTemplateId != other.MapTemplateId) return false;
       if (DataVersion != other.DataVersion) return false;
       if (Sha256 != other.Sha256) return false;
+      if (SceneName != other.SceneName) return false;
+      if (Kind != other.Kind) return false;
+      if (VisualMapTemplateId != other.VisualMapTemplateId) return false;
+      if(!portals_.Equals(other.portals_)) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -32668,6 +33151,10 @@ namespace GameMesh.Protocol {
       if (MapTemplateId != 0UL) hash ^= MapTemplateId.GetHashCode();
       if (DataVersion != 0UL) hash ^= DataVersion.GetHashCode();
       if (Sha256.Length != 0) hash ^= Sha256.GetHashCode();
+      if (SceneName.Length != 0) hash ^= SceneName.GetHashCode();
+      if (Kind.Length != 0) hash ^= Kind.GetHashCode();
+      if (VisualMapTemplateId != 0UL) hash ^= VisualMapTemplateId.GetHashCode();
+      hash ^= portals_.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -32698,6 +33185,19 @@ namespace GameMesh.Protocol {
         output.WriteRawTag(26);
         output.WriteString(Sha256);
       }
+      if (SceneName.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(SceneName);
+      }
+      if (Kind.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteString(Kind);
+      }
+      if (VisualMapTemplateId != 0UL) {
+        output.WriteRawTag(48);
+        output.WriteUInt64(VisualMapTemplateId);
+      }
+      portals_.WriteTo(output, _repeated_portals_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -32720,6 +33220,19 @@ namespace GameMesh.Protocol {
         output.WriteRawTag(26);
         output.WriteString(Sha256);
       }
+      if (SceneName.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(SceneName);
+      }
+      if (Kind.Length != 0) {
+        output.WriteRawTag(42);
+        output.WriteString(Kind);
+      }
+      if (VisualMapTemplateId != 0UL) {
+        output.WriteRawTag(48);
+        output.WriteUInt64(VisualMapTemplateId);
+      }
+      portals_.WriteTo(ref output, _repeated_portals_codec);
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -32739,6 +33252,16 @@ namespace GameMesh.Protocol {
       if (Sha256.Length != 0) {
         size += 1 + pb::CodedOutputStream.ComputeStringSize(Sha256);
       }
+      if (SceneName.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(SceneName);
+      }
+      if (Kind.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Kind);
+      }
+      if (VisualMapTemplateId != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(VisualMapTemplateId);
+      }
+      size += portals_.CalculateSize(_repeated_portals_codec);
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
       }
@@ -32760,6 +33283,16 @@ namespace GameMesh.Protocol {
       if (other.Sha256.Length != 0) {
         Sha256 = other.Sha256;
       }
+      if (other.SceneName.Length != 0) {
+        SceneName = other.SceneName;
+      }
+      if (other.Kind.Length != 0) {
+        Kind = other.Kind;
+      }
+      if (other.VisualMapTemplateId != 0UL) {
+        VisualMapTemplateId = other.VisualMapTemplateId;
+      }
+      portals_.Add(other.portals_);
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
 
@@ -32785,6 +33318,22 @@ namespace GameMesh.Protocol {
           }
           case 26: {
             Sha256 = input.ReadString();
+            break;
+          }
+          case 34: {
+            SceneName = input.ReadString();
+            break;
+          }
+          case 42: {
+            Kind = input.ReadString();
+            break;
+          }
+          case 48: {
+            VisualMapTemplateId = input.ReadUInt64();
+            break;
+          }
+          case 58: {
+            portals_.AddEntriesFrom(input, _repeated_portals_codec);
             break;
           }
         }
@@ -32814,6 +33363,1340 @@ namespace GameMesh.Protocol {
             Sha256 = input.ReadString();
             break;
           }
+          case 34: {
+            SceneName = input.ReadString();
+            break;
+          }
+          case 42: {
+            Kind = input.ReadString();
+            break;
+          }
+          case 48: {
+            VisualMapTemplateId = input.ReadUInt64();
+            break;
+          }
+          case 58: {
+            portals_.AddEntriesFrom(ref input, _repeated_portals_codec);
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class InteractPortalReq : pb::IMessage<InteractPortalReq>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<InteractPortalReq> _parser = new pb::MessageParser<InteractPortalReq>(() => new InteractPortalReq());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<InteractPortalReq> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[92]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public InteractPortalReq() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public InteractPortalReq(InteractPortalReq other) : this() {
+      playerId_ = other.playerId_;
+      realmId_ = other.realmId_;
+      portalId_ = other.portalId_;
+      operationId_ = other.operationId_;
+      mapDataVersion_ = other.mapDataVersion_;
+      mapDataSha256_ = other.mapDataSha256_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public InteractPortalReq Clone() {
+      return new InteractPortalReq(this);
+    }
+
+    /// <summary>Field number for the "player_id" field.</summary>
+    public const int PlayerIdFieldNumber = 1;
+    private ulong playerId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong PlayerId {
+      get { return playerId_; }
+      set {
+        playerId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "realm_id" field.</summary>
+    public const int RealmIdFieldNumber = 2;
+    private uint realmId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint RealmId {
+      get { return realmId_; }
+      set {
+        realmId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "portal_id" field.</summary>
+    public const int PortalIdFieldNumber = 3;
+    private string portalId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string PortalId {
+      get { return portalId_; }
+      set {
+        portalId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "operation_id" field.</summary>
+    public const int OperationIdFieldNumber = 4;
+    private string operationId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string OperationId {
+      get { return operationId_; }
+      set {
+        operationId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "map_data_version" field.</summary>
+    public const int MapDataVersionFieldNumber = 5;
+    private ulong mapDataVersion_;
+    /// <summary>
+    /// 目标模板；0=用服务器目录
+    /// </summary>
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong MapDataVersion {
+      get { return mapDataVersion_; }
+      set {
+        mapDataVersion_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "map_data_sha256" field.</summary>
+    public const int MapDataSha256FieldNumber = 6;
+    private string mapDataSha256_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string MapDataSha256 {
+      get { return mapDataSha256_; }
+      set {
+        mapDataSha256_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as InteractPortalReq);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(InteractPortalReq other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (PlayerId != other.PlayerId) return false;
+      if (RealmId != other.RealmId) return false;
+      if (PortalId != other.PortalId) return false;
+      if (OperationId != other.OperationId) return false;
+      if (MapDataVersion != other.MapDataVersion) return false;
+      if (MapDataSha256 != other.MapDataSha256) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (PlayerId != 0UL) hash ^= PlayerId.GetHashCode();
+      if (RealmId != 0) hash ^= RealmId.GetHashCode();
+      if (PortalId.Length != 0) hash ^= PortalId.GetHashCode();
+      if (OperationId.Length != 0) hash ^= OperationId.GetHashCode();
+      if (MapDataVersion != 0UL) hash ^= MapDataVersion.GetHashCode();
+      if (MapDataSha256.Length != 0) hash ^= MapDataSha256.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (PlayerId != 0UL) {
+        output.WriteRawTag(8);
+        output.WriteUInt64(PlayerId);
+      }
+      if (RealmId != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(RealmId);
+      }
+      if (PortalId.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(PortalId);
+      }
+      if (OperationId.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(OperationId);
+      }
+      if (MapDataVersion != 0UL) {
+        output.WriteRawTag(40);
+        output.WriteUInt64(MapDataVersion);
+      }
+      if (MapDataSha256.Length != 0) {
+        output.WriteRawTag(50);
+        output.WriteString(MapDataSha256);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (PlayerId != 0UL) {
+        output.WriteRawTag(8);
+        output.WriteUInt64(PlayerId);
+      }
+      if (RealmId != 0) {
+        output.WriteRawTag(16);
+        output.WriteUInt32(RealmId);
+      }
+      if (PortalId.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(PortalId);
+      }
+      if (OperationId.Length != 0) {
+        output.WriteRawTag(34);
+        output.WriteString(OperationId);
+      }
+      if (MapDataVersion != 0UL) {
+        output.WriteRawTag(40);
+        output.WriteUInt64(MapDataVersion);
+      }
+      if (MapDataSha256.Length != 0) {
+        output.WriteRawTag(50);
+        output.WriteString(MapDataSha256);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (PlayerId != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(PlayerId);
+      }
+      if (RealmId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(RealmId);
+      }
+      if (PortalId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(PortalId);
+      }
+      if (OperationId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(OperationId);
+      }
+      if (MapDataVersion != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(MapDataVersion);
+      }
+      if (MapDataSha256.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(MapDataSha256);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(InteractPortalReq other) {
+      if (other == null) {
+        return;
+      }
+      if (other.PlayerId != 0UL) {
+        PlayerId = other.PlayerId;
+      }
+      if (other.RealmId != 0) {
+        RealmId = other.RealmId;
+      }
+      if (other.PortalId.Length != 0) {
+        PortalId = other.PortalId;
+      }
+      if (other.OperationId.Length != 0) {
+        OperationId = other.OperationId;
+      }
+      if (other.MapDataVersion != 0UL) {
+        MapDataVersion = other.MapDataVersion;
+      }
+      if (other.MapDataSha256.Length != 0) {
+        MapDataSha256 = other.MapDataSha256;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            PlayerId = input.ReadUInt64();
+            break;
+          }
+          case 16: {
+            RealmId = input.ReadUInt32();
+            break;
+          }
+          case 26: {
+            PortalId = input.ReadString();
+            break;
+          }
+          case 34: {
+            OperationId = input.ReadString();
+            break;
+          }
+          case 40: {
+            MapDataVersion = input.ReadUInt64();
+            break;
+          }
+          case 50: {
+            MapDataSha256 = input.ReadString();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            PlayerId = input.ReadUInt64();
+            break;
+          }
+          case 16: {
+            RealmId = input.ReadUInt32();
+            break;
+          }
+          case 26: {
+            PortalId = input.ReadString();
+            break;
+          }
+          case 34: {
+            OperationId = input.ReadString();
+            break;
+          }
+          case 40: {
+            MapDataVersion = input.ReadUInt64();
+            break;
+          }
+          case 50: {
+            MapDataSha256 = input.ReadString();
+            break;
+          }
+        }
+      }
+    }
+    #endif
+
+  }
+
+  /// <summary>
+  /// 成功后按 EnterMapRsp 应用场景切换；portal_id / from_map_template_id 供 UI。
+  /// </summary>
+  [global::System.Diagnostics.DebuggerDisplayAttribute("{ToString(),nq}")]
+  public sealed partial class InteractPortalRsp : pb::IMessage<InteractPortalRsp>
+  #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      , pb::IBufferMessage
+  #endif
+  {
+    private static readonly pb::MessageParser<InteractPortalRsp> _parser = new pb::MessageParser<InteractPortalRsp>(() => new InteractPortalRsp());
+    private pb::UnknownFieldSet _unknownFields;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pb::MessageParser<InteractPortalRsp> Parser { get { return _parser; } }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public static pbr::MessageDescriptor Descriptor {
+      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[93]; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    pbr::MessageDescriptor pb::IMessage.Descriptor {
+      get { return Descriptor; }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public InteractPortalRsp() {
+      OnConstruction();
+    }
+
+    partial void OnConstruction();
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public InteractPortalRsp(InteractPortalRsp other) : this() {
+      ok_ = other.ok_;
+      message_ = other.message_;
+      errorCode_ = other.errorCode_;
+      mapTemplateId_ = other.mapTemplateId_;
+      mapInstanceId_ = other.mapInstanceId_;
+      gamelogicInstanceId_ = other.gamelogicInstanceId_;
+      ownerEpoch_ = other.ownerEpoch_;
+      routeVersion_ = other.routeVersion_;
+      spawnPosition_ = other.spawnPosition_ != null ? other.spawnPosition_.Clone() : null;
+      spawnYaw_ = other.spawnYaw_;
+      mapDataVersion_ = other.mapDataVersion_;
+      mapDataSha256_ = other.mapDataSha256_;
+      self_ = other.self_ != null ? other.self_.Clone() : null;
+      aoiSnapshot_ = other.aoiSnapshot_.Clone();
+      kind_ = other.kind_;
+      lineNo_ = other.lineNo_;
+      occupancy_ = other.occupancy_;
+      softCap_ = other.softCap_;
+      hardCap_ = other.hardCap_;
+      portalId_ = other.portalId_;
+      fromMapTemplateId_ = other.fromMapTemplateId_;
+      _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public InteractPortalRsp Clone() {
+      return new InteractPortalRsp(this);
+    }
+
+    /// <summary>Field number for the "ok" field.</summary>
+    public const int OkFieldNumber = 1;
+    private bool ok_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Ok {
+      get { return ok_; }
+      set {
+        ok_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "message" field.</summary>
+    public const int MessageFieldNumber = 2;
+    private string message_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Message {
+      get { return message_; }
+      set {
+        message_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "error_code" field.</summary>
+    public const int ErrorCodeFieldNumber = 3;
+    private string errorCode_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string ErrorCode {
+      get { return errorCode_; }
+      set {
+        errorCode_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "map_template_id" field.</summary>
+    public const int MapTemplateIdFieldNumber = 4;
+    private ulong mapTemplateId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong MapTemplateId {
+      get { return mapTemplateId_; }
+      set {
+        mapTemplateId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "map_instance_id" field.</summary>
+    public const int MapInstanceIdFieldNumber = 5;
+    private ulong mapInstanceId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong MapInstanceId {
+      get { return mapInstanceId_; }
+      set {
+        mapInstanceId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "gamelogic_instance_id" field.</summary>
+    public const int GamelogicInstanceIdFieldNumber = 6;
+    private string gamelogicInstanceId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string GamelogicInstanceId {
+      get { return gamelogicInstanceId_; }
+      set {
+        gamelogicInstanceId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "owner_epoch" field.</summary>
+    public const int OwnerEpochFieldNumber = 7;
+    private ulong ownerEpoch_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong OwnerEpoch {
+      get { return ownerEpoch_; }
+      set {
+        ownerEpoch_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "route_version" field.</summary>
+    public const int RouteVersionFieldNumber = 8;
+    private ulong routeVersion_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong RouteVersion {
+      get { return routeVersion_; }
+      set {
+        routeVersion_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "spawn_position" field.</summary>
+    public const int SpawnPositionFieldNumber = 9;
+    private global::GameMesh.Protocol.Vec3 spawnPosition_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::GameMesh.Protocol.Vec3 SpawnPosition {
+      get { return spawnPosition_; }
+      set {
+        spawnPosition_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "spawn_yaw" field.</summary>
+    public const int SpawnYawFieldNumber = 10;
+    private float spawnYaw_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public float SpawnYaw {
+      get { return spawnYaw_; }
+      set {
+        spawnYaw_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "map_data_version" field.</summary>
+    public const int MapDataVersionFieldNumber = 11;
+    private ulong mapDataVersion_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong MapDataVersion {
+      get { return mapDataVersion_; }
+      set {
+        mapDataVersion_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "map_data_sha256" field.</summary>
+    public const int MapDataSha256FieldNumber = 12;
+    private string mapDataSha256_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string MapDataSha256 {
+      get { return mapDataSha256_; }
+      set {
+        mapDataSha256_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "self" field.</summary>
+    public const int SelfFieldNumber = 13;
+    private global::GameMesh.Protocol.EntitySnapshot self_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::GameMesh.Protocol.EntitySnapshot Self {
+      get { return self_; }
+      set {
+        self_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "aoi_snapshot" field.</summary>
+    public const int AoiSnapshotFieldNumber = 14;
+    private static readonly pb::FieldCodec<global::GameMesh.Protocol.EntitySnapshot> _repeated_aoiSnapshot_codec
+        = pb::FieldCodec.ForMessage(114, global::GameMesh.Protocol.EntitySnapshot.Parser);
+    private readonly pbc::RepeatedField<global::GameMesh.Protocol.EntitySnapshot> aoiSnapshot_ = new pbc::RepeatedField<global::GameMesh.Protocol.EntitySnapshot>();
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public pbc::RepeatedField<global::GameMesh.Protocol.EntitySnapshot> AoiSnapshot {
+      get { return aoiSnapshot_; }
+    }
+
+    /// <summary>Field number for the "kind" field.</summary>
+    public const int KindFieldNumber = 15;
+    private string kind_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string Kind {
+      get { return kind_; }
+      set {
+        kind_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "line_no" field.</summary>
+    public const int LineNoFieldNumber = 16;
+    private uint lineNo_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint LineNo {
+      get { return lineNo_; }
+      set {
+        lineNo_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "occupancy" field.</summary>
+    public const int OccupancyFieldNumber = 17;
+    private uint occupancy_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint Occupancy {
+      get { return occupancy_; }
+      set {
+        occupancy_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "soft_cap" field.</summary>
+    public const int SoftCapFieldNumber = 18;
+    private uint softCap_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint SoftCap {
+      get { return softCap_; }
+      set {
+        softCap_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "hard_cap" field.</summary>
+    public const int HardCapFieldNumber = 19;
+    private uint hardCap_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint HardCap {
+      get { return hardCap_; }
+      set {
+        hardCap_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "portal_id" field.</summary>
+    public const int PortalIdFieldNumber = 20;
+    private string portalId_ = "";
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public string PortalId {
+      get { return portalId_; }
+      set {
+        portalId_ = pb::ProtoPreconditions.CheckNotNull(value, "value");
+      }
+    }
+
+    /// <summary>Field number for the "from_map_template_id" field.</summary>
+    public const int FromMapTemplateIdFieldNumber = 21;
+    private ulong fromMapTemplateId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public ulong FromMapTemplateId {
+      get { return fromMapTemplateId_; }
+      set {
+        fromMapTemplateId_ = value;
+      }
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override bool Equals(object other) {
+      return Equals(other as InteractPortalRsp);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public bool Equals(InteractPortalRsp other) {
+      if (ReferenceEquals(other, null)) {
+        return false;
+      }
+      if (ReferenceEquals(other, this)) {
+        return true;
+      }
+      if (Ok != other.Ok) return false;
+      if (Message != other.Message) return false;
+      if (ErrorCode != other.ErrorCode) return false;
+      if (MapTemplateId != other.MapTemplateId) return false;
+      if (MapInstanceId != other.MapInstanceId) return false;
+      if (GamelogicInstanceId != other.GamelogicInstanceId) return false;
+      if (OwnerEpoch != other.OwnerEpoch) return false;
+      if (RouteVersion != other.RouteVersion) return false;
+      if (!object.Equals(SpawnPosition, other.SpawnPosition)) return false;
+      if (!pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.Equals(SpawnYaw, other.SpawnYaw)) return false;
+      if (MapDataVersion != other.MapDataVersion) return false;
+      if (MapDataSha256 != other.MapDataSha256) return false;
+      if (!object.Equals(Self, other.Self)) return false;
+      if(!aoiSnapshot_.Equals(other.aoiSnapshot_)) return false;
+      if (Kind != other.Kind) return false;
+      if (LineNo != other.LineNo) return false;
+      if (Occupancy != other.Occupancy) return false;
+      if (SoftCap != other.SoftCap) return false;
+      if (HardCap != other.HardCap) return false;
+      if (PortalId != other.PortalId) return false;
+      if (FromMapTemplateId != other.FromMapTemplateId) return false;
+      return Equals(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override int GetHashCode() {
+      int hash = 1;
+      if (Ok != false) hash ^= Ok.GetHashCode();
+      if (Message.Length != 0) hash ^= Message.GetHashCode();
+      if (ErrorCode.Length != 0) hash ^= ErrorCode.GetHashCode();
+      if (MapTemplateId != 0UL) hash ^= MapTemplateId.GetHashCode();
+      if (MapInstanceId != 0UL) hash ^= MapInstanceId.GetHashCode();
+      if (GamelogicInstanceId.Length != 0) hash ^= GamelogicInstanceId.GetHashCode();
+      if (OwnerEpoch != 0UL) hash ^= OwnerEpoch.GetHashCode();
+      if (RouteVersion != 0UL) hash ^= RouteVersion.GetHashCode();
+      if (spawnPosition_ != null) hash ^= SpawnPosition.GetHashCode();
+      if (SpawnYaw != 0F) hash ^= pbc::ProtobufEqualityComparers.BitwiseSingleEqualityComparer.GetHashCode(SpawnYaw);
+      if (MapDataVersion != 0UL) hash ^= MapDataVersion.GetHashCode();
+      if (MapDataSha256.Length != 0) hash ^= MapDataSha256.GetHashCode();
+      if (self_ != null) hash ^= Self.GetHashCode();
+      hash ^= aoiSnapshot_.GetHashCode();
+      if (Kind.Length != 0) hash ^= Kind.GetHashCode();
+      if (LineNo != 0) hash ^= LineNo.GetHashCode();
+      if (Occupancy != 0) hash ^= Occupancy.GetHashCode();
+      if (SoftCap != 0) hash ^= SoftCap.GetHashCode();
+      if (HardCap != 0) hash ^= HardCap.GetHashCode();
+      if (PortalId.Length != 0) hash ^= PortalId.GetHashCode();
+      if (FromMapTemplateId != 0UL) hash ^= FromMapTemplateId.GetHashCode();
+      if (_unknownFields != null) {
+        hash ^= _unknownFields.GetHashCode();
+      }
+      return hash;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public override string ToString() {
+      return pb::JsonFormatter.ToDiagnosticString(this);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void WriteTo(pb::CodedOutputStream output) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      output.WriteRawMessage(this);
+    #else
+      if (Ok != false) {
+        output.WriteRawTag(8);
+        output.WriteBool(Ok);
+      }
+      if (Message.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Message);
+      }
+      if (ErrorCode.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(ErrorCode);
+      }
+      if (MapTemplateId != 0UL) {
+        output.WriteRawTag(32);
+        output.WriteUInt64(MapTemplateId);
+      }
+      if (MapInstanceId != 0UL) {
+        output.WriteRawTag(40);
+        output.WriteUInt64(MapInstanceId);
+      }
+      if (GamelogicInstanceId.Length != 0) {
+        output.WriteRawTag(50);
+        output.WriteString(GamelogicInstanceId);
+      }
+      if (OwnerEpoch != 0UL) {
+        output.WriteRawTag(56);
+        output.WriteUInt64(OwnerEpoch);
+      }
+      if (RouteVersion != 0UL) {
+        output.WriteRawTag(64);
+        output.WriteUInt64(RouteVersion);
+      }
+      if (spawnPosition_ != null) {
+        output.WriteRawTag(74);
+        output.WriteMessage(SpawnPosition);
+      }
+      if (SpawnYaw != 0F) {
+        output.WriteRawTag(85);
+        output.WriteFloat(SpawnYaw);
+      }
+      if (MapDataVersion != 0UL) {
+        output.WriteRawTag(88);
+        output.WriteUInt64(MapDataVersion);
+      }
+      if (MapDataSha256.Length != 0) {
+        output.WriteRawTag(98);
+        output.WriteString(MapDataSha256);
+      }
+      if (self_ != null) {
+        output.WriteRawTag(106);
+        output.WriteMessage(Self);
+      }
+      aoiSnapshot_.WriteTo(output, _repeated_aoiSnapshot_codec);
+      if (Kind.Length != 0) {
+        output.WriteRawTag(122);
+        output.WriteString(Kind);
+      }
+      if (LineNo != 0) {
+        output.WriteRawTag(128, 1);
+        output.WriteUInt32(LineNo);
+      }
+      if (Occupancy != 0) {
+        output.WriteRawTag(136, 1);
+        output.WriteUInt32(Occupancy);
+      }
+      if (SoftCap != 0) {
+        output.WriteRawTag(144, 1);
+        output.WriteUInt32(SoftCap);
+      }
+      if (HardCap != 0) {
+        output.WriteRawTag(152, 1);
+        output.WriteUInt32(HardCap);
+      }
+      if (PortalId.Length != 0) {
+        output.WriteRawTag(162, 1);
+        output.WriteString(PortalId);
+      }
+      if (FromMapTemplateId != 0UL) {
+        output.WriteRawTag(168, 1);
+        output.WriteUInt64(FromMapTemplateId);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(output);
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalWriteTo(ref pb::WriteContext output) {
+      if (Ok != false) {
+        output.WriteRawTag(8);
+        output.WriteBool(Ok);
+      }
+      if (Message.Length != 0) {
+        output.WriteRawTag(18);
+        output.WriteString(Message);
+      }
+      if (ErrorCode.Length != 0) {
+        output.WriteRawTag(26);
+        output.WriteString(ErrorCode);
+      }
+      if (MapTemplateId != 0UL) {
+        output.WriteRawTag(32);
+        output.WriteUInt64(MapTemplateId);
+      }
+      if (MapInstanceId != 0UL) {
+        output.WriteRawTag(40);
+        output.WriteUInt64(MapInstanceId);
+      }
+      if (GamelogicInstanceId.Length != 0) {
+        output.WriteRawTag(50);
+        output.WriteString(GamelogicInstanceId);
+      }
+      if (OwnerEpoch != 0UL) {
+        output.WriteRawTag(56);
+        output.WriteUInt64(OwnerEpoch);
+      }
+      if (RouteVersion != 0UL) {
+        output.WriteRawTag(64);
+        output.WriteUInt64(RouteVersion);
+      }
+      if (spawnPosition_ != null) {
+        output.WriteRawTag(74);
+        output.WriteMessage(SpawnPosition);
+      }
+      if (SpawnYaw != 0F) {
+        output.WriteRawTag(85);
+        output.WriteFloat(SpawnYaw);
+      }
+      if (MapDataVersion != 0UL) {
+        output.WriteRawTag(88);
+        output.WriteUInt64(MapDataVersion);
+      }
+      if (MapDataSha256.Length != 0) {
+        output.WriteRawTag(98);
+        output.WriteString(MapDataSha256);
+      }
+      if (self_ != null) {
+        output.WriteRawTag(106);
+        output.WriteMessage(Self);
+      }
+      aoiSnapshot_.WriteTo(ref output, _repeated_aoiSnapshot_codec);
+      if (Kind.Length != 0) {
+        output.WriteRawTag(122);
+        output.WriteString(Kind);
+      }
+      if (LineNo != 0) {
+        output.WriteRawTag(128, 1);
+        output.WriteUInt32(LineNo);
+      }
+      if (Occupancy != 0) {
+        output.WriteRawTag(136, 1);
+        output.WriteUInt32(Occupancy);
+      }
+      if (SoftCap != 0) {
+        output.WriteRawTag(144, 1);
+        output.WriteUInt32(SoftCap);
+      }
+      if (HardCap != 0) {
+        output.WriteRawTag(152, 1);
+        output.WriteUInt32(HardCap);
+      }
+      if (PortalId.Length != 0) {
+        output.WriteRawTag(162, 1);
+        output.WriteString(PortalId);
+      }
+      if (FromMapTemplateId != 0UL) {
+        output.WriteRawTag(168, 1);
+        output.WriteUInt64(FromMapTemplateId);
+      }
+      if (_unknownFields != null) {
+        _unknownFields.WriteTo(ref output);
+      }
+    }
+    #endif
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public int CalculateSize() {
+      int size = 0;
+      if (Ok != false) {
+        size += 1 + 1;
+      }
+      if (Message.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Message);
+      }
+      if (ErrorCode.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(ErrorCode);
+      }
+      if (MapTemplateId != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(MapTemplateId);
+      }
+      if (MapInstanceId != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(MapInstanceId);
+      }
+      if (GamelogicInstanceId.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(GamelogicInstanceId);
+      }
+      if (OwnerEpoch != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(OwnerEpoch);
+      }
+      if (RouteVersion != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(RouteVersion);
+      }
+      if (spawnPosition_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(SpawnPosition);
+      }
+      if (SpawnYaw != 0F) {
+        size += 1 + 4;
+      }
+      if (MapDataVersion != 0UL) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt64Size(MapDataVersion);
+      }
+      if (MapDataSha256.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(MapDataSha256);
+      }
+      if (self_ != null) {
+        size += 1 + pb::CodedOutputStream.ComputeMessageSize(Self);
+      }
+      size += aoiSnapshot_.CalculateSize(_repeated_aoiSnapshot_codec);
+      if (Kind.Length != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeStringSize(Kind);
+      }
+      if (LineNo != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt32Size(LineNo);
+      }
+      if (Occupancy != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt32Size(Occupancy);
+      }
+      if (SoftCap != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt32Size(SoftCap);
+      }
+      if (HardCap != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt32Size(HardCap);
+      }
+      if (PortalId.Length != 0) {
+        size += 2 + pb::CodedOutputStream.ComputeStringSize(PortalId);
+      }
+      if (FromMapTemplateId != 0UL) {
+        size += 2 + pb::CodedOutputStream.ComputeUInt64Size(FromMapTemplateId);
+      }
+      if (_unknownFields != null) {
+        size += _unknownFields.CalculateSize();
+      }
+      return size;
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(InteractPortalRsp other) {
+      if (other == null) {
+        return;
+      }
+      if (other.Ok != false) {
+        Ok = other.Ok;
+      }
+      if (other.Message.Length != 0) {
+        Message = other.Message;
+      }
+      if (other.ErrorCode.Length != 0) {
+        ErrorCode = other.ErrorCode;
+      }
+      if (other.MapTemplateId != 0UL) {
+        MapTemplateId = other.MapTemplateId;
+      }
+      if (other.MapInstanceId != 0UL) {
+        MapInstanceId = other.MapInstanceId;
+      }
+      if (other.GamelogicInstanceId.Length != 0) {
+        GamelogicInstanceId = other.GamelogicInstanceId;
+      }
+      if (other.OwnerEpoch != 0UL) {
+        OwnerEpoch = other.OwnerEpoch;
+      }
+      if (other.RouteVersion != 0UL) {
+        RouteVersion = other.RouteVersion;
+      }
+      if (other.spawnPosition_ != null) {
+        if (spawnPosition_ == null) {
+          SpawnPosition = new global::GameMesh.Protocol.Vec3();
+        }
+        SpawnPosition.MergeFrom(other.SpawnPosition);
+      }
+      if (other.SpawnYaw != 0F) {
+        SpawnYaw = other.SpawnYaw;
+      }
+      if (other.MapDataVersion != 0UL) {
+        MapDataVersion = other.MapDataVersion;
+      }
+      if (other.MapDataSha256.Length != 0) {
+        MapDataSha256 = other.MapDataSha256;
+      }
+      if (other.self_ != null) {
+        if (self_ == null) {
+          Self = new global::GameMesh.Protocol.EntitySnapshot();
+        }
+        Self.MergeFrom(other.Self);
+      }
+      aoiSnapshot_.Add(other.aoiSnapshot_);
+      if (other.Kind.Length != 0) {
+        Kind = other.Kind;
+      }
+      if (other.LineNo != 0) {
+        LineNo = other.LineNo;
+      }
+      if (other.Occupancy != 0) {
+        Occupancy = other.Occupancy;
+      }
+      if (other.SoftCap != 0) {
+        SoftCap = other.SoftCap;
+      }
+      if (other.HardCap != 0) {
+        HardCap = other.HardCap;
+      }
+      if (other.PortalId.Length != 0) {
+        PortalId = other.PortalId;
+      }
+      if (other.FromMapTemplateId != 0UL) {
+        FromMapTemplateId = other.FromMapTemplateId;
+      }
+      _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
+    }
+
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public void MergeFrom(pb::CodedInputStream input) {
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+      input.ReadRawMessage(this);
+    #else
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, input);
+            break;
+          case 8: {
+            Ok = input.ReadBool();
+            break;
+          }
+          case 18: {
+            Message = input.ReadString();
+            break;
+          }
+          case 26: {
+            ErrorCode = input.ReadString();
+            break;
+          }
+          case 32: {
+            MapTemplateId = input.ReadUInt64();
+            break;
+          }
+          case 40: {
+            MapInstanceId = input.ReadUInt64();
+            break;
+          }
+          case 50: {
+            GamelogicInstanceId = input.ReadString();
+            break;
+          }
+          case 56: {
+            OwnerEpoch = input.ReadUInt64();
+            break;
+          }
+          case 64: {
+            RouteVersion = input.ReadUInt64();
+            break;
+          }
+          case 74: {
+            if (spawnPosition_ == null) {
+              SpawnPosition = new global::GameMesh.Protocol.Vec3();
+            }
+            input.ReadMessage(SpawnPosition);
+            break;
+          }
+          case 85: {
+            SpawnYaw = input.ReadFloat();
+            break;
+          }
+          case 88: {
+            MapDataVersion = input.ReadUInt64();
+            break;
+          }
+          case 98: {
+            MapDataSha256 = input.ReadString();
+            break;
+          }
+          case 106: {
+            if (self_ == null) {
+              Self = new global::GameMesh.Protocol.EntitySnapshot();
+            }
+            input.ReadMessage(Self);
+            break;
+          }
+          case 114: {
+            aoiSnapshot_.AddEntriesFrom(input, _repeated_aoiSnapshot_codec);
+            break;
+          }
+          case 122: {
+            Kind = input.ReadString();
+            break;
+          }
+          case 128: {
+            LineNo = input.ReadUInt32();
+            break;
+          }
+          case 136: {
+            Occupancy = input.ReadUInt32();
+            break;
+          }
+          case 144: {
+            SoftCap = input.ReadUInt32();
+            break;
+          }
+          case 152: {
+            HardCap = input.ReadUInt32();
+            break;
+          }
+          case 162: {
+            PortalId = input.ReadString();
+            break;
+          }
+          case 168: {
+            FromMapTemplateId = input.ReadUInt64();
+            break;
+          }
+        }
+      }
+    #endif
+    }
+
+    #if !GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    void pb::IBufferMessage.InternalMergeFrom(ref pb::ParseContext input) {
+      uint tag;
+      while ((tag = input.ReadTag()) != 0) {
+        switch(tag) {
+          default:
+            _unknownFields = pb::UnknownFieldSet.MergeFieldFrom(_unknownFields, ref input);
+            break;
+          case 8: {
+            Ok = input.ReadBool();
+            break;
+          }
+          case 18: {
+            Message = input.ReadString();
+            break;
+          }
+          case 26: {
+            ErrorCode = input.ReadString();
+            break;
+          }
+          case 32: {
+            MapTemplateId = input.ReadUInt64();
+            break;
+          }
+          case 40: {
+            MapInstanceId = input.ReadUInt64();
+            break;
+          }
+          case 50: {
+            GamelogicInstanceId = input.ReadString();
+            break;
+          }
+          case 56: {
+            OwnerEpoch = input.ReadUInt64();
+            break;
+          }
+          case 64: {
+            RouteVersion = input.ReadUInt64();
+            break;
+          }
+          case 74: {
+            if (spawnPosition_ == null) {
+              SpawnPosition = new global::GameMesh.Protocol.Vec3();
+            }
+            input.ReadMessage(SpawnPosition);
+            break;
+          }
+          case 85: {
+            SpawnYaw = input.ReadFloat();
+            break;
+          }
+          case 88: {
+            MapDataVersion = input.ReadUInt64();
+            break;
+          }
+          case 98: {
+            MapDataSha256 = input.ReadString();
+            break;
+          }
+          case 106: {
+            if (self_ == null) {
+              Self = new global::GameMesh.Protocol.EntitySnapshot();
+            }
+            input.ReadMessage(Self);
+            break;
+          }
+          case 114: {
+            aoiSnapshot_.AddEntriesFrom(ref input, _repeated_aoiSnapshot_codec);
+            break;
+          }
+          case 122: {
+            Kind = input.ReadString();
+            break;
+          }
+          case 128: {
+            LineNo = input.ReadUInt32();
+            break;
+          }
+          case 136: {
+            Occupancy = input.ReadUInt32();
+            break;
+          }
+          case 144: {
+            SoftCap = input.ReadUInt32();
+            break;
+          }
+          case 152: {
+            HardCap = input.ReadUInt32();
+            break;
+          }
+          case 162: {
+            PortalId = input.ReadString();
+            break;
+          }
+          case 168: {
+            FromMapTemplateId = input.ReadUInt64();
+            break;
+          }
         }
       }
     }
@@ -32836,7 +34719,7 @@ namespace GameMesh.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[91]; }
+      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[94]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -33485,7 +35368,7 @@ namespace GameMesh.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[92]; }
+      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[95]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -33749,7 +35632,7 @@ namespace GameMesh.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[93]; }
+      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[96]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -34013,7 +35896,7 @@ namespace GameMesh.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[94]; }
+      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[97]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -34388,7 +36271,7 @@ namespace GameMesh.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[95]; }
+      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[98]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -34527,6 +36410,9 @@ namespace GameMesh.Protocol {
           break;
         case BodyOneofCase.EnqueueMap:
           EnqueueMap = other.EnqueueMap.Clone();
+          break;
+        case BodyOneofCase.InteractPortal:
+          InteractPortal = other.InteractPortal.Clone();
           break;
       }
 
@@ -35031,6 +36917,18 @@ namespace GameMesh.Protocol {
       }
     }
 
+    /// <summary>Field number for the "interact_portal" field.</summary>
+    public const int InteractPortalFieldNumber = 80;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::GameMesh.Protocol.InteractPortalReq InteractPortal {
+      get { return bodyCase_ == BodyOneofCase.InteractPortal ? (global::GameMesh.Protocol.InteractPortalReq) body_ : null; }
+      set {
+        body_ = value;
+        bodyCase_ = value == null ? BodyOneofCase.None : BodyOneofCase.InteractPortal;
+      }
+    }
+
     private object body_;
     /// <summary>Enum of possible cases for the "body" oneof.</summary>
     public enum BodyOneofCase {
@@ -35074,6 +36972,7 @@ namespace GameMesh.Protocol {
       CreateDungeon = 77,
       SwitchLine = 78,
       EnqueueMap = 79,
+      InteractPortal = 80,
     }
     private BodyOneofCase bodyCase_ = BodyOneofCase.None;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -35145,6 +37044,7 @@ namespace GameMesh.Protocol {
       if (!object.Equals(CreateDungeon, other.CreateDungeon)) return false;
       if (!object.Equals(SwitchLine, other.SwitchLine)) return false;
       if (!object.Equals(EnqueueMap, other.EnqueueMap)) return false;
+      if (!object.Equals(InteractPortal, other.InteractPortal)) return false;
       if (BodyCase != other.BodyCase) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
@@ -35194,6 +37094,7 @@ namespace GameMesh.Protocol {
       if (bodyCase_ == BodyOneofCase.CreateDungeon) hash ^= CreateDungeon.GetHashCode();
       if (bodyCase_ == BodyOneofCase.SwitchLine) hash ^= SwitchLine.GetHashCode();
       if (bodyCase_ == BodyOneofCase.EnqueueMap) hash ^= EnqueueMap.GetHashCode();
+      if (bodyCase_ == BodyOneofCase.InteractPortal) hash ^= InteractPortal.GetHashCode();
       hash ^= (int) bodyCase_;
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
@@ -35377,6 +37278,10 @@ namespace GameMesh.Protocol {
         output.WriteRawTag(250, 4);
         output.WriteMessage(EnqueueMap);
       }
+      if (bodyCase_ == BodyOneofCase.InteractPortal) {
+        output.WriteRawTag(130, 5);
+        output.WriteMessage(InteractPortal);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -35551,6 +37456,10 @@ namespace GameMesh.Protocol {
         output.WriteRawTag(250, 4);
         output.WriteMessage(EnqueueMap);
       }
+      if (bodyCase_ == BodyOneofCase.InteractPortal) {
+        output.WriteRawTag(130, 5);
+        output.WriteMessage(InteractPortal);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -35683,6 +37592,9 @@ namespace GameMesh.Protocol {
       }
       if (bodyCase_ == BodyOneofCase.EnqueueMap) {
         size += 2 + pb::CodedOutputStream.ComputeMessageSize(EnqueueMap);
+      }
+      if (bodyCase_ == BodyOneofCase.InteractPortal) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(InteractPortal);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -35936,6 +37848,12 @@ namespace GameMesh.Protocol {
             EnqueueMap = new global::GameMesh.Protocol.EnqueueMapReq();
           }
           EnqueueMap.MergeFrom(other.EnqueueMap);
+          break;
+        case BodyOneofCase.InteractPortal:
+          if (InteractPortal == null) {
+            InteractPortal = new global::GameMesh.Protocol.InteractPortalReq();
+          }
+          InteractPortal.MergeFrom(other.InteractPortal);
           break;
       }
 
@@ -36313,6 +38231,15 @@ namespace GameMesh.Protocol {
             EnqueueMap = subBuilder;
             break;
           }
+          case 642: {
+            global::GameMesh.Protocol.InteractPortalReq subBuilder = new global::GameMesh.Protocol.InteractPortalReq();
+            if (bodyCase_ == BodyOneofCase.InteractPortal) {
+              subBuilder.MergeFrom(InteractPortal);
+            }
+            input.ReadMessage(subBuilder);
+            InteractPortal = subBuilder;
+            break;
+          }
         }
       }
     #endif
@@ -36687,6 +38614,15 @@ namespace GameMesh.Protocol {
             EnqueueMap = subBuilder;
             break;
           }
+          case 642: {
+            global::GameMesh.Protocol.InteractPortalReq subBuilder = new global::GameMesh.Protocol.InteractPortalReq();
+            if (bodyCase_ == BodyOneofCase.InteractPortal) {
+              subBuilder.MergeFrom(InteractPortal);
+            }
+            input.ReadMessage(subBuilder);
+            InteractPortal = subBuilder;
+            break;
+          }
         }
       }
     }
@@ -36709,7 +38645,7 @@ namespace GameMesh.Protocol {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[96]; }
+      get { return global::GameMesh.Protocol.GameReflection.Descriptor.MessageTypes[99]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -36868,6 +38804,9 @@ namespace GameMesh.Protocol {
           break;
         case BodyOneofCase.EnqueueMap:
           EnqueueMap = other.EnqueueMap.Clone();
+          break;
+        case BodyOneofCase.InteractPortal:
+          InteractPortal = other.InteractPortal.Clone();
           break;
       }
 
@@ -37492,6 +39431,18 @@ namespace GameMesh.Protocol {
       }
     }
 
+    /// <summary>Field number for the "interact_portal" field.</summary>
+    public const int InteractPortalFieldNumber = 81;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public global::GameMesh.Protocol.InteractPortalRsp InteractPortal {
+      get { return bodyCase_ == BodyOneofCase.InteractPortal ? (global::GameMesh.Protocol.InteractPortalRsp) body_ : null; }
+      set {
+        body_ = value;
+        bodyCase_ = value == null ? BodyOneofCase.None : BodyOneofCase.InteractPortal;
+      }
+    }
+
     private object body_;
     /// <summary>Enum of possible cases for the "body" oneof.</summary>
     public enum BodyOneofCase {
@@ -37540,6 +39491,7 @@ namespace GameMesh.Protocol {
       CreateDungeon = 78,
       SwitchLine = 79,
       EnqueueMap = 80,
+      InteractPortal = 81,
     }
     private BodyOneofCase bodyCase_ = BodyOneofCase.None;
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -37621,6 +39573,7 @@ namespace GameMesh.Protocol {
       if (!object.Equals(CreateDungeon, other.CreateDungeon)) return false;
       if (!object.Equals(SwitchLine, other.SwitchLine)) return false;
       if (!object.Equals(EnqueueMap, other.EnqueueMap)) return false;
+      if (!object.Equals(InteractPortal, other.InteractPortal)) return false;
       if (BodyCase != other.BodyCase) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
@@ -37680,6 +39633,7 @@ namespace GameMesh.Protocol {
       if (bodyCase_ == BodyOneofCase.CreateDungeon) hash ^= CreateDungeon.GetHashCode();
       if (bodyCase_ == BodyOneofCase.SwitchLine) hash ^= SwitchLine.GetHashCode();
       if (bodyCase_ == BodyOneofCase.EnqueueMap) hash ^= EnqueueMap.GetHashCode();
+      if (bodyCase_ == BodyOneofCase.InteractPortal) hash ^= InteractPortal.GetHashCode();
       hash ^= (int) bodyCase_;
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
@@ -37903,6 +39857,10 @@ namespace GameMesh.Protocol {
         output.WriteRawTag(130, 5);
         output.WriteMessage(EnqueueMap);
       }
+      if (bodyCase_ == BodyOneofCase.InteractPortal) {
+        output.WriteRawTag(138, 5);
+        output.WriteMessage(InteractPortal);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -38117,6 +40075,10 @@ namespace GameMesh.Protocol {
         output.WriteRawTag(130, 5);
         output.WriteMessage(EnqueueMap);
       }
+      if (bodyCase_ == BodyOneofCase.InteractPortal) {
+        output.WriteRawTag(138, 5);
+        output.WriteMessage(InteractPortal);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -38279,6 +40241,9 @@ namespace GameMesh.Protocol {
       }
       if (bodyCase_ == BodyOneofCase.EnqueueMap) {
         size += 2 + pb::CodedOutputStream.ComputeMessageSize(EnqueueMap);
+      }
+      if (bodyCase_ == BodyOneofCase.InteractPortal) {
+        size += 2 + pb::CodedOutputStream.ComputeMessageSize(InteractPortal);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -38577,6 +40542,12 @@ namespace GameMesh.Protocol {
             EnqueueMap = new global::GameMesh.Protocol.EnqueueMapRsp();
           }
           EnqueueMap.MergeFrom(other.EnqueueMap);
+          break;
+        case BodyOneofCase.InteractPortal:
+          if (InteractPortal == null) {
+            InteractPortal = new global::GameMesh.Protocol.InteractPortalRsp();
+          }
+          InteractPortal.MergeFrom(other.InteractPortal);
           break;
       }
 
@@ -39019,6 +40990,15 @@ namespace GameMesh.Protocol {
             EnqueueMap = subBuilder;
             break;
           }
+          case 650: {
+            global::GameMesh.Protocol.InteractPortalRsp subBuilder = new global::GameMesh.Protocol.InteractPortalRsp();
+            if (bodyCase_ == BodyOneofCase.InteractPortal) {
+              subBuilder.MergeFrom(InteractPortal);
+            }
+            input.ReadMessage(subBuilder);
+            InteractPortal = subBuilder;
+            break;
+          }
         }
       }
     #endif
@@ -39456,6 +41436,15 @@ namespace GameMesh.Protocol {
             }
             input.ReadMessage(subBuilder);
             EnqueueMap = subBuilder;
+            break;
+          }
+          case 650: {
+            global::GameMesh.Protocol.InteractPortalRsp subBuilder = new global::GameMesh.Protocol.InteractPortalRsp();
+            if (bodyCase_ == BodyOneofCase.InteractPortal) {
+              subBuilder.MergeFrom(InteractPortal);
+            }
+            input.ReadMessage(subBuilder);
+            InteractPortal = subBuilder;
             break;
           }
         }

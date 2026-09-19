@@ -184,15 +184,21 @@ namespace GameMesh.Map
             Lines.Add(incoming);
         }
 
+        public void ApplyPresence(string kind, uint lineNo, uint occupancy, uint softCap, uint hardCap)
+        {
+            if (!string.IsNullOrEmpty(kind))
+                Kind = kind;
+            LineNo = lineNo;
+            Occupancy = occupancy;
+            SoftCap = softCap;
+            HardCap = hardCap;
+        }
+
         public void ApplyEnter(EnterMapRsp enter)
         {
             if (enter == null)
                 return;
-            Kind = enter.Kind ?? "";
-            LineNo = enter.LineNo;
-            Occupancy = enter.Occupancy;
-            SoftCap = enter.SoftCap;
-            HardCap = enter.HardCap;
+            ApplyPresence(enter.Kind, enter.LineNo, enter.Occupancy, enter.SoftCap, enter.HardCap);
             if (!string.IsNullOrEmpty(enter.QueueToken))
                 QueueToken = enter.QueueToken;
             QueuePosition = enter.QueuePosition;

@@ -7,6 +7,7 @@ using GameMesh.Protocol;
 using Unity.FPS.Game;
 using Unity.FPS.Gameplay;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 namespace GameMesh.Player
 {
@@ -20,6 +21,7 @@ namespace GameMesh.Player
             new System.Collections.Generic.Dictionary<ulong, RemotePlayerView>();
         float _nextAoiSnapshotAt;
         int _modelBudget;
+        int _holdSpawnFrames;
 
         public int RemoteViewCount => _views.Count;
 
@@ -52,6 +54,32 @@ namespace GameMesh.Player
             var dx = local.x - state.X;
             var dz = local.z - state.Z;
             return Mathf.Sqrt(dx * dx + dz * dz);
+        }
+
+        void OnEnable()
+        {
+            SceneManager.sceneLoaded += OnSceneLoaded;
+        }
+
+        void OnDisable()
+        {
+            SceneManager.sceneLoaded -= OnSceneLoaded;
+            foreach (var kv in _views)
+            {
+                if (kv.Value != null)
+                    Destroy(kv.Value.gameObject);
+            }
+
+            _views.Clear();
+        }
+
+        void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+        {
+            _local = null;
+            _controller = null;
+            _fps = null;
+            _health = null;
+            _holdSpawnFrames = 12;
         }
 
         void LateUpdate()
@@ -98,17 +126,27 @@ namespace GameMesh.Player
 
             if (client.HasPendingSpawn)
             {
-                var pos = client.PendingSpawn;
+                if (_holdSpawnFrames <= 0)
+                    _holdSpawnFrames = 12;
+                var pos = SnapToWalkable(client.PendingSpawn);
                 var yaw = client.PendingSpawnYaw;
-                var marker = FindObjectOfType<GameMeshSpawnPoint>();
-                if (marker != null)
+                if (!client.PendingSpawnFromServer)
                 {
-                    pos = marker.transform.position;
-                    yaw = marker.yaw;
+                    var marker = FindObjectOfType<GameMeshSpawnPoint>();
+                    if (marker != null)
+                    {
+                        pos = SnapToWalkable(marker.transform.position);
+                        yaw = marker.yaw;
+                    }
                 }
 
                 ApplyPose(pos, yaw);
+                _holdSpawnFrames--;
+                if (_holdSpawnFrames > 0)
+                    return;
+
                 client.HasPendingSpawn = false;
+                client.PendingSpawnFromServer = false;
                 if (client.Connection != null &&
                     client.Connection.State == ConnectionState.InWorld)
                     _ = client.SendMoveAsync(pos, yaw, default);
@@ -169,15 +207,35 @@ namespace GameMesh.Player
             if (_controller != null)
                 _controller.enabled = false;
             _local.SetPositionAndRotation(pos, Quaternion.Euler(0f, yaw, 0f));
+            Physics.SyncTransforms();
             if (_controller != null)
                 _controller.enabled = true;
+        }
+
+        static Vector3 SnapToWalkable(Vector3 pos)
+        {
+            var terrain = Terrain.activeTerrain;
+            if (terrain != null)
+            {
+                var origin = terrain.GetPosition();
+                var size = terrain.terrainData != null ? terrain.terrainData.size : new Vector3(32f, 600f, 32f);
+                var x = Mathf.Clamp(pos.x, origin.x + 2f, origin.x + size.x - 2f);
+                var z = Mathf.Clamp(pos.z, origin.z + 2f, origin.z + size.z - 2f);
+                var y = terrain.SampleHeight(new Vector3(x, 0f, z)) + origin.y + 0.35f;
+                return new Vector3(x, y, z);
+            }
+
+            var rayOrigin = pos + Vector3.up * 80f;
+            if (Physics.Raycast(rayOrigin, Vector3.down, out var hit, 200f, ~0, QueryTriggerInteraction.Ignore))
+                return new Vector3(pos.x, hit.point.y + 0.35f, pos.z);
+            return pos + Vector3.up * 0.5f;
         }
 
         void MaybeReportMove(GameMeshClient client)
         {
             if (_local == null || client.Connection == null)
                 return;
-            if (client.MovesFrozen)
+            if (client.MovesFrozen || client.IsBusy)
                 return;
             if (!string.IsNullOrEmpty(client.LaunchArgs.AutoScenario))
                 return;
@@ -266,17 +324,6 @@ namespace GameMesh.Player
                     Destroy(view.gameObject);
                 _views.Remove(id);
             }
-        }
-
-        void OnDisable()
-        {
-            foreach (var kv in _views)
-            {
-                if (kv.Value != null)
-                    Destroy(kv.Value.gameObject);
-            }
-
-            _views.Clear();
         }
     }
 

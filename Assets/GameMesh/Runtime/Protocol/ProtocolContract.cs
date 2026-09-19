@@ -22,7 +22,8 @@ namespace GameMesh.Protocol
             "MapManifestEntry", "SessionReplacedNotify",
             "QueryMapLinesReq", "QueryMapLinesRsp",
             "SwitchLineReq", "SwitchLineRsp",
-            "EnqueueMapReq", "EnqueueMapRsp", "MapLineInfo"
+            "EnqueueMapReq", "EnqueueMapRsp", "MapLineInfo",
+            "InteractPortalReq", "InteractPortalRsp", "PortalDef"
         };
 
         public static bool HasType(string typeName)

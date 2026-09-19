@@ -82,6 +82,8 @@ if ($cs -notmatch "SessionReplaced") { $missing += "oneof SessionReplaced" }
 if ($cs -notmatch "QueryMapLines") { $missing += "oneof QueryMapLines" }
 if ($cs -notmatch "SwitchLine") { $missing += "oneof SwitchLine" }
 if ($cs -notmatch "EnqueueMap") { $missing += "oneof EnqueueMap" }
+if ($cs -notmatch "InteractPortal") { $missing += "oneof InteractPortal" }
+if ($cs -notmatch "PortalDef") { $missing += "PortalDef" }
 if ($cs -notmatch "MapLineInfo") { $missing += "MapLineInfo" }
 if ($cs -notmatch "MapManifestEntry") { $missing += "MapManifestEntry" }
 if ($missing.Count -gt 0) {

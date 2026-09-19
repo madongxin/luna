@@ -51,6 +51,10 @@ namespace GameMesh.Protocol
                 "还没完成 Hello 或尚未登录。请等 Hello 显示 OK 后再点注册/登录。"),
             ["ERR_FENCE_STALE"] = new GameErrorInfo("ERR_FENCE_STALE", "会话栅栏已过期", false,
                 "会话令牌已失效。请重新登录拿新 token，不要沿用旧连接上的操作。"),
+            ["FENCE_REJECT"] = new GameErrorInfo("FENCE_REJECT", "会话栅栏被拒绝", true,
+                "关掉客户端时人还在图上，旧 occupancy 没清。下次登录会先 LeaveMap 再进图。"),
+            ["STALE_GENERATION"] = new GameErrorInfo("STALE_GENERATION", "会话世代已过期", true,
+                "登录换了新世代，图上还绑着旧世代。关掉客户端前应离图；下次登录会先 LeaveMap 再进图。"),
             ["ERR_SESSION_EXPIRED"] = new GameErrorInfo("ERR_SESSION_EXPIRED", "会话已过期，请重新登录", false,
                 "会话不存在或宽限期已过。请填密码重新登录。"),
             [GameMeshErrorCode.SessionReplaced] = new GameErrorInfo(GameMeshErrorCode.SessionReplaced, "账号已在其他设备登录", false,
@@ -83,10 +87,16 @@ namespace GameMesh.Protocol
                 "排队票无效或过期。请重新对同一线号排队。"),
             [GameMeshErrorCode.QueueNotReady] = new GameErrorInfo(GameMeshErrorCode.QueueNotReady, "还没排到队首", true,
                 "未到队首或线仍满。请持票轮询后再用同一 queue_token 进线。"),
-            ["ERR_DUNGEON_CREATE_FORBIDDEN"] = new GameErrorInfo("ERR_DUNGEON_CREATE_FORBIDDEN", "副本须先开本", false,
-                "副本要先 CreateDungeon，不能直接进。"),
-            ["ERR_DUNGEON_NOT_FOUND"] = new GameErrorInfo("ERR_DUNGEON_NOT_FOUND", "副本不存在或已关闭", false,
-                "这个副本不存在或已关闭。请重新开本。"),
+            ["ERR_DUNGEON_CREATE_FORBIDDEN"] = new GameErrorInfo("ERR_DUNGEON_CREATE_FORBIDDEN", "服务器禁止直建该副本", true,
+                "点「进入副本」会 CreateDungeon(2102)。若服务器仍拒绝，看返回码。"),
+            ["ERR_DUNGEON_NOT_FOUND"] = new GameErrorInfo("ERR_DUNGEON_NOT_FOUND", "副本不存在或已关闭", true,
+                "这个副本不存在或已关闭。点「进入副本」再开一本。"),
+            ["ERR_PORTAL_TOO_FAR"] = new GameErrorInfo("ERR_PORTAL_TOO_FAR", "离传送门太远", true,
+                "传送门进出已关闭。请用调试面板的「进入副本」和「返回 1001」。"),
+            ["ERR_PORTAL_UNKNOWN"] = new GameErrorInfo("ERR_PORTAL_UNKNOWN", "传送门已关闭", false,
+                "客户端不再走传送门。请用调试面板进入或离开副本。"),
+            ["ERR_PORTAL_REQUIRED"] = new GameErrorInfo("ERR_PORTAL_REQUIRED", "请从调试面板进出副本", false,
+                "请点「进入副本」创建 2102，或点「返回 1001」离开副本。"),
             ["ERR_DUNGEON_NOT_MEMBER"] = new GameErrorInfo("ERR_DUNGEON_NOT_MEMBER", "不是该副本队员", false,
                 "当前账号不是这个副本的队员。"),
             ["NOT_FOUND"] = new GameErrorInfo("NOT_FOUND", "资源不存在", false,
@@ -123,8 +133,8 @@ namespace GameMesh.Protocol
                 "发件人和收件人是同一个玩家。请换成其他玩家 ID。"),
             ["ERR_COMMAND_FORBIDDEN"] = new GameErrorInfo("ERR_COMMAND_FORBIDDEN", "该命令不被允许", false,
                 "这条公网命令被策略拒绝。不要重试同一条非法命令。"),
-            ["ERR_INTERNAL"] = new GameErrorInfo("ERR_INTERNAL", "服务器内部错误", false,
-                "服务器内部异常。请带追踪号反馈；不要靠连点重试同一条非幂等写。"),
+            ["ERR_INTERNAL"] = new GameErrorInfo("ERR_INTERNAL", "服务器内部错误", true,
+                "常见于登出后会话已换、但人还在旧图上。客户端会先拉世界快照，不要连点进入。"),
             ["ERR_BAD_CREDENTIAL"] = new GameErrorInfo("ERR_BAD_CREDENTIAL", "账号或密码错误", false,
                 "密码为空、不足 6 位，或与该玩家 ID 注册时不一致。请用默认密码 luna123 登录；若仍失败，先点清除本地账号再注册。关窗口不会登出。"),
             ["ERR_ACCOUNT_NOT_FOUND"] = new GameErrorInfo("ERR_ACCOUNT_NOT_FOUND", "账号未注册，请先注册", false,
@@ -217,6 +227,27 @@ namespace GameMesh.Protocol
             return code == "STALE_ROUTE" || code == "ERR_STALE_ROUTE";
         }
 
+        public static bool IsStaleGeneration(string code, string message = "")
+        {
+            if (code == "STALE_GENERATION" || code == "ERR_STALE_GENERATION")
+                return true;
+            var msg = message ?? "";
+            return msg.IndexOf("stale bind generation", System.StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        public static bool NeedsWorldSnapshot(string code, string message = "")
+        {
+            if (IsStaleRoute(code) || IsStaleGeneration(code, message) ||
+                code == "ERR_AOI_RESYNC_REQUIRED" ||
+                code == "FENCE_REJECT" || code == "ERR_FENCE_REJECT")
+                return true;
+            var msg = message ?? "";
+            if (msg.IndexOf("session_id", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                msg.IndexOf("route_version", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+            return false;
+        }
+
         public static bool IsMapNoLine(string code)
         {
             return code == GameMeshErrorCode.MapNoLine;
@@ -288,8 +319,15 @@ namespace GameMesh.Protocol
                 return "这个账号还没有密码（非正式模式遗留）。请带至少 6 位密码重新注册后再登录。";
             if (s.IndexOf("missing login response", System.StringComparison.OrdinalIgnoreCase) >= 0)
                 return "没有收到登录回包。请确认已连上 Gateway 后再点登录。";
+            if (s.IndexOf("stale bind generation", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                s.IndexOf("STALE_GENERATION", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return "登录换了新世代，图上还绑着旧世代。关掉客户端时没离图。下次登录会先离开旧图再进线。";
+            if (s.IndexOf("FENCE_REJECT", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                s.IndexOf("fence reject", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                s.IndexOf("session_id", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                return "关掉客户端时人还在图上。下次登录会先 LeaveMap 清 occupancy 再进图。";
             if (s.IndexOf("session not found", System.StringComparison.OrdinalIgnoreCase) >= 0)
-                return "登录成功了，但进图时服务器还找不到这个会话。请再点一次登录，等进线成功后再集体登录。";
+                return "关掉客户端时没离图，服务器还占着旧会话。请再点一次登录，客户端会先离图再进线。";
             if (s.IndexOf("设备ID和密码", System.StringComparison.Ordinal) >= 0)
                 return "设备 ID 和密码都要填。密码至少 6 位；空着点按钮会被直接拒绝，不会发到服务器。";
             if (ContainsCjk(s))

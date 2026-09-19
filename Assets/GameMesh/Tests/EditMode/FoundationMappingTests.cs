@@ -130,6 +130,39 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void WorldSnapshot_RestoresWhenLocalInstanceUnknown()
+        {
+            var snap = new FullStateSnapshotRsp
+            {
+                Ok = true,
+                PlayerId = 819,
+                MapTemplateId = 1002,
+                MapInstanceId = 69,
+                BaselineServerSeq = 7,
+                SnapshotVersion = 1,
+                Self = new EntitySnapshot
+                {
+                    PlayerId = 819,
+                    Position = new Vec3 { X = 1, Y = 2, Z = 3 }
+                }
+            };
+            Assert.IsTrue(WorldSnapshotApplier.TryBuild(snap, 819, 0, 0, out var model, out _, out _));
+            Assert.AreEqual(69ul, model.MapInstanceId);
+            Assert.AreEqual(1002ul, model.MapTemplateId);
+        }
+
+        [Test]
+        public void NeedsWorldSnapshot_DetectsSessionMismatch()
+        {
+            Assert.IsTrue(GameErrorCatalog.NeedsWorldSnapshot("ERR_INTERNAL", "session_id mismatch"));
+            Assert.IsTrue(GameErrorCatalog.NeedsWorldSnapshot("ERR_AOI_RESYNC_REQUIRED", "route_version mismatch"));
+            Assert.IsTrue(GameErrorCatalog.NeedsWorldSnapshot("STALE_GENERATION", "stale bind generation"));
+            Assert.IsTrue(GameErrorCatalog.NeedsWorldSnapshot("FENCE_REJECT", "session not found"));
+            Assert.IsTrue(GameErrorCatalog.IsStaleGeneration("STALE_GENERATION", "stale bind generation"));
+            Assert.IsFalse(GameErrorCatalog.NeedsWorldSnapshot("ERR_INTERNAL", "db timeout"));
+        }
+
+        [Test]
         public void SessionReplaced_StopsReconnectAndKeepsIdentity()
         {
             var session = new GameSession();
@@ -323,6 +356,87 @@ namespace GameMesh.Tests.EditMode
             Assert.IsTrue(GameErrorCatalog.IsStaleRoute("STALE_ROUTE"));
             Assert.IsFalse(GameErrorCatalog.IsStaleRoute(""));
             Assert.AreEqual("该线已满，请换线或排队", GameErrorCatalog.Resolve("ERR_MAP_LINE_FULL").Chinese);
+            Assert.AreEqual("请从调试面板进出副本", GameErrorCatalog.Resolve("ERR_PORTAL_REQUIRED").Chinese);
+            Assert.IsFalse(GameErrorCatalog.Resolve("ERR_PORTAL_UNKNOWN").Retryable);
+            Assert.IsTrue(GameErrorCatalog.Resolve("ERR_PORTAL_TOO_FAR").Retryable);
+        }
+
+        [Test]
+        public void HelloCatalog_UsesVisualSceneAndFrozenPortals()
+        {
+            var maps = new HelloMapCatalog();
+            maps.Replace(new[]
+            {
+                new MapManifestEntry
+                {
+                    MapTemplateId = 1001,
+                    DataVersion = 1,
+                    Sha256 = HelloMapCatalog.HubHash,
+                    SceneName = "MainScene",
+                    Kind = "LEGACY_POOL"
+                }
+            });
+            Assert.AreEqual("MainScene", maps.VisualSceneName(2102, "TerrainDemoScene"));
+            Assert.AreEqual("DUNGEON", maps.KindOf(2102));
+            Assert.IsTrue(maps.TryContract(2102, out var version, out var hash, out _));
+            Assert.AreEqual(1u, version);
+            Assert.AreEqual(HelloMapCatalog.HubHash, hash);
+            var hubPortal = maps.FindPortal(1001, HelloMapCatalog.SpawnToDungeon);
+            Assert.IsNotNull(hubPortal);
+            Assert.AreEqual(2102ul, hubPortal.ToMapTemplateId);
+            Assert.AreEqual(HelloMapCatalog.PortalX, hubPortal.Position.X, 0.01f);
+            Assert.AreEqual(HelloMapCatalog.PortalZ, hubPortal.Position.Z, 0.01f);
+            Assert.AreEqual(HelloMapCatalog.PortalY, hubPortal.Position.Y, 0.01f);
+            var back = maps.FindPortal(2102, HelloMapCatalog.DungeonToSpawn);
+            Assert.IsNotNull(back);
+            Assert.AreEqual(1001ul, back.ToMapTemplateId);
+            var dx = HelloMapCatalog.SpawnX - HelloMapCatalog.PortalX;
+            var dz = HelloMapCatalog.SpawnZ - HelloMapCatalog.PortalZ;
+            Assert.Greater(Mathf.Sqrt(dx * dx + dz * dz), 5f);
+            Assert.IsFalse(HelloMapCatalog.InSpawnToDungeonRadius(HelloMapCatalog.SpawnX, HelloMapCatalog.SpawnZ));
+            Assert.IsTrue(HelloMapCatalog.InSpawnToDungeonRadius(HelloMapCatalog.PortalX, HelloMapCatalog.PortalZ));
+        }
+
+        [Test]
+        public void HelloCatalog_SuzhouHasNoPortals()
+        {
+            var maps = new HelloMapCatalog();
+            maps.Replace(new[]
+            {
+                new MapManifestEntry
+                {
+                    MapTemplateId = 1002,
+                    DataVersion = 1,
+                    Sha256 = HelloMapCatalog.LineHash,
+                    SceneName = "TerrainDemoScene",
+                    Kind = "LINE"
+                }
+            });
+            Assert.AreEqual(0, maps.PortalsFor(1002).Count);
+            Assert.IsNull(maps.FindPortal(1002, HelloMapCatalog.SpawnToDungeon));
+            Assert.IsNotNull(maps.FindPortal(1001, HelloMapCatalog.SpawnToDungeon));
+        }
+
+        [Test]
+        public void ExtractErrorCode_ReadsInteractPortalBody()
+        {
+            var rsp = new GameResponse
+            {
+                Ok = false,
+                InteractPortal = new InteractPortalRsp { Ok = false, ErrorCode = "ERR_PORTAL_TOO_FAR" }
+            };
+            Assert.AreEqual("ERR_PORTAL_TOO_FAR", ProtocolMapper.ExtractErrorCode(rsp));
+        }
+
+        [Test]
+        public void ExtractErrorCode_ReadsCreateDungeonBody()
+        {
+            var rsp = new GameResponse
+            {
+                Ok = false,
+                CreateDungeon = new CreateDungeonRsp { Ok = false, ErrorCode = "ERR_DUNGEON_CREATE_FORBIDDEN" }
+            };
+            Assert.AreEqual("ERR_DUNGEON_CREATE_FORBIDDEN", ProtocolMapper.ExtractErrorCode(rsp));
         }
 
         [Test]

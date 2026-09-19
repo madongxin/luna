@@ -188,7 +188,11 @@ namespace GameMesh.Network
                             MaxHp = 100,
                             StateSeq = 1
                         },
-                        Kind = req.EnterMap.MapTemplateId == 1002 ? "LINE" : "LEGACY_POOL",
+                        Kind = req.EnterMap.MapTemplateId == 1002
+                            ? "LINE"
+                            : req.EnterMap.MapTemplateId == 2102
+                                ? "DUNGEON"
+                                : "LEGACY_POOL",
                         LineNo = req.EnterMap.LineNo != 0 ? req.EnterMap.LineNo : 1,
                         Occupancy = 1,
                         SoftCap = 100,
@@ -254,6 +258,21 @@ namespace GameMesh.Network
                         QueueLength = 1,
                         Ready = false
                     };
+                    break;
+                case GameRequest.BodyOneofCase.CreateDungeon:
+                    rsp.CreateDungeon = new CreateDungeonRsp
+                    {
+                        Ok = true,
+                        MapTemplateId = req.CreateDungeon.MapTemplateId != 0
+                            ? req.CreateDungeon.MapTemplateId
+                            : 2102UL,
+                        MapInstanceId = 21001,
+                        OwnerEpoch = 1,
+                        RouteVersion = 1
+                    };
+                    break;
+                case GameRequest.BodyOneofCase.InteractPortal:
+                    rsp.InteractPortal = PortalRsp(req.InteractPortal);
                     break;
                 case GameRequest.BodyOneofCase.Move:
                     rsp.Move = new MoveRsp
@@ -324,13 +343,44 @@ namespace GameMesh.Network
                     {
                         MapTemplateId = 1001,
                         DataVersion = 1,
-                        Sha256 = "ceef56586c5281dca4ce45340f511d0d577fd724b14131ae5a21d01ea7f41317"
+                        Sha256 = "ceef56586c5281dca4ce45340f511d0d577fd724b14131ae5a21d01ea7f41317",
+                        SceneName = "MainScene",
+                        Kind = "LEGACY_POOL"
+                    });
+                    rsp.ServerHello.Maps[0].Portals.Add(new PortalDef
+                    {
+                        PortalId = "spawn_to_dungeon",
+                        FromMapTemplateId = 1001,
+                        ToMapTemplateId = 2102,
+                        Position = new Vec3 { X = -22.5f, Y = -0.244f, Z = -7.25f },
+                        Yaw = 76.022f,
+                        TriggerRadius = 3f
                     });
                     rsp.ServerHello.Maps.Add(new MapManifestEntry
                     {
                         MapTemplateId = 1002,
                         DataVersion = 1,
-                        Sha256 = "46d5bb506de2f0418a85fce8d8e285dfec664023122b2692cecf818a26be75d9"
+                        Sha256 = "46d5bb506de2f0418a85fce8d8e285dfec664023122b2692cecf818a26be75d9",
+                        SceneName = "TerrainDemoScene",
+                        Kind = "LINE"
+                    });
+                    rsp.ServerHello.Maps.Add(new MapManifestEntry
+                    {
+                        MapTemplateId = 2102,
+                        DataVersion = 1,
+                        Sha256 = "ceef56586c5281dca4ce45340f511d0d577fd724b14131ae5a21d01ea7f41317",
+                        SceneName = "MainScene",
+                        Kind = "DUNGEON",
+                        VisualMapTemplateId = 1001
+                    });
+                    rsp.ServerHello.Maps[2].Portals.Add(new PortalDef
+                    {
+                        PortalId = "dungeon_to_spawn",
+                        FromMapTemplateId = 2102,
+                        ToMapTemplateId = 1001,
+                        Position = new Vec3 { X = -22.5f, Y = -0.244f, Z = -7.25f },
+                        Yaw = 76.022f,
+                        TriggerRadius = 3f
                     });
                     break;
                 case GameRequest.BodyOneofCase.Heartbeat:
@@ -397,6 +447,41 @@ namespace GameMesh.Network
                     Message = message,
                     ServerTimeMs = 1
                 }
+            };
+        }
+
+        static InteractPortalRsp PortalRsp(InteractPortalReq req)
+        {
+            var toDungeon = req != null && req.PortalId == "spawn_to_dungeon";
+            var template = toDungeon ? 2102UL : 1001UL;
+            var instance = toDungeon ? 9102UL : 5001UL;
+            return new InteractPortalRsp
+            {
+                Ok = true,
+                MapTemplateId = template,
+                MapInstanceId = instance,
+                OwnerEpoch = 1,
+                RouteVersion = 1,
+                MapDataVersion = req != null ? req.MapDataVersion : 1,
+                MapDataSha256 = req != null ? req.MapDataSha256 ?? "" : "",
+                SpawnPosition = new Vec3 { X = -28.5f, Y = -0.244f, Z = -7.25f },
+                SpawnYaw = 76.022f,
+                Self = new EntitySnapshot
+                {
+                    PlayerId = req != null ? req.PlayerId : 0,
+                    PlayerName = "self",
+                    Position = new Vec3 { X = -28.5f, Y = -0.244f, Z = -7.25f },
+                    Yaw = 76.022f,
+                    Hp = 100,
+                    MaxHp = 100,
+                    StateSeq = 1
+                },
+                Kind = toDungeon ? "DUNGEON" : "LEGACY_POOL",
+                Occupancy = 1,
+                SoftCap = toDungeon ? 5u : 100u,
+                HardCap = toDungeon ? 5u : 400u,
+                PortalId = req != null ? req.PortalId ?? "" : "",
+                FromMapTemplateId = toDungeon ? 1001UL : 2102UL
             };
         }
 

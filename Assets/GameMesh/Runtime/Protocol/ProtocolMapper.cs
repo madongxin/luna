@@ -146,6 +146,10 @@ namespace GameMesh.Protocol
                     return rsp.SwitchLine?.ErrorCode ?? "";
                 case GameResponse.BodyOneofCase.EnqueueMap:
                     return rsp.EnqueueMap?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.CreateDungeon:
+                    return rsp.CreateDungeon?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.InteractPortal:
+                    return rsp.InteractPortal?.ErrorCode ?? "";
                 default:
                     return "";
             }
