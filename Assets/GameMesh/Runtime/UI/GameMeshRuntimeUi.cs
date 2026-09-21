@@ -307,7 +307,7 @@ namespace GameMesh.UI
                 "    地图实例  " + client.Session.MapInstanceId +
                 "    AOI  " + client.Aoi.Entities.Count, _label);
             if (client.IsDungeon)
-                GUILayout.Label("当前在副本 2102（画面是 1001）。点「返回 1001」离开副本。", _statusWarn);
+                GUILayout.Label("当前在副本 2102（画面是 1001）。点「返回 1002」离开副本回苏州。", _statusWarn);
             GUILayout.Label(
                 "client_seq  " + (client.Connection != null ? client.Connection.LastClientSeq.ToString() : "0") +
                 "    server_seq  " + client.Session.LastServerSeq +
@@ -456,17 +456,17 @@ namespace GameMesh.UI
             GUILayout.Space(12);
             GUILayout.Label("苏州 1002  ↔  副本 2102", _section);
             var canAct = !client.IsBusy && client.Session.HasIdentity;
-            var canDungeon = canAct && client.IsOnMap && !client.IsDungeon;
+            var canDungeon = canAct && !client.IsDungeon;
             GUILayout.BeginHorizontal();
             GUI.enabled = canDungeon;
             if (GUILayout.Button(client.IsDungeon ? "已在副本" : "进入副本", _loginStyle, GUILayout.Height(56)))
                 _ = client.EnterDungeonAsync();
             GUI.enabled = canAct && (client.IsDungeon || !client.IsOnSuzhou);
-            var leaveLabel = client.IsDungeon ? "返回 1001" : client.IsOnSuzhou ? "已在 1002" : "返回 1002";
+            var leaveLabel = client.IsDungeon ? "返回 1002" : client.IsOnSuzhou ? "已在 1002" : "返回 1002";
             if (GUILayout.Button(leaveLabel, _loginStyle, GUILayout.Height(56)))
             {
                 if (client.IsDungeon)
-                    _ = client.SwitchPublicMapAsync(HelloMapCatalog.HubTemplateId);
+                    _ = client.SwitchPublicMapAsync(HelloMapCatalog.LineTemplateId);
                 else
                     _ = client.EnterSuzhouAsync();
             }
@@ -474,9 +474,9 @@ namespace GameMesh.UI
             GUILayout.EndHorizontal();
             GUILayout.Label(
                 client.IsDungeon
-                    ? "当前在副本 2102。点「返回 1001」回主城。"
+                    ? "当前在副本 2102（画面同 1001）。点「返回 1002」离开副本回苏州。"
                     : !client.IsOnMap
-                        ? "现在未进线，进不了副本。先登录进苏州 1002，再点「进入副本」。"
+                        ? "现在未进线。点「进入副本」会先回苏州再开本，或先点「返回 1002」。"
                         : client.IsOnSuzhou
                             ? "已在 1002。点「进入副本」立刻创建 1001 地图的副本 2102。"
                             : client.IsOnHub
@@ -490,7 +490,7 @@ namespace GameMesh.UI
             {
                 GUILayout.Label(
                     client.IsDungeon
-                        ? "当前不在苏州 1002。点「返回 1001」离开副本。"
+                        ? "当前不在苏州 1002。点「返回 1002」离开副本。"
                         : "当前不在苏州 1002。点「返回 1002」后再切线。",
                     _hint);
                 return;

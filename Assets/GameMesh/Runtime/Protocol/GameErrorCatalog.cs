@@ -95,8 +95,8 @@ namespace GameMesh.Protocol
                 "传送门进出已关闭。请用调试面板的「进入副本」和「返回 1001」。"),
             ["ERR_PORTAL_UNKNOWN"] = new GameErrorInfo("ERR_PORTAL_UNKNOWN", "传送门已关闭", false,
                 "客户端不再走传送门。请用调试面板进入或离开副本。"),
-            ["ERR_PORTAL_REQUIRED"] = new GameErrorInfo("ERR_PORTAL_REQUIRED", "请从调试面板进出副本", false,
-                "请点「进入副本」创建 2102，或点「返回 1001」离开副本。"),
+            ["ERR_PORTAL_REQUIRED"] = new GameErrorInfo("ERR_PORTAL_REQUIRED", "服务器要求走传送门开副本", true,
+                "线上 CreateDungeon(2102) 被拒绝。客户端会改走 1001 的 InteractPortal。"),
             ["ERR_DUNGEON_NOT_MEMBER"] = new GameErrorInfo("ERR_DUNGEON_NOT_MEMBER", "不是该副本队员", false,
                 "当前账号不是这个副本的队员。"),
             ["NOT_FOUND"] = new GameErrorInfo("NOT_FOUND", "资源不存在", false,
@@ -112,7 +112,9 @@ namespace GameMesh.Protocol
             ["STALE_ROUTE"] = new GameErrorInfo("STALE_ROUTE", "路由版本过期，正在同步", true,
                 "你还在图里。服务器换了路由版本，客户端会拉一次世界快照，不要再点进入。"),
             ["ERR_STALE_ROUTE"] = new GameErrorInfo("ERR_STALE_ROUTE", "路由版本过期，正在同步", true,
-                "你还在图里。服务器换了路由版本，客户端会拉一次世界快照，不要再点进入。"),
+                "你还在图里。服务器换了路由版本，客户端会拉一次世界快照再切图。"),
+            ["ERR_ROUTE_STALE"] = new GameErrorInfo("ERR_ROUTE_STALE", "路由版本过期，正在同步", true,
+                "刚进出副本后 route_version 还没跟上。会先拉快照再离开当前图，不要连点。"),
             ["ERR_MOVE_TOO_FAST"] = new GameErrorInfo("ERR_MOVE_TOO_FAST", "移动过快，已按服务器位置校正", false,
                 "客户端移动超过允许速度。角色会被拉回服务器位置，请按校正后的坐标继续。"),
             ["ERR_UNWALKABLE"] = new GameErrorInfo("ERR_UNWALKABLE", "目标位置不可行走", false,
@@ -224,7 +226,7 @@ namespace GameMesh.Protocol
 
         public static bool IsStaleRoute(string code)
         {
-            return code == "STALE_ROUTE" || code == "ERR_STALE_ROUTE";
+            return code == "STALE_ROUTE" || code == "ERR_STALE_ROUTE" || code == "ERR_ROUTE_STALE";
         }
 
         public static bool IsStaleGeneration(string code, string message = "")

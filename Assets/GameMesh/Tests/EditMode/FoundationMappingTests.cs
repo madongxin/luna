@@ -354,9 +354,10 @@ namespace GameMesh.Tests.EditMode
             Assert.IsFalse(GameErrorCatalog.IsMapNoLine("ERR_SESSION_EXPIRED"));
             Assert.IsTrue(GameErrorCatalog.IsMapNoLine("ERR_MAP_NO_LINE"));
             Assert.IsTrue(GameErrorCatalog.IsStaleRoute("STALE_ROUTE"));
+            Assert.IsTrue(GameErrorCatalog.IsStaleRoute("ERR_ROUTE_STALE"));
             Assert.IsFalse(GameErrorCatalog.IsStaleRoute(""));
             Assert.AreEqual("该线已满，请换线或排队", GameErrorCatalog.Resolve("ERR_MAP_LINE_FULL").Chinese);
-            Assert.AreEqual("请从调试面板进出副本", GameErrorCatalog.Resolve("ERR_PORTAL_REQUIRED").Chinese);
+            Assert.AreEqual("服务器要求走传送门开副本", GameErrorCatalog.Resolve("ERR_PORTAL_REQUIRED").Chinese);
             Assert.IsFalse(GameErrorCatalog.Resolve("ERR_PORTAL_UNKNOWN").Retryable);
             Assert.IsTrue(GameErrorCatalog.Resolve("ERR_PORTAL_TOO_FAR").Retryable);
         }

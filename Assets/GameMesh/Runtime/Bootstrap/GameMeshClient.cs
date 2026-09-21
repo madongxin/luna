@@ -66,6 +66,8 @@ namespace GameMesh.Bootstrap
             Connection == null ||
             Connection.State != ConnectionState.InWorld ||
             Reconnect.InFlight ||
+            _staleRouteInFlight ||
+            Time.unscaledTime < _ignoreStaleMovesUntil ||
             (AppPaused && string.IsNullOrEmpty(LaunchArgs.AutoScenario)) ||
             Push.HasGap ||
             Session.IsDead ||
@@ -93,6 +95,7 @@ namespace GameMesh.Bootstrap
         bool _helloInFlight;
         bool _snapshotInFlight;
         bool _staleRouteInFlight;
+        float _ignoreStaleMovesUntil;
         bool _respawnInFlight;
         string _enterOpId;
         string _switchOpId;
@@ -573,56 +576,71 @@ namespace GameMesh.Bootstrap
                 return;
             }
 
-            if (!IsOnMap)
-            {
-                SetError("ERR_NOT_ON_MAP",
-                    "现在是未进线，进不了副本。请先登录进苏州 1002，再点「进入副本」。");
-                WriteLiveEnter("DUNGEON_ABORT not on map instance=" + Session.MapInstanceId +
-                               " remembered=" + _serverMapInstanceId);
-                return;
-            }
-
             if (_busy)
                 return;
             _busy = true;
             try
             {
                 BusyStage = "进入副本";
-                WriteLiveEnter("DUNGEON_REQ from=" + Session.MapTemplateId + " instance=" + Session.MapInstanceId);
-                if (!await LeaveCurrentMapAsync().ConfigureAwait(true))
+                if (!IsOnMap)
                 {
-                    WriteLiveEnter("DUNGEON_ABORT leave failed");
-                    return;
-                }
-
-                var created = await CreateDungeonAsync(HelloMapCatalog.DungeonTemplateId).ConfigureAwait(true);
-                if (created == null)
-                    return;
-
-                var template = created.MapTemplateId != 0
-                    ? created.MapTemplateId
-                    : HelloMapCatalog.DungeonTemplateId;
-                WriteLiveEnter("DUNGEON_ENTER template=" + template + " instance=" + created.MapInstanceId);
-                _enterWait = null;
-                await EnterMapAsync(created.MapInstanceId, 0, "", template).ConfigureAwait(true);
-                var wait = _enterWait;
-                if (wait != null && !wait.Task.IsCompleted)
-                {
-                    var finished = await Task.WhenAny(wait.Task, Task.Delay(20000)).ConfigureAwait(true);
-                    if (finished != wait.Task)
+                    WriteLiveEnter("DUNGEON_NEED_MAP");
+                    await TryEnterWorldAfterLoginAsync().ConfigureAwait(true);
+                    if (!IsOnMap)
+                        await EnsureOnTemplateAsync(HelloMapCatalog.LineTemplateId).ConfigureAwait(true);
+                    if (!IsOnMap)
                     {
-                        WriteLiveEnter("DUNGEON_ENTER timeout template=" + template);
+                        SetError("ERR_NOT_ON_MAP",
+                            "还没进线。请先点「返回 1002」进苏州，再点「进入副本」。");
+                        WriteLiveEnter("DUNGEON_ABORT still not on map");
                         return;
                     }
                 }
 
-                if (IsOnMap)
-                    SetNotice("已进入副本");
+                WriteLiveEnter("DUNGEON_REQ from=" + Session.MapTemplateId + " instance=" + Session.MapInstanceId);
+                var created = await CreateDungeonAsync(HelloMapCatalog.DungeonTemplateId).ConfigureAwait(true);
+                if (created != null)
+                {
+                    if (!await LeaveCurrentMapAsync().ConfigureAwait(true))
+                    {
+                        WriteLiveEnter("DUNGEON_ABORT leave after create failed");
+                        return;
+                    }
+
+                    await EnterCreatedDungeonAsync(created).ConfigureAwait(true);
+                    return;
+                }
+
+                var createCode = LastErrorCode ?? "";
+                if (createCode == "ERR_PORTAL_REQUIRED" ||
+                    createCode == "ERR_DUNGEON_CREATE_FORBIDDEN" ||
+                    createCode == "ERR_PORTAL_UNKNOWN")
+                {
+                    ClearError();
+                    WriteLiveEnter("DUNGEON_FALLBACK_PORTAL code=" + createCode);
+                    if (!await EnsureOnTemplateAsync(HelloMapCatalog.HubTemplateId).ConfigureAwait(true))
+                    {
+                        WriteLiveEnter("DUNGEON_ABORT fallback not on 1001");
+                        if (!IsOnMap)
+                            await EnsureOnTemplateAsync(HelloMapCatalog.LineTemplateId).ConfigureAwait(true);
+                        SetError("ERR_PORTAL_REQUIRED",
+                            "服务器要求走 1001 传送门开副本，但没能进主城。请再点「进入副本」。",
+                            "ERR_PORTAL_REQUIRED");
+                        return;
+                    }
+
+                    await ApproachAndInteractPortalAsync(HelloMapCatalog.SpawnToDungeon).ConfigureAwait(true);
+                    return;
+                }
+
+                if (!IsOnMap)
+                    await EnsureOnTemplateAsync(HelloMapCatalog.LineTemplateId).ConfigureAwait(true);
             }
             finally
             {
                 _busy = false;
-                if (BusyStage == "进入副本" || BusyStage == "离开地图" || BusyStage == "创建副本")
+                if (BusyStage == "进入副本" || BusyStage == "离开地图" || BusyStage == "创建副本" ||
+                    BusyStage == "进入 1001")
                     BusyStage = "";
             }
         }
@@ -735,6 +753,78 @@ namespace GameMesh.Bootstrap
             }
         }
 
+        async Task EnterCreatedDungeonAsync(CreateDungeonRsp created)
+        {
+            var template = created.MapTemplateId != 0
+                ? created.MapTemplateId
+                : HelloMapCatalog.DungeonTemplateId;
+            WriteLiveEnter("DUNGEON_ENTER template=" + template + " instance=" + created.MapInstanceId);
+            _enterWait = null;
+            await EnterMapAsync(created.MapInstanceId, 0, "", template).ConfigureAwait(true);
+            var wait = _enterWait;
+            if (wait != null && !wait.Task.IsCompleted)
+            {
+                var finished = await Task.WhenAny(wait.Task, Task.Delay(20000)).ConfigureAwait(true);
+                if (finished != wait.Task)
+                {
+                    WriteLiveEnter("DUNGEON_ENTER timeout template=" + template);
+                    return;
+                }
+            }
+
+            if (IsOnMap)
+                SetNotice("已进入副本");
+        }
+
+        async Task ApproachAndInteractPortalAsync(string portalId)
+        {
+            if (Session.MapTemplateId != HelloMapCatalog.HubTemplateId)
+            {
+                WriteLiveEnter("PORTAL_ABORT need 1001 now=" + Session.MapTemplateId);
+                SetError("ERR_PORTAL_UNKNOWN", "服务器开副本要在 1001 发 InteractPortal");
+                return;
+            }
+
+            var portal = new Vector3(HelloMapCatalog.PortalX, HelloMapCatalog.PortalY, HelloMapCatalog.PortalZ);
+            var spawn = new Vector3(HelloMapCatalog.SpawnX, HelloMapCatalog.SpawnY, HelloMapCatalog.SpawnZ);
+            var stand = Vector3.MoveTowards(portal, spawn, 0.9f);
+            for (var attempt = 1; attempt <= 20 && !ServerInsideSpawnPortal(); attempt++)
+            {
+                var from = _hasServerPos ? _serverPos : spawn;
+                var next = Vector3.MoveTowards(from, stand, 0.45f);
+                HasPendingSpawn = true;
+                PendingSpawnFromServer = true;
+                PendingSpawn = next;
+                PendingSpawnYaw = HelloMapCatalog.PortalYaw;
+                WriteLiveEnter("PORTAL_APPROACH try=" + attempt + " from=" + from + " next=" + next);
+                var moved = await SendMoveAsync(next, HelloMapCatalog.PortalYaw, default, true).ConfigureAwait(true);
+                WriteLiveEnter("PORTAL_MOVE ok=" + moved + " server=" +
+                               (_hasServerPos ? _serverPos.ToString() : "none") +
+                               " err=" + LastErrorCode);
+                await Task.Delay(moved ? 120 : 180).ConfigureAwait(true);
+            }
+
+            if (!ServerInsideSpawnPortal())
+            {
+                WriteLiveEnter("PORTAL_SKIP not inside 3m server=" +
+                               (_hasServerPos ? _serverPos.ToString() : "none"));
+                SetError("ERR_PORTAL_TOO_FAR",
+                    "服务器还认为你离 1001 传送门超过 3m。请再点一次「进入副本」。",
+                    "ERR_PORTAL_TOO_FAR");
+                return;
+            }
+
+            _nextPortalAt = 0f;
+            _portalInFlight = false;
+            await InteractPortalAsync(HelloMapCatalog.SpawnToDungeon).ConfigureAwait(true);
+        }
+
+        bool ServerInsideSpawnPortal()
+        {
+            return _hasServerPos &&
+                   HelloMapCatalog.InSpawnToDungeonRadius(_serverPos.x, _serverPos.z);
+        }
+
         async Task<bool> LeaveCurrentMapAsync()
         {
             var instance = Session.MapInstanceId != 0
@@ -761,12 +851,62 @@ namespace GameMesh.Bootstrap
                 }).ConfigureAwait(true);
                 var ok = rsp != null && rsp.Ok && (rsp.LeaveMap == null || rsp.LeaveMap.Ok);
                 var code = ProtocolMapper.ExtractErrorCode(rsp);
-                WriteLiveEnter("LEAVE_RSP ok=" + ok + " code=" + code + " msg=" +
-                               (rsp != null ? rsp.LeaveMap?.Message ?? rsp.Message : ""));
+                var msg = rsp != null ? rsp.LeaveMap?.Message ?? rsp.Message : "";
+                WriteLiveEnter("LEAVE_RSP ok=" + ok + " code=" + code + " msg=" + msg);
                 if (!ok)
                 {
+                    if (IsLeaveAlreadyGone(code, msg))
+                    {
+                        WriteLiveEnter("LEAVE_GONE treat as left code=" + code);
+                        DropMapPresence();
+                        ForgetServerPresence();
+                        LocalIdentityStore.ClearLastMap();
+                        ClearError();
+                        return true;
+                    }
+
+                    if (GameErrorCatalog.IsStaleRoute(code) ||
+                        GameErrorCatalog.NeedsWorldSnapshot(code, msg))
+                    {
+                        WriteLiveEnter("LEAVE_STALE snapshot then retry");
+                        try { await TryRestoreWorldFromSnapshotAsync().ConfigureAwait(true); }
+                        catch (Exception ex) { WriteLiveEnter("LEAVE_STALE_SNAP_FAIL " + ex.Message); }
+                        instance = Session.MapInstanceId != 0
+                            ? Session.MapInstanceId
+                            : (_serverMapInstanceId != 0 ? _serverMapInstanceId : instance);
+                        if (instance == 0)
+                        {
+                            DropMapPresence();
+                            ForgetServerPresence();
+                            LocalIdentityStore.ClearLastMap();
+                            ClearError();
+                            return true;
+                        }
+
+                        rsp = await RequestAsync(new GameRequest
+                        {
+                            LeaveMap = new LeaveMapReq
+                            {
+                                PlayerId = Session.PlayerId,
+                                MapInstanceId = instance
+                            }
+                        }).ConfigureAwait(true);
+                        ok = rsp != null && rsp.Ok && (rsp.LeaveMap == null || rsp.LeaveMap.Ok);
+                        code = ProtocolMapper.ExtractErrorCode(rsp);
+                        msg = rsp != null ? rsp.LeaveMap?.Message ?? rsp.Message : "";
+                        WriteLiveEnter("LEAVE_RETRY ok=" + ok + " code=" + code + " msg=" + msg);
+                        if (ok || IsLeaveAlreadyGone(code, msg) || GameErrorCatalog.IsStaleRoute(code))
+                        {
+                            DropMapPresence();
+                            ForgetServerPresence();
+                            LocalIdentityStore.ClearLastMap();
+                            ClearError();
+                            return true;
+                        }
+                    }
+
                     SetError(string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code,
-                        rsp != null ? rsp.LeaveMap?.Message ?? rsp.Message : "leave map failed", code);
+                        string.IsNullOrEmpty(msg) ? "leave map failed" : msg, code);
                     return false;
                 }
 
@@ -781,6 +921,17 @@ namespace GameMesh.Bootstrap
                 SetError(ex);
                 return false;
             }
+        }
+
+        static bool IsLeaveAlreadyGone(string code, string message)
+        {
+            if (code == "NOT_CLAIMED" || code == "ERR_NOT_ON_MAP" ||
+                code == "FENCE_REJECT" || code == "ERR_FENCE_REJECT")
+                return true;
+            var msg = message ?? "";
+            return msg.IndexOf("not bound", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   msg.IndexOf("not claimed", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                   msg.IndexOf("not on map", System.StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         void RememberServerPresence(ulong templateId, ulong instanceId, Vec3 pos)
@@ -1636,6 +1787,11 @@ namespace GameMesh.Bootstrap
                     HandleSessionReplaced(code);
                 else if (GameErrorCatalog.IsStaleRoute(code))
                 {
+                    if (request.BodyCase == GameRequest.BodyOneofCase.LeaveMap ||
+                        request.BodyCase == GameRequest.BodyOneofCase.WorldSnapshot ||
+                        request.BodyCase == GameRequest.BodyOneofCase.Heartbeat ||
+                        request.BodyCase == GameRequest.BodyOneofCase.Move)
+                        return rsp;
                     SetError(string.IsNullOrEmpty(code) ? "STALE_ROUTE" : code, rsp.Message, code, trace);
                     RestoreMapPresence();
                     _ = RecoverStaleRouteAsync();
@@ -1927,9 +2083,14 @@ namespace GameMesh.Bootstrap
             if (!move.Ok)
             {
                 var code = string.IsNullOrEmpty(move.ErrorCode) ? GameMeshErrorCode.ServerError : move.ErrorCode;
-                SetError(code, move.Message, code);
                 if (GameErrorCatalog.IsStaleRoute(code))
-                    _ = RecoverStaleRouteAsync();
+                {
+                    if (Time.unscaledTime >= _ignoreStaleMovesUntil)
+                        _ = RecoverStaleRouteAsync();
+                    return;
+                }
+
+                SetError(code, move.Message, code);
             }
         }
 
@@ -2300,11 +2461,19 @@ namespace GameMesh.Bootstrap
         {
             if (_staleRouteInFlight)
                 return;
+            if (Time.unscaledTime < _ignoreStaleMovesUntil)
+                return;
             _staleRouteInFlight = true;
+            _ignoreStaleMovesUntil = Time.unscaledTime + 2.5f;
             try
             {
                 BusyStage = "同步路由";
+                WriteLiveEnter("ROUTE_RESYNC template=" + Session.MapTemplateId +
+                               " instance=" + Session.MapInstanceId + " route=" + Session.RouteVersion);
                 await TryRestoreWorldFromSnapshotAsync().ConfigureAwait(true);
+                MoveSampler.Reset();
+                MoveCorrector.SuppressFor(1f);
+                _ignoreStaleMovesUntil = Time.unscaledTime + 2.5f;
             }
             catch (Exception ex)
             {

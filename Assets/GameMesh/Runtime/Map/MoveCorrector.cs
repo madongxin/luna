@@ -91,6 +91,11 @@ namespace GameMesh.Map
             return local;
         }
 
+        public void SuppressFor(float seconds)
+        {
+            _suppressUntil = Time.unscaledTime + Mathf.Max(0f, seconds);
+        }
+
         public bool ShouldSuppress(float now) => now < _suppressUntil;
     }
 }
