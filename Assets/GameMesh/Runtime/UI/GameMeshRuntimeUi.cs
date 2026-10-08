@@ -628,7 +628,7 @@ namespace GameMesh.UI
                 return;
 
             var friends = client.Friends;
-            var loggedIn = client.Session.HasIdentity;
+            var loggedIn = friends.CanRequest;
             GUI.enabled = loggedIn;
             GUILayout.BeginHorizontal();
             if (GUILayout.Button(TabLabel("好友", friends.Tab == FriendPanelTab.Friends), _btnStyle, GUILayout.Height(40)))

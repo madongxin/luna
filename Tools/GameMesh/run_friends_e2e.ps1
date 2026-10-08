@@ -69,6 +69,7 @@ function Start-Client([string]$role, [string]$device, [string]$name, [string]$da
 function Assert-Event($events, [string]$name) {
     $hit = @($events | Where-Object { $_.event -eq $name })
     if ($hit.Count -lt 1) { throw "missing structured event $name" }
+    return $hit[0]
 }
 
 try {
@@ -104,14 +105,20 @@ try {
     $be = Read-Events $bDir
     Assert-Event $ae "friend_applied"
     Assert-Event $ae "friend_added_seen"
+    Assert-Event $ae "friend_presence_offline"
+    Assert-Event $ae "friend_presence_online"
     Assert-Event $ae "friend_removed_seen"
     Assert-Event $ae "friend_blocked"
-    Assert-Event $be "friend_request_seen"
+    Assert-Event $ae "session_closed"
+    $request = Assert-Event $be "friend_request_seen"
+    if ([string]::IsNullOrWhiteSpace([string]$request.name)) { throw "friend request missing name" }
+    if ([int]$request.level -le 0) { throw "friend request missing level" }
     Assert-Event $be "friend_accepted"
     Assert-Event $be "friend_deleted"
     Assert-Event $be "friend_reapply_hidden"
-    $blob = (Get-Content -Raw (Join-Path $bDir "events.jsonl"))
-    if ($blob -match "拉黑了你") { throw "block leak in B events" }
+    Assert-Event $be "session_closed"
+    $blob = (Get-Content -Raw (Join-Path $bDir "events.jsonl")) + (Get-Content -Raw (Join-Path $aDir "events.jsonl"))
+    if ($blob -match "拉黑了你") { throw "block leak in events" }
     Write-Host "PASS friends e2e"
 }
 finally {

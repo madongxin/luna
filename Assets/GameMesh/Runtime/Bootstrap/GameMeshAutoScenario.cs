@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using GameMesh.Aoi;
 using GameMesh.Auth;
 using GameMesh.Network;
+using GameMesh.Protocol;
 using UnityEngine;
 
 namespace GameMesh.Bootstrap
@@ -194,6 +195,12 @@ namespace GameMesh.Bootstrap
                 await WaitFriendAsync(peer, true, 20f).ConfigureAwait(true);
                 Event("friend_added_seen", "peer_id", peer);
                 Mark("a-sees-friend");
+                await WaitMarkerAsync("b-dropped", 40f).ConfigureAwait(true);
+                await WaitFriendOnlineAsync(peer, false, 25f).ConfigureAwait(true);
+                Event("friend_presence_offline", "peer_id", peer);
+                await WaitMarkerAsync("b-back", 40f).ConfigureAwait(true);
+                await WaitFriendOnlineAsync(peer, true, 25f).ConfigureAwait(true);
+                Event("friend_presence_online", "peer_id", peer);
                 await WaitFriendAsync(peer, false, 30f).ConfigureAwait(true);
                 Event("friend_removed_seen", "peer_id", peer);
                 await _client.Friends.BlockAsync(peer, default).ConfigureAwait(true);
@@ -206,15 +213,24 @@ namespace GameMesh.Bootstrap
             else
             {
                 await WaitMarkerAsync("a-applied", 40f).ConfigureAwait(true);
-                var requestId = await WaitRequestAsync(peer, 20f).ConfigureAwait(true);
-                Event("friend_request_seen", "peer_id", peer, "request_id", requestId);
-                await _client.Friends.AcceptAsync(requestId, default).ConfigureAwait(true);
+                var request = await WaitRequestAsync(peer, 20f).ConfigureAwait(true);
+                var applicant = request.Applicant;
+                if (applicant == null || string.IsNullOrEmpty(applicant.Name) || applicant.Level == 0)
+                    throw new InvalidOperationException("friend request push missing name or level");
+                Event("friend_request_seen", "peer_id", peer, "request_id", request.RequestId,
+                    "name", applicant.Name, "level", applicant.Level);
+                await _client.Friends.AcceptAsync(request.RequestId, default).ConfigureAwait(true);
                 if (!string.IsNullOrEmpty(_client.Friends.LastError))
                     throw new InvalidOperationException(_client.Friends.LastError);
                 Event("friend_accepted", "peer_id", peer);
                 Mark("b-accepted");
                 await WaitMarkerAsync("a-sees-friend", 20f).ConfigureAwait(true);
                 await WaitFriendAsync(peer, true, 15f).ConfigureAwait(true);
+                await _client.Connection.DisconnectAsync(DisconnectReason.Reconnect, default).ConfigureAwait(true);
+                Mark("b-dropped");
+                await WaitBackInWorldAsync(40f).ConfigureAwait(true);
+                Mark("b-back");
+                await WaitFriendAsync(peer, true, 20f).ConfigureAwait(true);
                 await _client.Friends.DeleteAsync(peer, default).ConfigureAwait(true);
                 if (!string.IsNullOrEmpty(_client.Friends.LastError))
                     throw new InvalidOperationException(_client.Friends.LastError);
@@ -228,11 +244,46 @@ namespace GameMesh.Bootstrap
                 Mark("b-reapplied");
             }
 
+            AssertNoDuplicateRemotes();
             SnapshotBeforeLogout();
             var logout = await _client.LogoutAsync().ConfigureAwait(true);
             RecordLogout(logout);
             if (!logout.AuthorityOk)
                 throw new InvalidOperationException("logout_failed:" + logout.ErrorCode + " " + logout.Message);
+            Event("session_closed", "player_id", _playerIdBeforeLogout);
+        }
+
+        async Task WaitFriendOnlineAsync(ulong peerId, bool online, float timeoutSec)
+        {
+            var deadline = Time.unscaledTime + timeoutSec;
+            while (Time.unscaledTime < deadline)
+            {
+                var row = FindFriend(peerId);
+                if (row != null && row.Online == online)
+                    return;
+                await _client.Friends.RefreshFriendsAsync(default).ConfigureAwait(true);
+                row = FindFriend(peerId);
+                if (row != null && row.Online == online)
+                    return;
+                await Task.Delay(300).ConfigureAwait(true);
+            }
+
+            throw new TimeoutException(online ? "friend presence online missing" : "friend presence offline missing");
+        }
+
+        async Task WaitBackInWorldAsync(float timeoutSec)
+        {
+            var deadline = Time.unscaledTime + timeoutSec;
+            while (Time.unscaledTime < deadline)
+            {
+                if (_client.Connection != null &&
+                    _client.Connection.State == ConnectionState.InWorld &&
+                    _client.Session.HasIdentity)
+                    return;
+                await Task.Yield();
+            }
+
+            throw new TimeoutException("did not return to the map after presence drop");
         }
 
         async Task WaitFriendAsync(ulong peerId, bool present, float timeoutSec)
@@ -251,35 +302,59 @@ namespace GameMesh.Bootstrap
             throw new TimeoutException(present ? "friend not added" : "friend not removed");
         }
 
-        async Task<ulong> WaitRequestAsync(ulong peerId, float timeoutSec)
+        async Task<FriendRequestInfo> WaitRequestAsync(ulong peerId, float timeoutSec)
         {
             var deadline = Time.unscaledTime + timeoutSec;
             while (Time.unscaledTime < deadline)
             {
-                var id = FindRequest(peerId);
-                if (id != 0)
-                    return id;
+                var row = FindRequest(peerId);
+                if (row != null)
+                    return row;
                 await _client.Friends.RefreshRequestsAsync(default).ConfigureAwait(true);
-                id = FindRequest(peerId);
-                if (id != 0)
-                    return id;
+                row = FindRequest(peerId);
+                if (row != null)
+                    return row;
                 await Task.Delay(300).ConfigureAwait(true);
             }
 
             throw new TimeoutException("friend request not seen");
         }
 
-        ulong FindRequest(ulong peerId)
+        FriendRequestInfo FindRequest(ulong peerId)
         {
             var requests = _client.Friends.Requests;
             for (var i = 0; i < requests.Count; i++)
             {
                 var row = requests[i];
-                if (row?.Applicant != null && row.Applicant.PlayerId == peerId)
-                    return row.RequestId;
+                if (row?.Applicant != null && row.Applicant.PlayerId == peerId && row.RequestId != 0)
+                    return row;
             }
 
-            return 0;
+            return null;
+        }
+
+        FriendBrief FindFriend(ulong peerId)
+        {
+            var friends = _client.Friends.Friends;
+            for (var i = 0; i < friends.Count; i++)
+            {
+                if (friends[i] != null && friends[i].PlayerId == peerId)
+                    return friends[i];
+            }
+
+            return null;
+        }
+
+        void AssertNoDuplicateRemotes()
+        {
+            var seen = new System.Collections.Generic.HashSet<ulong>();
+            foreach (var entity in _client.Aoi.Entities.Values)
+            {
+                if (entity == null || entity.PlayerId == 0)
+                    continue;
+                if (!seen.Add(entity.PlayerId))
+                    throw new InvalidOperationException("duplicate remote entity " + entity.PlayerId);
+            }
         }
 
         bool HasFriend(ulong peerId)

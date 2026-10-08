@@ -213,7 +213,7 @@ namespace GameMesh.UI
 
         void DoSearch()
         {
-            if (_client == null || _client.Friends.Busy)
+            if (_client == null || !_client.Friends.CanRequest || _client.Friends.Busy)
                 return;
             _ = _client.Friends.SearchAsync(_query != null ? _query.text : "", default);
         }
@@ -276,7 +276,7 @@ namespace GameMesh.UI
                 if (row == null)
                     continue;
                 var who = row.Applicant;
-                var name = who != null && !string.IsNullOrEmpty(who.Name) ? who.Name : "玩家";
+                var name = FriendClient.DisplayName(who, false);
                 var id = who != null ? who.PlayerId : 0UL;
                 var remain = Remain(row.ExpireAt);
                 AddLine(name + "  #" + id + (string.IsNullOrEmpty(remain) ? "" : "  " + remain));
@@ -284,12 +284,12 @@ namespace GameMesh.UI
                 var actions = AddRow();
                 AddSmall(actions, "同意", () =>
                 {
-                    if (!friends.Busy)
+                    if (friends.CanRequest && !friends.Busy)
                         _ = friends.AcceptAsync(requestId, default);
                 });
                 AddSmall(actions, "拒绝", () =>
                 {
-                    if (!friends.Busy)
+                    if (friends.CanRequest && !friends.Busy)
                         _ = friends.RejectAsync(requestId, default);
                 });
             }
@@ -308,13 +308,13 @@ namespace GameMesh.UI
                 var row = friends.Blocked[i];
                 if (row == null)
                     continue;
-                var name = string.IsNullOrEmpty(row.Name) ? "玩家" : row.Name;
+                var name = FriendClient.DisplayName(row, true);
                 AddLine(name + "  #" + row.PlayerId);
                 var id = row.PlayerId;
                 var actions = AddRow();
                 AddSmall(actions, "解除拉黑", () =>
                 {
-                    if (!friends.Busy)
+                    if (friends.CanRequest && !friends.Busy)
                         _ = friends.UnblockAsync(id, default);
                 });
             }
@@ -333,7 +333,7 @@ namespace GameMesh.UI
             {
                 AddSmall(actions, "申请", () =>
                 {
-                    if (!friends.Busy)
+                    if (friends.CanRequest && !friends.Busy)
                         _ = friends.ApplyAsync(id, name, default);
                 });
             }
@@ -371,7 +371,7 @@ namespace GameMesh.UI
             AddSmall(actions, "确认", () =>
             {
                 _confirmId = 0;
-                if (friends.Busy)
+                if (!friends.CanRequest || friends.Busy)
                     return;
                 if (block)
                     _ = friends.BlockAsync(id, default);
@@ -388,7 +388,7 @@ namespace GameMesh.UI
         static string DescribeFriend(FriendBrief row)
         {
             var state = row.Online ? "在线" : "离线";
-            var text = state + "  " + (string.IsNullOrEmpty(row.Name) ? "玩家" : row.Name) +
+            var text = state + "  " + FriendClient.DisplayName(row, false) +
                        "  Lv." + row.Level;
             if (row.Profession != 0)
                 text += "  职业 " + row.Profession.ToString(CultureInfo.InvariantCulture);
@@ -481,7 +481,8 @@ namespace GameMesh.UI
             var element = button.gameObject.AddComponent<LayoutElement>();
             element.minWidth = 96;
             element.minHeight = 32;
-            button.interactable = click != null && (_client == null || !_client.Friends.Busy);
+            button.interactable = click != null &&
+                                   (_client == null || (_client.Friends.CanRequest && !_client.Friends.Busy));
         }
 
         Button MakeButton(Transform parent, string title, UnityEngine.Events.UnityAction click)

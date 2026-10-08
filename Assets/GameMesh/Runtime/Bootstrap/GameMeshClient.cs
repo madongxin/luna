@@ -287,7 +287,7 @@ namespace GameMesh.Bootstrap
                 _ = Safe(Mail.RefreshAsync(_lifetime.Token));
             }
 
-            if (Friends != null && Session.HasIdentity &&
+            if (Friends != null && Session.HasIdentity && !ReconnectGaveUp &&
                 Friends.ShouldPoll(Time.unscaledTime, _lastFriendPoll, Friends.PanelOpen))
             {
                 _lastFriendPoll = Time.unscaledTime;
@@ -2016,6 +2016,8 @@ namespace GameMesh.Bootstrap
                     return;
                 Session.AutoReconnect = false;
                 ReconnectGaveUp = true;
+                if (Friends != null)
+                    Friends.SetRequestsOpen(false);
                 ClearReconnectStatus();
                 SetError(GameMeshErrorCode.ClientDisconnected, "连接断开");
                 return;
