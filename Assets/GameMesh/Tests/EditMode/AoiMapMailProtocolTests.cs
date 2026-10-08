@@ -244,7 +244,8 @@ namespace GameMesh.Tests.EditMode
             var rsp = new GameResponse
             {
                 Ok = true,
-                Logout = new LogoutRsp { Ok = false, ErrorCode = "ERR_SESSION_EXPIRED", Message = "no" }
+                ErrorCode = "ERR_SESSION_EXPIRED",
+                Logout = new LogoutRsp { Ok = false, Message = "no" }
             };
             var parsed = AuthResponse.FromLogout(rsp, true);
             Assert.IsFalse(parsed.AuthorityOk);

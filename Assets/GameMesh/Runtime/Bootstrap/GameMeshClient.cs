@@ -291,7 +291,9 @@ namespace GameMesh.Bootstrap
                 Friends.ShouldPoll(Time.unscaledTime, _lastFriendPoll, Friends.PanelOpen))
             {
                 _lastFriendPoll = Time.unscaledTime;
-                _ = Safe(Friends.RefreshFriendsAsync(_lifetime.Token));
+                _ = Safe(Friends.PanelOpen
+                    ? Friends.RefreshFriendsAsync(_lifetime.Token)
+                    : Friends.RefreshRequestsAsync(_lifetime.Token));
             }
 
             RestoreMapPresence();
@@ -2089,7 +2091,7 @@ namespace GameMesh.Bootstrap
                 ReconnectGaveUp = false;
                 ClearReconnectStatus();
                 if (Session.HasIdentity)
-                    _ = Safe(Friends.RefreshFriendsAsync(_lifetime.Token));
+                    _ = Safe(Friends.RefreshAfterLoginAsync(_lifetime.Token));
             }
             catch (Exception ex)
             {

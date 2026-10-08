@@ -58,6 +58,8 @@ namespace GameMesh.Bootstrap
                 var scenario = _client.LaunchArgs.AutoScenario ?? "";
                 if (scenario == "extended-mail")
                     await RunExtendedMailAsync().ConfigureAwait(true);
+                else if (scenario == "friends")
+                    await RunFriendsAsync().ConfigureAwait(true);
                 else
                     await RunPresenceMoveLogoutAsync().ConfigureAwait(true);
                 ok = true;
@@ -173,6 +175,150 @@ namespace GameMesh.Bootstrap
             RecordLogout(logout);
             if (!logout.AuthorityOk)
                 throw new InvalidOperationException("logout_failed:" + logout.ErrorCode + " " + logout.Message);
+        }
+
+        async Task RunFriendsAsync()
+        {
+            await BootstrapSessionAsync().ConfigureAwait(true);
+            var peer = await WaitPeerAsync(45f).ConfigureAwait(true);
+            if (_role == "a")
+            {
+                await _client.Friends.SearchAsync(peer.ToString(CultureInfo.InvariantCulture), default)
+                    .ConfigureAwait(true);
+                await _client.Friends.ApplyAsync(peer, "", default).ConfigureAwait(true);
+                if (!string.IsNullOrEmpty(_client.Friends.LastError))
+                    throw new InvalidOperationException(_client.Friends.LastError);
+                Event("friend_applied", "peer_id", peer);
+                Mark("a-applied");
+                await WaitMarkerAsync("b-accepted", 40f).ConfigureAwait(true);
+                await WaitFriendAsync(peer, true, 20f).ConfigureAwait(true);
+                Event("friend_added_seen", "peer_id", peer);
+                Mark("a-sees-friend");
+                await WaitFriendAsync(peer, false, 30f).ConfigureAwait(true);
+                Event("friend_removed_seen", "peer_id", peer);
+                await _client.Friends.BlockAsync(peer, default).ConfigureAwait(true);
+                if (!string.IsNullOrEmpty(_client.Friends.LastError))
+                    throw new InvalidOperationException(_client.Friends.LastError);
+                Event("friend_blocked", "peer_id", peer);
+                Mark("a-blocked");
+                await WaitMarkerAsync("b-reapplied", 30f).ConfigureAwait(true);
+            }
+            else
+            {
+                await WaitMarkerAsync("a-applied", 40f).ConfigureAwait(true);
+                var requestId = await WaitRequestAsync(peer, 20f).ConfigureAwait(true);
+                Event("friend_request_seen", "peer_id", peer, "request_id", requestId);
+                await _client.Friends.AcceptAsync(requestId, default).ConfigureAwait(true);
+                if (!string.IsNullOrEmpty(_client.Friends.LastError))
+                    throw new InvalidOperationException(_client.Friends.LastError);
+                Event("friend_accepted", "peer_id", peer);
+                Mark("b-accepted");
+                await WaitMarkerAsync("a-sees-friend", 20f).ConfigureAwait(true);
+                await WaitFriendAsync(peer, true, 15f).ConfigureAwait(true);
+                await _client.Friends.DeleteAsync(peer, default).ConfigureAwait(true);
+                if (!string.IsNullOrEmpty(_client.Friends.LastError))
+                    throw new InvalidOperationException(_client.Friends.LastError);
+                Event("friend_deleted", "peer_id", peer);
+                await WaitMarkerAsync("a-blocked", 30f).ConfigureAwait(true);
+                _client.Friends.LastError = "";
+                _client.Friends.LastNotice = "";
+                await _client.Friends.ApplyAsync(peer, "", default).ConfigureAwait(true);
+                AssertNoBlockLeak();
+                Event("friend_reapply_hidden", "peer_id", peer);
+                Mark("b-reapplied");
+            }
+
+            SnapshotBeforeLogout();
+            var logout = await _client.LogoutAsync().ConfigureAwait(true);
+            RecordLogout(logout);
+            if (!logout.AuthorityOk)
+                throw new InvalidOperationException("logout_failed:" + logout.ErrorCode + " " + logout.Message);
+        }
+
+        async Task WaitFriendAsync(ulong peerId, bool present, float timeoutSec)
+        {
+            var deadline = Time.unscaledTime + timeoutSec;
+            while (Time.unscaledTime < deadline)
+            {
+                if (HasFriend(peerId) == present)
+                    return;
+                await _client.Friends.RefreshFriendsAsync(default).ConfigureAwait(true);
+                if (HasFriend(peerId) == present)
+                    return;
+                await Task.Delay(300).ConfigureAwait(true);
+            }
+
+            throw new TimeoutException(present ? "friend not added" : "friend not removed");
+        }
+
+        async Task<ulong> WaitRequestAsync(ulong peerId, float timeoutSec)
+        {
+            var deadline = Time.unscaledTime + timeoutSec;
+            while (Time.unscaledTime < deadline)
+            {
+                var id = FindRequest(peerId);
+                if (id != 0)
+                    return id;
+                await _client.Friends.RefreshRequestsAsync(default).ConfigureAwait(true);
+                id = FindRequest(peerId);
+                if (id != 0)
+                    return id;
+                await Task.Delay(300).ConfigureAwait(true);
+            }
+
+            throw new TimeoutException("friend request not seen");
+        }
+
+        ulong FindRequest(ulong peerId)
+        {
+            var requests = _client.Friends.Requests;
+            for (var i = 0; i < requests.Count; i++)
+            {
+                var row = requests[i];
+                if (row?.Applicant != null && row.Applicant.PlayerId == peerId)
+                    return row.RequestId;
+            }
+
+            return 0;
+        }
+
+        bool HasFriend(ulong peerId)
+        {
+            var friends = _client.Friends.Friends;
+            for (var i = 0; i < friends.Count; i++)
+            {
+                if (friends[i] != null && friends[i].PlayerId == peerId)
+                    return true;
+            }
+
+            return false;
+        }
+
+        void AssertNoBlockLeak()
+        {
+            var text = (_client.Friends.LastError ?? "") + "\n" + (_client.Friends.LastNotice ?? "");
+            if (text.IndexOf("拉黑了你", StringComparison.Ordinal) >= 0 ||
+                text.IndexOf("blocked you", StringComparison.OrdinalIgnoreCase) >= 0)
+                throw new InvalidOperationException("block state leaked to the applicant");
+        }
+
+        async Task WaitMarkerAsync(string name, float timeoutSec)
+        {
+            var path = Path.Combine(_coordDir, name);
+            var deadline = Time.unscaledTime + timeoutSec;
+            while (Time.unscaledTime < deadline)
+            {
+                if (File.Exists(path))
+                    return;
+                await Task.Yield();
+            }
+
+            throw new TimeoutException("missing marker " + name);
+        }
+
+        void Mark(string name)
+        {
+            WriteFileShared(Path.Combine(_coordDir, name), "1");
         }
 
         async Task BootstrapSessionAsync()

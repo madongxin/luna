@@ -104,9 +104,10 @@ namespace GameMesh.UI
                 ApplyCursor();
             }
 
+            FriendScreen.Ensure(client);
             var overLauncher = !_panelOpen && GuiToScreen(LauncherRect()).Contains(Input.mousePosition);
             var altUi = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
-            CursorCapture.UiOwnsCursor = _panelOpen || altUi;
+            CursorCapture.UiOwnsCursor = _panelOpen || altUi || FriendScreen.OwnsPointer;
 
             if (!_panelOpen && Cursor.lockState != CursorLockMode.Locked &&
                 Input.GetMouseButtonDown(0) && overLauncher)
@@ -177,7 +178,8 @@ namespace GameMesh.UI
             DrawLines(client);
             DrawLoadTest();
             DrawWorld(client);
-            DrawFriends(client);
+            if (client.Config != null && client.Config.imguiFriendDebug)
+                DrawFriends(client);
             DrawMail(client);
             GUILayout.EndScrollView();
             GUILayout.EndArea();

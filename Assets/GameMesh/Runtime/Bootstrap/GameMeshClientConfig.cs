@@ -47,6 +47,7 @@ namespace GameMesh.Bootstrap
         public string mapDataHash = "";
         public string mainSceneName = "TerrainDemoScene";
         public bool disableSprint = true;
+        public bool imguiFriendDebug;
         public float snapError = 2.5f;
         public float smoothError = 0.35f;
 

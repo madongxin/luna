@@ -3,7 +3,8 @@
     "rootNamespace": "GameMesh",
     "references": [
         "GUID:9c5543eabb73a6249ac07b2c065ee8b4",
-        "GUID:27b7e9efd224f064990a97ed99e4456f"
+        "GUID:27b7e9efd224f064990a97ed99e4456f",
+        "GUID:2bafac87e7f4b9b418d9448d219b01ab"
     ],
     "includePlatforms": [],
     "excludePlatforms": [],

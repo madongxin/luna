@@ -226,7 +226,7 @@ namespace GameMesh.Tests.EditMode
             StringAssert.Contains("#ab12", GameErrorCatalog.FormatUi("ERR_OVERLOADED", "", "ab12"));
             Assert.AreEqual("账号或密码错误", GameErrorCatalog.Resolve("ERR_BAD_CREDENTIAL").Chinese);
             StringAssert.Contains("请求参数非法", GameErrorCatalog.FormatUi("ERR_INVALID_ARGUMENT"));
-            StringAssert.Contains("至少 6 位", GameErrorCatalog.FormatUi("ERR_BAD_CREDENTIAL"));
+            StringAssert.Contains("不足 6 位", GameErrorCatalog.FormatUi("ERR_BAD_CREDENTIAL"));
             StringAssert.Contains("不可重试", GameErrorCatalog.FormatUi("ERR_BAD_CREDENTIAL"));
             StringAssert.Contains("密码", GameErrorCatalog.FormatUi("SERVER_ERROR", "设备ID和密码（至少6位）必填"));
             StringAssert.Contains("填好后再点注册",

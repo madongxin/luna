@@ -1,0 +1,570 @@
+using System;
+using System.Globalization;
+using GameMesh.Bootstrap;
+using GameMesh.Friends;
+using GameMesh.Protocol;
+using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.UI;
+
+namespace GameMesh.UI
+{
+    /// <summary>
+    /// Playable friend screen on the project's uGUI stack.
+    /// The IMGUI friend panel stays available when GameMeshClientConfig.imguiFriendDebug is set.
+    /// </summary>
+    public sealed class FriendScreen : MonoBehaviour
+    {
+        public static bool OwnsPointer { get; private set; }
+
+        static FriendScreen _instance;
+        GameMeshClient _client;
+        Font _font;
+        GameObject _panel;
+        Text _badge;
+        Text _status;
+        Text _count;
+        InputField _query;
+        RectTransform _rows;
+        ScrollRect _scroll;
+        int _signature;
+        ulong _confirmId;
+        bool _confirmBlock;
+        bool _open;
+
+        public static void Ensure(GameMeshClient client)
+        {
+            if (client == null)
+                return;
+            if (client.Config != null && client.Config.imguiFriendDebug)
+            {
+                OwnsPointer = false;
+                if (_instance != null)
+                    _instance.gameObject.SetActive(false);
+                return;
+            }
+
+            if (_instance == null)
+            {
+                var go = new GameObject("FriendScreen");
+                DontDestroyOnLoad(go);
+                _instance = go.AddComponent<FriendScreen>();
+            }
+
+            _instance.gameObject.SetActive(true);
+            _instance._client = client;
+            _instance.BuildOnce();
+        }
+
+        void BuildOnce()
+        {
+            if (_panel != null)
+                return;
+            _font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            if (_font == null)
+                _font = Resources.GetBuiltinResource<Font>("Arial.ttf");
+            if (EventSystem.current == null)
+            {
+                var es = new GameObject("EventSystem");
+                DontDestroyOnLoad(es);
+                es.AddComponent<EventSystem>();
+                es.AddComponent<StandaloneInputModule>();
+            }
+
+            var canvasGo = new GameObject("Canvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            canvasGo.transform.SetParent(transform, false);
+            var canvas = canvasGo.GetComponent<Canvas>();
+            canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            canvas.sortingOrder = 500;
+            var scaler = canvasGo.GetComponent<CanvasScaler>();
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1920, 1080);
+
+            var open = MakeButton(canvasGo.transform, "好友", new Vector2(1, 1), new Vector2(1, 1),
+                new Vector2(-24, -24), new Vector2(180, 56), ToggleOpen);
+            _badge = open.GetComponentInChildren<Text>();
+
+            _panel = new GameObject("Panel", typeof(Image));
+            _panel.transform.SetParent(canvasGo.transform, false);
+            var panelRect = _panel.GetComponent<RectTransform>();
+            panelRect.anchorMin = new Vector2(1, 1);
+            panelRect.anchorMax = new Vector2(1, 1);
+            panelRect.pivot = new Vector2(1, 1);
+            panelRect.anchoredPosition = new Vector2(-24, -96);
+            panelRect.sizeDelta = new Vector2(460, 720);
+            _panel.GetComponent<Image>().color = new Color(0.08f, 0.09f, 0.12f, 0.94f);
+
+            _count = MakeLabel(_panel.transform, "0/0", 18, TextAnchor.MiddleLeft);
+            Place(_count.rectTransform, 16, -8, 200, 32);
+            var tabs = new GameObject("Tabs", typeof(HorizontalLayoutGroup));
+            tabs.transform.SetParent(_panel.transform, false);
+            var tabsRect = tabs.GetComponent<RectTransform>();
+            Place(tabsRect, 12, -44, 436, 40);
+            tabs.GetComponent<HorizontalLayoutGroup>().spacing = 8;
+            MakeButton(tabs.transform, "好友", TabFriends);
+            MakeButton(tabs.transform, "申请", TabRequests);
+            MakeButton(tabs.transform, "黑名单", TabBlocked);
+
+            var searchRow = new GameObject("Search", typeof(HorizontalLayoutGroup));
+            searchRow.transform.SetParent(_panel.transform, false);
+            Place(searchRow.GetComponent<RectTransform>(), 12, -92, 436, 40);
+            searchRow.GetComponent<HorizontalLayoutGroup>().spacing = 8;
+            _query = MakeField(searchRow.transform, "角色名或 PlayerID");
+            MakeButton(searchRow.transform, "搜索", DoSearch);
+
+            _status = MakeLabel(_panel.transform, "", 16, TextAnchor.UpperLeft);
+            Place(_status.rectTransform, 16, -140, 428, 48);
+            _status.color = new Color(1f, 0.85f, 0.45f);
+
+            var scrollGo = new GameObject("Scroll", typeof(Image), typeof(ScrollRect));
+            scrollGo.transform.SetParent(_panel.transform, false);
+            var scrollRect = scrollGo.GetComponent<RectTransform>();
+            Place(scrollRect, 12, -196, 436, 460);
+            scrollGo.GetComponent<Image>().color = new Color(0, 0, 0, 0.25f);
+            var viewport = new GameObject("Viewport", typeof(Image), typeof(Mask));
+            viewport.transform.SetParent(scrollGo.transform, false);
+            var viewRect = viewport.GetComponent<RectTransform>();
+            viewRect.anchorMin = Vector2.zero;
+            viewRect.anchorMax = Vector2.one;
+            viewRect.offsetMin = Vector2.zero;
+            viewRect.offsetMax = Vector2.zero;
+            viewport.GetComponent<Image>().color = new Color(1, 1, 1, 0.02f);
+            var content = new GameObject("Content", typeof(VerticalLayoutGroup), typeof(ContentSizeFitter));
+            content.transform.SetParent(viewport.transform, false);
+            _rows = content.GetComponent<RectTransform>();
+            _rows.anchorMin = new Vector2(0, 1);
+            _rows.anchorMax = new Vector2(1, 1);
+            _rows.pivot = new Vector2(0.5f, 1);
+            _rows.anchoredPosition = Vector2.zero;
+            _rows.sizeDelta = new Vector2(0, 0);
+            var layout = content.GetComponent<VerticalLayoutGroup>();
+            layout.childControlHeight = true;
+            layout.childControlWidth = true;
+            layout.childForceExpandHeight = false;
+            layout.childForceExpandWidth = true;
+            layout.spacing = 6;
+            layout.padding = new RectOffset(8, 8, 8, 8);
+            content.GetComponent<ContentSizeFitter>().verticalFit = ContentSizeFitter.FitMode.PreferredSize;
+            _scroll = scrollGo.GetComponent<ScrollRect>();
+            _scroll.viewport = viewRect;
+            _scroll.content = _rows;
+            _scroll.horizontal = false;
+            _panel.SetActive(false);
+        }
+
+        void LateUpdate()
+        {
+            var friends = _client != null ? _client.Friends : null;
+            if (friends == null || _panel == null)
+            {
+                OwnsPointer = false;
+                return;
+            }
+
+            var badge = friends.RequestBadge > 0 ? "好友 (" + friends.RequestBadge + ")" : "好友";
+            if (_badge != null && _badge.text != badge)
+                _badge.text = badge;
+            OwnsPointer = _open;
+            if (!_open)
+                return;
+            var sig = Signature(friends);
+            if (sig == _signature)
+                return;
+            _signature = sig;
+            Rebuild(friends);
+        }
+
+        void ToggleOpen()
+        {
+            _open = !_open;
+            _panel.SetActive(_open);
+            if (_client != null && _client.Friends != null)
+                _client.Friends.PanelOpen = _open;
+            _signature = 0;
+        }
+
+        void TabFriends()
+        {
+            SetTab(FriendPanelTab.Friends);
+        }
+
+        void TabRequests()
+        {
+            SetTab(FriendPanelTab.Requests);
+        }
+
+        void TabBlocked()
+        {
+            SetTab(FriendPanelTab.Blocked);
+        }
+
+        void SetTab(FriendPanelTab tab)
+        {
+            var friends = _client.Friends;
+            friends.Tab = tab;
+            _signature = 0;
+            if (tab == FriendPanelTab.Requests)
+                _ = friends.RefreshRequestsAsync(default);
+            else if (tab == FriendPanelTab.Blocked)
+                _ = friends.RefreshBlockedAsync(default);
+            else
+                _ = friends.RefreshFriendsAsync(default);
+        }
+
+        void DoSearch()
+        {
+            if (_client == null || _client.Friends.Busy)
+                return;
+            _ = _client.Friends.SearchAsync(_query != null ? _query.text : "", default);
+        }
+
+        void Rebuild(FriendClient friends)
+        {
+            for (var i = _rows.childCount - 1; i >= 0; i--)
+                Destroy(_rows.GetChild(i).gameObject);
+
+            var status = !string.IsNullOrEmpty(friends.LastError) ? friends.LastError : friends.LastNotice ?? "";
+            _status.text = status;
+            _count.text = friends.FriendCount + "/" + (friends.FriendCap == 0 ? "—" : friends.FriendCap.ToString(CultureInfo.InvariantCulture));
+
+            if (friends.SearchHit != null)
+                AddSearchRow(friends);
+
+            if (_confirmId != 0)
+                AddConfirmRow(friends);
+
+            if (friends.Tab == FriendPanelTab.Requests)
+                BuildRequests(friends);
+            else if (friends.Tab == FriendPanelTab.Blocked)
+                BuildBlocked(friends);
+            else
+                BuildFriends(friends);
+        }
+
+        void BuildFriends(FriendClient friends)
+        {
+            if (friends.Friends.Count == 0)
+            {
+                AddLine("还没有好友");
+                return;
+            }
+
+            for (var i = 0; i < friends.Friends.Count; i++)
+            {
+                var row = friends.Friends[i];
+                if (row == null)
+                    continue;
+                var id = row.PlayerId;
+                AddLine(DescribeFriend(row));
+                var actions = AddRow();
+                AddSmall(actions, "删除", () => BeginConfirm(id, false));
+                AddSmall(actions, "拉黑", () => BeginConfirm(id, true));
+            }
+        }
+
+        void BuildRequests(FriendClient friends)
+        {
+            if (friends.Requests.Count == 0)
+            {
+                AddLine("没有待处理的申请");
+                return;
+            }
+
+            for (var i = 0; i < friends.Requests.Count; i++)
+            {
+                var row = friends.Requests[i];
+                if (row == null)
+                    continue;
+                var who = row.Applicant;
+                var name = who != null && !string.IsNullOrEmpty(who.Name) ? who.Name : "玩家";
+                var id = who != null ? who.PlayerId : 0UL;
+                var remain = Remain(row.ExpireAt);
+                AddLine(name + "  #" + id + (string.IsNullOrEmpty(remain) ? "" : "  " + remain));
+                var requestId = row.RequestId;
+                var actions = AddRow();
+                AddSmall(actions, "同意", () =>
+                {
+                    if (!friends.Busy)
+                        _ = friends.AcceptAsync(requestId, default);
+                });
+                AddSmall(actions, "拒绝", () =>
+                {
+                    if (!friends.Busy)
+                        _ = friends.RejectAsync(requestId, default);
+                });
+            }
+        }
+
+        void BuildBlocked(FriendClient friends)
+        {
+            if (friends.Blocked.Count == 0)
+            {
+                AddLine("黑名单是空的");
+                return;
+            }
+
+            for (var i = 0; i < friends.Blocked.Count; i++)
+            {
+                var row = friends.Blocked[i];
+                if (row == null)
+                    continue;
+                var name = string.IsNullOrEmpty(row.Name) ? "玩家" : row.Name;
+                AddLine(name + "  #" + row.PlayerId);
+                var id = row.PlayerId;
+                var actions = AddRow();
+                AddSmall(actions, "解除拉黑", () =>
+                {
+                    if (!friends.Busy)
+                        _ = friends.UnblockAsync(id, default);
+                });
+            }
+        }
+
+        void AddSearchRow(FriendClient friends)
+        {
+            var hit = friends.SearchHit;
+            AddLine((hit.Online ? "在线  " : "离线  ") + hit.Name + "  #" + hit.PlayerId + "  Lv." + hit.Level +
+                    "  " + FriendClient.SearchRelationLabel(friends.SearchRelation));
+            var actions = AddRow();
+            var relation = friends.SearchRelation;
+            var id = hit.PlayerId;
+            var name = hit.Name;
+            if (relation == FriendRelationState.FriendRelationNone)
+            {
+                AddSmall(actions, "申请", () =>
+                {
+                    if (!friends.Busy)
+                        _ = friends.ApplyAsync(id, name, default);
+                });
+            }
+            else if (relation == FriendRelationState.FriendRelationReceivedPending)
+            {
+                AddSmall(actions, "去申请列表", () => SetTab(FriendPanelTab.Requests));
+            }
+            else if (relation == FriendRelationState.FriendRelationFriend)
+            {
+                AddSmall(actions, "已是好友", null);
+            }
+            else if (relation == FriendRelationState.FriendRelationBlockedBySelf)
+            {
+                AddSmall(actions, "已拉黑", null);
+            }
+            else
+            {
+                AddSmall(actions, "已发出申请", null);
+            }
+        }
+
+        void BeginConfirm(ulong playerId, bool block)
+        {
+            _confirmId = playerId;
+            _confirmBlock = block;
+            _signature = 0;
+        }
+
+        void AddConfirmRow(FriendClient friends)
+        {
+            AddLine(_confirmBlock ? "确认拉黑 #" + _confirmId + "？" : "确认删除好友 #" + _confirmId + "？");
+            var id = _confirmId;
+            var block = _confirmBlock;
+            var actions = AddRow();
+            AddSmall(actions, "确认", () =>
+            {
+                _confirmId = 0;
+                if (friends.Busy)
+                    return;
+                if (block)
+                    _ = friends.BlockAsync(id, default);
+                else
+                    _ = friends.DeleteAsync(id, default);
+            });
+            AddSmall(actions, "取消", () =>
+            {
+                _confirmId = 0;
+                _signature = 0;
+            });
+        }
+
+        static string DescribeFriend(FriendBrief row)
+        {
+            var state = row.Online ? "在线" : "离线";
+            var text = state + "  " + (string.IsNullOrEmpty(row.Name) ? "玩家" : row.Name) +
+                       "  Lv." + row.Level;
+            if (row.Profession != 0)
+                text += "  职业 " + row.Profession.ToString(CultureInfo.InvariantCulture);
+            if (!row.Online)
+                text += "  最近在线 " + FriendClient.FormatLastOnline(row.LastOnlineTime);
+            if (!string.IsNullOrEmpty(row.MapName))
+                text += "  " + row.MapName;
+            if (!string.IsNullOrEmpty(row.Remark))
+                text += "  备注 " + row.Remark;
+            return text;
+        }
+
+        static string Remain(ulong expireAt)
+        {
+            if (expireAt == 0)
+                return "";
+            TimeSpan left;
+            try
+            {
+                left = DateTimeOffset.FromUnixTimeSeconds((long)expireAt) - DateTimeOffset.UtcNow;
+            }
+            catch
+            {
+                return "";
+            }
+
+            if (left.TotalSeconds <= 0)
+                return "已过期";
+            if (left.TotalDays >= 1)
+                return "剩余 " + (int)left.TotalDays + " 天";
+            if (left.TotalHours >= 1)
+                return "剩余 " + (int)left.TotalHours + " 小时";
+            return "剩余 " + Math.Max(1, (int)left.TotalMinutes) + " 分钟";
+        }
+
+        int Signature(FriendClient friends)
+        {
+            unchecked
+            {
+                var h = (int)friends.Tab * 17 + friends.Friends.Count * 31 + friends.Requests.Count * 13 +
+                        friends.Blocked.Count + friends.RequestBadge + (friends.Busy ? 7 : 0) +
+                        (int)_confirmId + (_confirmBlock ? 3 : 0);
+                h = h * 31 + (friends.LastError ?? "").GetHashCode();
+                h = h * 31 + (friends.LastNotice ?? "").GetHashCode();
+                h = h * 31 + (int)friends.SearchRelation;
+                if (friends.SearchHit != null)
+                    h = h * 31 + friends.SearchHit.GetHashCode();
+                for (var i = 0; i < friends.Friends.Count; i++)
+                {
+                    if (friends.Friends[i] != null)
+                        h = h * 31 + friends.Friends[i].GetHashCode();
+                }
+
+                for (var i = 0; i < friends.Requests.Count; i++)
+                {
+                    if (friends.Requests[i] != null)
+                        h = h * 31 + friends.Requests[i].GetHashCode();
+                }
+
+                return h;
+            }
+        }
+
+        GameObject AddRow()
+        {
+            var row = new GameObject("Row", typeof(HorizontalLayoutGroup));
+            row.transform.SetParent(_rows, false);
+            var layout = row.GetComponent<HorizontalLayoutGroup>();
+            layout.spacing = 8;
+            layout.childControlWidth = false;
+            layout.childControlHeight = true;
+            layout.childForceExpandWidth = false;
+            var element = row.AddComponent<LayoutElement>();
+            element.minHeight = 36;
+            return row;
+        }
+
+        void AddLine(string text)
+        {
+            var label = MakeLabel(_rows, text, 16, TextAnchor.MiddleLeft);
+            var element = label.gameObject.AddComponent<LayoutElement>();
+            element.minHeight = 28;
+            label.horizontalOverflow = HorizontalWrapMode.Wrap;
+            label.verticalOverflow = VerticalWrapMode.Overflow;
+        }
+
+        void AddSmall(GameObject parent, string title, UnityEngine.Events.UnityAction click)
+        {
+            var button = MakeButton(parent.transform, title, click);
+            var element = button.gameObject.AddComponent<LayoutElement>();
+            element.minWidth = 96;
+            element.minHeight = 32;
+            button.interactable = click != null && (_client == null || !_client.Friends.Busy);
+        }
+
+        Button MakeButton(Transform parent, string title, UnityEngine.Events.UnityAction click)
+        {
+            return MakeButton(parent, title, new Vector2(0, 1), new Vector2(0, 1), Vector2.zero, new Vector2(120, 36),
+                click);
+        }
+
+        Button MakeButton(Transform parent, string title, Vector2 anchorMin, Vector2 anchorMax, Vector2 pos,
+            Vector2 size, UnityEngine.Events.UnityAction click)
+        {
+            var go = new GameObject(title, typeof(Image), typeof(Button), typeof(LayoutElement));
+            go.transform.SetParent(parent, false);
+            var rect = go.GetComponent<RectTransform>();
+            rect.anchorMin = anchorMin;
+            rect.anchorMax = anchorMax;
+            rect.pivot = new Vector2(1, 1);
+            rect.anchoredPosition = pos;
+            rect.sizeDelta = size;
+            go.GetComponent<Image>().color = new Color(0.18f, 0.45f, 0.62f, 1f);
+            var element = go.GetComponent<LayoutElement>();
+            element.preferredWidth = size.x;
+            element.preferredHeight = size.y;
+            element.minHeight = size.y;
+            var button = go.GetComponent<Button>();
+            if (click != null)
+                button.onClick.AddListener(click);
+            var label = MakeLabel(go.transform, title, 18, TextAnchor.MiddleCenter);
+            Stretch(label.rectTransform);
+            return button;
+        }
+
+        InputField MakeField(Transform parent, string placeholder)
+        {
+            var go = new GameObject("Query", typeof(Image), typeof(InputField), typeof(LayoutElement));
+            go.transform.SetParent(parent, false);
+            go.GetComponent<LayoutElement>().minWidth = 280;
+            go.GetComponent<LayoutElement>().minHeight = 36;
+            go.GetComponent<Image>().color = new Color(1, 1, 1, 0.92f);
+            var text = MakeLabel(go.transform, "", 16, TextAnchor.MiddleLeft);
+            text.color = Color.black;
+            Stretch(text.rectTransform);
+            text.rectTransform.offsetMin = new Vector2(8, 0);
+            var hint = MakeLabel(go.transform, placeholder, 16, TextAnchor.MiddleLeft);
+            hint.color = new Color(0, 0, 0, 0.35f);
+            hint.fontStyle = FontStyle.Italic;
+            Stretch(hint.rectTransform);
+            hint.rectTransform.offsetMin = new Vector2(8, 0);
+            var field = go.GetComponent<InputField>();
+            field.textComponent = text;
+            field.placeholder = hint;
+            return field;
+        }
+
+        Text MakeLabel(Transform parent, string value, int size, TextAnchor anchor)
+        {
+            var go = new GameObject("Label", typeof(Text));
+            go.transform.SetParent(parent, false);
+            var text = go.GetComponent<Text>();
+            text.font = _font;
+            text.fontSize = size;
+            text.alignment = anchor;
+            text.color = Color.white;
+            text.text = value;
+            text.raycastTarget = false;
+            return text;
+        }
+
+        static void Place(RectTransform rect, float x, float y, float w, float h)
+        {
+            rect.anchorMin = new Vector2(0, 1);
+            rect.anchorMax = new Vector2(0, 1);
+            rect.pivot = new Vector2(0, 1);
+            rect.anchoredPosition = new Vector2(x, y);
+            rect.sizeDelta = new Vector2(w, h);
+        }
+
+        static void Stretch(RectTransform rect)
+        {
+            rect.anchorMin = Vector2.zero;
+            rect.anchorMax = Vector2.one;
+            rect.offsetMin = Vector2.zero;
+            rect.offsetMax = Vector2.zero;
+        }
+    }
+}
