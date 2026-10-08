@@ -150,6 +150,26 @@ namespace GameMesh.Protocol
                     return rsp.CreateDungeon?.ErrorCode ?? "";
                 case GameResponse.BodyOneofCase.InteractPortal:
                     return rsp.InteractPortal?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.FriendList:
+                    return rsp.FriendList?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.FriendSearch:
+                    return rsp.FriendSearch?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.FriendApply:
+                    return rsp.FriendApply?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.FriendAccept:
+                    return rsp.FriendAccept?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.FriendReject:
+                    return rsp.FriendReject?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.FriendDelete:
+                    return rsp.FriendDelete?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.FriendRequestList:
+                    return rsp.FriendRequestList?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.FriendBlock:
+                    return rsp.FriendBlock?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.FriendUnblock:
+                    return rsp.FriendUnblock?.ErrorCode ?? "";
+                case GameResponse.BodyOneofCase.FriendBlockList:
+                    return rsp.FriendBlockList?.ErrorCode ?? "";
                 default:
                     return "";
             }

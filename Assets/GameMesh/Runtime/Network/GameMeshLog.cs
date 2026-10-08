@@ -1,22 +1,27 @@
-using UnityEngine;
-
 namespace GameMesh.Network
 {
     public static class GameMeshLog
     {
         public static void Info(string message)
         {
-            Debug.Log("[GameMesh] " + Redact(message));
+            UnityEngine.Debug.Log("[GameMesh] " + Redact(message));
+        }
+
+        [System.Diagnostics.Conditional("UNITY_EDITOR")]
+        [System.Diagnostics.Conditional("DEVELOPMENT_BUILD")]
+        public static void Debug(string message)
+        {
+            UnityEngine.Debug.Log("[GameMesh] " + Redact(message));
         }
 
         public static void Warn(string message)
         {
-            Debug.LogWarning("[GameMesh] " + Redact(message));
+            UnityEngine.Debug.LogWarning("[GameMesh] " + Redact(message));
         }
 
         public static void Error(string message)
         {
-            Debug.LogError("[GameMesh] " + Redact(message));
+            UnityEngine.Debug.LogError("[GameMesh] " + Redact(message));
         }
 
         public static string Redact(string message)

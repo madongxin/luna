@@ -11,9 +11,10 @@ namespace GameMesh.Network
 {
     public sealed class GameConnection : IGameConnection
     {
-        const int SendQueueLimit = 128;
-        const int PendingLimit = 256;
         const int ReadBufferSize = 8192;
+
+        public int SendQueueLimit = 128;
+        public int PendingLimit = 256;
 
         readonly IMainThreadDispatcher _dispatcher;
         readonly ConcurrentDictionary<ulong, PendingCall> _pending = new ConcurrentDictionary<ulong, PendingCall>();
@@ -141,8 +142,7 @@ namespace GameMesh.Network
                 throw new GameMeshException(GameMeshErrorCode.ClientNotConnected, $"cannot send in {state}");
             }
 
-            if (request.Seq == 0)
-                request.Seq = NextSeq();
+            AssignRequestSeq(request);
 
             if (_pending.Count >= PendingLimit)
                 throw new GameMeshException(GameMeshErrorCode.ClientQueueFull, "too many pending requests");
@@ -201,8 +201,7 @@ namespace GameMesh.Network
                 state == ConnectionState.Connecting)
                 return;
 
-            if (request.Seq == 0)
-                request.Seq = NextSeq();
+            AssignRequestSeq(request);
 
             byte[] frame;
             try
@@ -272,9 +271,20 @@ namespace GameMesh.Network
             _loopCts?.Dispose();
         }
 
-        ulong NextSeq()
+        public void ResetRequestSeq()
         {
-            return (ulong)Interlocked.Increment(ref _seq);
+            Interlocked.Exchange(ref _seq, 0);
+        }
+
+        public ulong AssignRequestSeq(GameRequest request)
+        {
+            if (request == null)
+                return 0;
+            if (request.Seq == 0)
+                request.Seq = (ulong)Interlocked.Increment(ref _seq);
+            else if (request.Seq > LastClientSeq)
+                Interlocked.Exchange(ref _seq, (long)request.Seq);
+            return request.Seq;
         }
 
         async Task SendLoopAsync(CancellationToken ct)
@@ -292,7 +302,7 @@ namespace GameMesh.Network
                             break;
                         await WriteExactAsync(stream, item.Frame, ct).ConfigureAwait(false);
                         if (!Quiet)
-                            GameMeshLog.Info($"send seq={item.Seq} type={item.Type}");
+                            GameMeshLog.Debug($"send seq={item.Seq} type={item.Type}");
                     }
                 }
             }
@@ -383,6 +393,10 @@ namespace GameMesh.Network
                 case GameResponse.BodyOneofCase.MailboxChanged:
                 case GameResponse.BodyOneofCase.SessionReplaced:
                 case GameResponse.BodyOneofCase.ChatNotify:
+                case GameResponse.BodyOneofCase.FriendRequestPush:
+                case GameResponse.BodyOneofCase.FriendAddedPush:
+                case GameResponse.BodyOneofCase.FriendRemovedPush:
+                case GameResponse.BodyOneofCase.FriendPresencePush:
                     return true;
                 default:
                     return false;

@@ -5,6 +5,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using GameMesh.Aoi;
 using GameMesh.Auth;
+using GameMesh.Friends;
 using GameMesh.LoadTest;
 using GameMesh.Mail;
 using GameMesh.Map;
@@ -28,6 +29,7 @@ namespace GameMesh.Bootstrap
         public AoiWorld Aoi { get; } = new AoiWorld();
         public MapLineState Lines { get; } = new MapLineState();
         public MailClient Mail { get; private set; }
+        public FriendClient Friends { get; private set; }
         public MoveSampler MoveSampler { get; } = new MoveSampler();
         public MoveCorrector MoveCorrector { get; } = new MoveCorrector();
         public GameConnection Connection { get; private set; }
@@ -80,6 +82,8 @@ namespace GameMesh.Bootstrap
         public int ProtocolVersion { get; private set; } = (int)ProtocolHandshake.ProtocolVersion;
         public bool HelloOk { get; private set; }
         public bool HeartbeatOk { get; private set; }
+        public string ReconnectStatus { get; private set; } = "";
+        public bool ReconnectGaveUp { get; private set; }
         public long ServerTimeOffsetMs => HeartbeatClock.ServerTimeOffsetMs;
         public HeartbeatClock HeartbeatClock { get; } = new HeartbeatClock();
         public bool AppPaused { get; private set; }
@@ -91,12 +95,14 @@ namespace GameMesh.Bootstrap
         bool _exitFlushed;
         float _nextReconnectAt;
         float _lastMailPoll;
+        float _lastFriendPoll;
         bool _busy;
         bool _helloInFlight;
         bool _snapshotInFlight;
         bool _staleRouteInFlight;
         float _ignoreStaleMovesUntil;
         bool _respawnInFlight;
+        bool _moveEnterPending;
         string _enterOpId;
         string _switchOpId;
         string _respawnOpId;
@@ -150,7 +156,16 @@ namespace GameMesh.Bootstrap
             Connection.PushReceived += OnPush;
             Connection.StateChanged += OnTransportState;
             Mail = new MailClient(Session, (req, ct) => RequestAsync(req, null, ct));
-            MoveSampler.SendHz = Config.moveSendHz;
+            Friends = new FriendClient(Session, (req, ct) => RequestAsync(req, null, ct));
+            MoveSampler.SendHz = Config.moveSendHz > 0f ? Config.moveSendHz : 10f;
+            MoveSampler.FastSendHz = Config.moveFastSendHz > 0f ? Config.moveFastSendHz : 20f;
+            MoveSampler.FastSpeed = Config.moveFastSpeed > 0f ? Config.moveFastSpeed : 6f;
+            Connection.SendQueueLimit = Config.sendQueueLimit > 0 ? Config.sendQueueLimit : 128;
+            Connection.PendingLimit = Config.pendingLimit > 0 ? Config.pendingLimit : 256;
+            if (Config.maxFrameBytes > 0)
+                FrameCodec.ActiveMaxPayloadBytes = Config.maxFrameBytes;
+            if (Config.heartbeatIntervalMs > 0)
+                _heartbeatIntervalMs = (uint)Config.heartbeatIntervalMs;
             MoveCorrector.SmoothError = Config.smoothError;
             MoveCorrector.SnapError = Config.snapError;
             if (GetComponent<GameMeshRuntimeUi>() == null)
@@ -272,6 +287,13 @@ namespace GameMesh.Bootstrap
                 _ = Safe(Mail.RefreshAsync(_lifetime.Token));
             }
 
+            if (Friends != null && Session.HasIdentity &&
+                Friends.ShouldPoll(Time.unscaledTime, _lastFriendPoll, Friends.PanelOpen))
+            {
+                _lastFriendPoll = Time.unscaledTime;
+                _ = Safe(Friends.RefreshFriendsAsync(_lifetime.Token));
+            }
+
             RestoreMapPresence();
         }
 
@@ -288,7 +310,7 @@ namespace GameMesh.Bootstrap
             }
             finally
             {
-                LaunchArgs.EnsureDefaultPassword();
+                password = "";
             }
         }
 
@@ -355,7 +377,6 @@ namespace GameMesh.Bootstrap
         {
             LaunchArgs.EnsureDefaultPassword();
             await LoginAsync(LaunchArgs.Password).ConfigureAwait(true);
-            LaunchArgs.EnsureDefaultPassword();
         }
 
         public async Task LoginAsync(string password)
@@ -364,6 +385,8 @@ namespace GameMesh.Bootstrap
                 return;
             _busy = true;
             BusyStage = "登录中";
+            var loginSent = false;
+            var loginRspReceived = false;
             try
             {
                 if (Session.HasIdentity &&
@@ -375,6 +398,7 @@ namespace GameMesh.Bootstrap
                      Connection.State == ConnectionState.EnteringWorld))
                 {
                     WriteLiveEnter("LOGIN_SKIP already " + Connection.State + " gen=" + Session.Generation);
+                    _ = Safe(Friends.RefreshAfterLoginAsync(_lifetime.Token));
                     await TryEnterWorldAfterLoginAsync().ConfigureAwait(true);
                     return;
                 }
@@ -398,7 +422,13 @@ namespace GameMesh.Bootstrap
                         Credential = password ?? ""
                     }
                 };
+                loginSent = true;
                 var rsp = await RequestAsync(req).ConfigureAwait(true);
+                loginRspReceived = true;
+                if (req.Login != null)
+                    req.Login.Credential = "";
+                LaunchArgs.ClearPassword();
+                password = null;
                 if (!AuthResponse.TryAcceptLogin(rsp, Session.PlayerId, out var playerId, out var login,
                         out var errorCode, out var message))
                 {
@@ -409,6 +439,7 @@ namespace GameMesh.Bootstrap
 
                 Session.ApplyLogin(playerId, login.SessionId, login.Token, login.Generation,
                     LaunchArgs.DisplayName);
+                Connection.ResetRequestSeq();
                 if (!ApplyProfile(login.Profile))
                     await LoadSelfProfileAsync().ConfigureAwait(true);
                 Session.AutoReconnect = true;
@@ -419,13 +450,13 @@ namespace GameMesh.Bootstrap
                 Aoi.LocalPlayerId = Session.PlayerId;
                 PersistIdentity();
                 ClearError();
-                LaunchArgs.EnsureDefaultPassword();
                 var alreadyOnMap = Session.MapInstanceId != 0;
                 if (alreadyOnMap)
                     RestoreMapPresence();
                 else
                     Connection.SetLogicalState(ConnectionState.Authenticated);
                 GameMeshLog.Info($"login ok {Session.DebugSummary()}");
+                _ = Safe(Friends.RefreshAfterLoginAsync(_lifetime.Token));
                 if (SceneManager.GetActiveScene().name != Config.mainSceneName)
                     SceneManager.LoadScene(Config.mainSceneName);
                 else if (alreadyOnMap)
@@ -447,6 +478,8 @@ namespace GameMesh.Bootstrap
             }
             finally
             {
+                if (loginSent && !loginRspReceived)
+                    GameMeshLog.Warn("LoginRsp not received; password was not cleared");
                 _busy = false;
                 BusyStage = "";
             }
@@ -458,6 +491,8 @@ namespace GameMesh.Bootstrap
             _logoutRequested = true;
             Session.AutoReconnect = false;
             Reconnect.Reset();
+            ReconnectGaveUp = false;
+            ClearReconnectStatus();
             StopHeartbeat();
 
             try
@@ -517,6 +552,7 @@ namespace GameMesh.Bootstrap
             finally
             {
                 Mail.Clear();
+                Friends.Clear();
                 Aoi.Clear();
                 Lines.Clear();
                 ClearPortals();
@@ -524,9 +560,16 @@ namespace GameMesh.Bootstrap
                 StopHeartbeat();
                 HelloOk = false;
                 HeartbeatOk = false;
-                ClearError();
-                Session.ClearSessionKeepIdentity();
-                Session.AutoReconnect = false;
+                Session.ApplyLogoutOutcome(result);
+                if (Session.LogoutUnconfirmed)
+                {
+                    GameMeshLog.Error("logout rejected code=" + result.ErrorCode + " msg=" + result.Message);
+                    SetError(string.IsNullOrEmpty(result.ErrorCode) ? GameMeshErrorCode.ServerError : result.ErrorCode,
+                        string.IsNullOrEmpty(result.Message) ? "登出未被服务器确认" : result.Message,
+                        result.ErrorCode);
+                }
+                else
+                    ClearError();
                 LaunchArgs.ClearPassword();
                 HasPendingSpawn = false;
                 HasPendingCorrection = false;
@@ -925,7 +968,7 @@ namespace GameMesh.Bootstrap
 
         static bool IsLeaveAlreadyGone(string code, string message)
         {
-            if (code == "NOT_CLAIMED" || code == "ERR_NOT_ON_MAP" ||
+            if (code == "NOT_CLAIMED" || GameErrorCatalog.IsNotOnMap(code) ||
                 code == "FENCE_REJECT" || code == "ERR_FENCE_REJECT")
                 return true;
             var msg = message ?? "";
@@ -1008,7 +1051,8 @@ namespace GameMesh.Bootstrap
             if (!Maps.TryContract(templateId, out var dataVersion, out var dataHash, out var mapCode))
             {
                 MapBlocked = true;
-                MapBlockReason = "map manifest missing or mismatch template=" + templateId;
+                GameMeshLog.Warn("map manifest missing or mismatch template=" + templateId);
+                MapBlockReason = "地图资源版本不匹配，请更新客户端";
                 SetError(string.IsNullOrEmpty(mapCode) ? GameMeshErrorCode.MapHashMismatch : mapCode,
                     MapBlockReason, mapCode);
                 return;
@@ -1134,13 +1178,15 @@ namespace GameMesh.Bootstrap
                 if (!MapHashesMatch(dataHash, dataVersion, enter.MapDataSha256, enter.MapDataVersion))
                 {
                     MapBlocked = true;
-                    MapBlockReason =
-                        $"map hash mismatch local={dataHash} v={dataVersion} server={enter.MapDataSha256} v={enter.MapDataVersion}";
+                    GameMeshLog.Warn("map hash mismatch local=" + dataHash + " v=" + dataVersion +
+                                     " server=" + enter.MapDataSha256 + " v=" + enter.MapDataVersion);
+                    MapBlockReason = "地图资源版本不匹配，请更新客户端";
                     SetError(GameMeshErrorCode.MapHashMismatch, MapBlockReason);
                     Connection.SetLogicalState(ConnectionState.Authenticated);
                     return;
                 }
 
+                Connection.ResetRequestSeq();
                 ApplyAuthoritativeWorld(enter.MapTemplateId, enter.MapInstanceId, enter.OwnerEpoch,
                     enter.RouteVersion, enter.SpawnPosition, enter.SpawnYaw, enter.Self, enter.AoiSnapshot,
                     enter.Kind, enter.LineNo, enter.Occupancy, enter.SoftCap, enter.HardCap);
@@ -1713,6 +1759,7 @@ namespace GameMesh.Bootstrap
             if (Connection != null && Connection.State != ConnectionState.InWorld &&
                 ConnectionStateMachine.CanTransition(Connection.State, ConnectionState.InWorld))
                 Connection.SetLogicalState(ConnectionState.InWorld);
+            Connection?.ResetRequestSeq();
         }
 
         public async Task<bool> SendMoveAsync(Vector3 position, float yaw, CancellationToken ct,
@@ -1743,7 +1790,7 @@ namespace GameMesh.Bootstrap
                 var rsp = await pending.ConfigureAwait(true);
                 if (Alive)
                     ApplyMoveRsp(rsp);
-                return rsp != null && rsp.Ok && (rsp.Move == null || rsp.Move.Ok);
+                return GameErrorCatalog.MoveAccepted(rsp);
             }
             catch (Exception ex)
             {
@@ -1782,7 +1829,7 @@ namespace GameMesh.Bootstrap
                 LastRttMs = Mathf.Max(0, (int)((Time.realtimeSinceStartup - started) * 1000f));
                 var code = ProtocolMapper.ExtractErrorCode(rsp);
                 var trace = ProtocolMapper.ShortTraceId(rsp);
-                GameMeshLog.Info($"rsp seq={rsp.Seq} type={rsp.BodyCase} ok={rsp.Ok} code={code} rtt_ms={LastRttMs}");
+                GameMeshLog.Debug($"rsp seq={rsp.Seq} type={rsp.BodyCase} ok={rsp.Ok} code={code} rtt_ms={LastRttMs}");
                 if (GameErrorCatalog.IsSessionReplaced(code))
                     HandleSessionReplaced(code);
                 else if (GameErrorCatalog.IsStaleRoute(code))
@@ -1799,7 +1846,12 @@ namespace GameMesh.Bootstrap
                 else if (!rsp.Ok &&
                          request.BodyCase != GameRequest.BodyOneofCase.Heartbeat &&
                          request.BodyCase != GameRequest.BodyOneofCase.MapPing)
+                {
+                    if (request.BodyCase == GameRequest.BodyOneofCase.Move &&
+                        GameErrorCatalog.IsNotOnMap(code))
+                        return rsp;
                     SetError(string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code, rsp.Message, code, trace);
+                }
                 return rsp;
             }
         }
@@ -1930,8 +1982,10 @@ namespace GameMesh.Bootstrap
                         Config.dataVersion, out _, out var mapCode))
                 {
                     MapBlocked = true;
-                    MapBlockReason = "hello map manifest missing or mismatch template=" + Config.mapTemplateId;
-                    SetError(mapCode, MapBlockReason, mapCode);
+                    GameMeshLog.Warn("hello map manifest missing or mismatch template=" + Config.mapTemplateId);
+                    MapBlockReason = "地图资源版本不匹配，请更新客户端";
+                    SetError(string.IsNullOrEmpty(mapCode) ? "ERR_MAP_DATA_MISMATCH" : mapCode,
+                        MapBlockReason, mapCode);
                 }
                 else
                 {
@@ -1951,15 +2005,24 @@ namespace GameMesh.Bootstrap
 
         async Task ReconnectAsync()
         {
+            if (_logoutRequested || Session.SessionReplaced)
+                return;
             if (!Reconnect.TryBegin(Time.unscaledTime, Config.reconnectMaxAttempts, Config.reconnectMaxTotalMs,
                     out var fail))
             {
                 if (fail == "in-flight")
                     return;
                 Session.AutoReconnect = false;
-                SetError(GameMeshErrorCode.ClientTimeout, fail);
+                ReconnectGaveUp = true;
+                ClearReconnectStatus();
+                SetError(GameMeshErrorCode.ClientDisconnected, "连接断开");
                 return;
             }
+
+            ReconnectGaveUp = false;
+            ReconnectStatus = "正在重连 (尝试 " + Reconnect.Attempts + "/" +
+                              Math.Max(1, Config.reconnectMaxAttempts) + ")...";
+            SetNotice(ReconnectStatus);
 
             var backoff = Mathf.Min(8f, 0.4f * Mathf.Pow(2f, Reconnect.Attempts - 1));
             backoff += UnityEngine.Random.Range(0f, 0.3f);
@@ -2020,7 +2083,13 @@ namespace GameMesh.Bootstrap
                     Connection.SetLogicalState(ConnectionState.Authenticated);
                 }
 
+                if (Session.MapInstanceId != 0)
+                    Connection.ResetRequestSeq();
                 Reconnect.EndSuccess();
+                ReconnectGaveUp = false;
+                ClearReconnectStatus();
+                if (Session.HasIdentity)
+                    _ = Safe(Friends.RefreshFriendsAsync(_lifetime.Token));
             }
             catch (Exception ex)
             {
@@ -2066,7 +2135,34 @@ namespace GameMesh.Bootstrap
         {
             var move = rsp?.Move;
             if (move == null)
+            {
+                if (GameErrorCatalog.IsNotOnMap(rsp?.ErrorCode))
+                    RecoverFromMoveBeforeMap(rsp.ErrorCode);
                 return;
+            }
+
+            if (!move.Ok)
+            {
+                var code = !string.IsNullOrEmpty(move.ErrorCode) ? move.ErrorCode : rsp.ErrorCode ?? "";
+                if (GameErrorCatalog.IsNotOnMap(code))
+                {
+                    RecoverFromMoveBeforeMap(string.IsNullOrEmpty(code) ? "ERR_MAP_NOT_LOADED" : code);
+                    return;
+                }
+
+                if (string.IsNullOrEmpty(code))
+                    code = GameMeshErrorCode.ServerError;
+                if (GameErrorCatalog.IsStaleRoute(code))
+                {
+                    if (Time.unscaledTime >= _ignoreStaleMovesUntil)
+                        _ = RecoverStaleRouteAsync();
+                    return;
+                }
+
+                SetError(code, move.Message, code);
+                return;
+            }
+
             if (move.StateSeq != 0 && _lastMoveStateSeq != 0 && move.StateSeq < _lastMoveStateSeq)
                 return;
             if (move.StateSeq != 0)
@@ -2080,17 +2176,36 @@ namespace GameMesh.Bootstrap
             HasPendingCorrection = true;
             PendingCorrection = corrected;
             PendingCorrectionYaw = move.Yaw;
-            if (!move.Ok)
-            {
-                var code = string.IsNullOrEmpty(move.ErrorCode) ? GameMeshErrorCode.ServerError : move.ErrorCode;
-                if (GameErrorCatalog.IsStaleRoute(code))
-                {
-                    if (Time.unscaledTime >= _ignoreStaleMovesUntil)
-                        _ = RecoverStaleRouteAsync();
-                    return;
-                }
+        }
 
-                SetError(code, move.Message, code);
+        void RecoverFromMoveBeforeMap(string code)
+        {
+            if (_moveEnterPending || _busy || _logoutRequested || Session.SessionReplaced)
+                return;
+            _moveEnterPending = true;
+            var resolved = string.IsNullOrEmpty(code) ? "ERR_MAP_NOT_LOADED" : code;
+            SetError(resolved, "尚未进入地图", resolved);
+            DropMapPresence();
+            if (Connection != null &&
+                Connection.State == ConnectionState.InWorld &&
+                ConnectionStateMachine.CanTransition(Connection.State, ConnectionState.Authenticated))
+                Connection.SetLogicalState(ConnectionState.Authenticated);
+            _ = EnterMapAfterRejectedMoveAsync();
+        }
+
+        async Task EnterMapAfterRejectedMoveAsync()
+        {
+            try
+            {
+                await TryEnterWorldAfterLoginAsync().ConfigureAwait(true);
+            }
+            catch (Exception ex)
+            {
+                GameMeshLog.Warn("enter after move rejected " + ex.Message);
+            }
+            finally
+            {
+                _moveEnterPending = false;
             }
         }
 
@@ -2129,7 +2244,8 @@ namespace GameMesh.Bootstrap
                     serverSeq = response.ServerPush.ServerSeq;
                     reliable = response.ServerPush.Reliable;
                     var messageType = response.ServerPush.MessageType ?? "";
-                    if (serverSeq == 0 || messageType == "map.lines.v1")
+                    if (serverSeq == 0 || messageType == "map.lines.v1" ||
+                        messageType == "friend.presence.v1")
                     {
                         GameResponse linePush;
                         try
@@ -2219,6 +2335,8 @@ namespace GameMesh.Bootstrap
 
             if (inner.MailboxChanged != null || inner.MailboxSummary != null || inner.MailList != null)
                 Mail.NotifyMailboxChanged(Time.unscaledTime);
+            if (Friends.ApplyPush(inner))
+                return true;
             if (inner.AoiDelta != null)
             {
                 if (Session.MapInstanceId != 0 && inner.AoiDelta.MapInstanceId != 0 &&
@@ -2349,6 +2467,7 @@ namespace GameMesh.Bootstrap
             HelloOk = false;
             HeartbeatOk = false;
             Mail.Clear();
+            Friends.Clear();
             Aoi.Clear();
             ClearPortals();
             _gapCache.Clear();
@@ -2393,7 +2512,7 @@ namespace GameMesh.Bootstrap
                                " instance=" + (snap != null ? snap.MapInstanceId.ToString() : "0"));
                 if (snap != null &&
                     (string.Equals(snap.RecoveryReason, "NOT_ON_MAP", StringComparison.OrdinalIgnoreCase) ||
-                     snap.ErrorCode == "ERR_NOT_ON_MAP"))
+                     GameErrorCatalog.IsNotOnMap(snap.ErrorCode)))
                 {
                     WriteLiveEnter("SNAPSHOT NOT_ON_MAP");
                     if (Connection.State == ConnectionState.Resyncing)
@@ -2488,9 +2607,20 @@ namespace GameMesh.Bootstrap
             }
         }
 
+        int HeartbeatIdleLimitMs()
+        {
+            var limit = Config != null && Config.heartbeatIdleTimeoutMs > 0
+                ? Config.heartbeatIdleTimeoutMs
+                : 15000;
+            if (_idleTimeoutMs > 0 && _idleTimeoutMs < limit)
+                limit = (int)_idleTimeoutMs;
+            return limit;
+        }
+
         void StartHeartbeat(int connectionGeneration)
         {
             StopHeartbeat();
+            HeartbeatClock.Arm(HeartbeatClock.MonotonicMs);
             _heartbeatCts = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
             var ct = _heartbeatCts.Token;
             _heartbeatMisses = 0;
@@ -2520,10 +2650,10 @@ namespace GameMesh.Bootstrap
 
                 if (!Alive || ct.IsCancellationRequested || Connection.Generation != connectionGeneration)
                     return;
-                if (HeartbeatClock.IdleTimedOut((int)_idleTimeoutMs))
+                if (HeartbeatClock.ResponseTimedOut(HeartbeatIdleLimitMs()))
                 {
-                    GameMeshLog.Warn("heartbeat idle timeout");
-                    _ = BeginReconnectFromHeartbeat();
+                    GameMeshLog.Warn("heartbeat response timeout");
+                    await CloseForHeartbeatTimeout().ConfigureAwait(true);
                     return;
                 }
 
@@ -2566,10 +2696,34 @@ namespace GameMesh.Bootstrap
 
                 if (_heartbeatMisses >= 2)
                 {
-                    _ = BeginReconnectFromHeartbeat();
+                    GameMeshLog.Warn("heartbeat missed");
+                    await CloseForHeartbeatTimeout().ConfigureAwait(true);
                     return;
                 }
             }
+        }
+
+        async Task CloseForHeartbeatTimeout()
+        {
+            HeartbeatOk = false;
+            if (_logoutRequested || Session.SessionReplaced)
+                return;
+            try
+            {
+                if (Connection != null &&
+                    Connection.State != ConnectionState.Disconnected &&
+                    Connection.State != ConnectionState.Closing)
+                {
+                    await Connection.DisconnectAsync(DisconnectReason.Timeout, CancellationToken.None)
+                        .ConfigureAwait(true);
+                }
+            }
+            catch (Exception ex)
+            {
+                GameMeshLog.Warn("heartbeat close " + ex.Message);
+            }
+
+            _ = BeginReconnectFromHeartbeat();
         }
 
         Task BeginReconnectFromHeartbeat()
@@ -2753,6 +2907,24 @@ namespace GameMesh.Bootstrap
         {
             LastNotice = text ?? "";
             ClearError();
+        }
+
+        public void RequestManualReconnect()
+        {
+            if (_logoutRequested || Session.SessionReplaced || !ReconnectGaveUp)
+                return;
+            ReconnectGaveUp = false;
+            Reconnect.Reset();
+            Session.AutoReconnect = true;
+            _nextReconnectAt = 0f;
+            _ = ReconnectAsync();
+        }
+
+        void ClearReconnectStatus()
+        {
+            if (!string.IsNullOrEmpty(ReconnectStatus) && LastNotice == ReconnectStatus)
+                LastNotice = "";
+            ReconnectStatus = "";
         }
 
         void SetError(Exception ex)

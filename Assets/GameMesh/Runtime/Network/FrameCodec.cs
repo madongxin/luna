@@ -15,10 +15,12 @@ namespace GameMesh.Network
     {
         public const int MaxPayloadBytes = 4 * 1024 * 1024;
         public const int HeaderBytes = 4;
+        public static int ActiveMaxPayloadBytes = MaxPayloadBytes;
 
         public static byte[] Encode(ReadOnlySpan<byte> payload)
         {
-            if (payload.Length == 0 || payload.Length > MaxPayloadBytes)
+            var limit = ActiveMaxPayloadBytes > 0 ? ActiveMaxPayloadBytes : MaxPayloadBytes;
+            if (payload.Length == 0 || payload.Length > limit)
                 throw new GameMeshException(GameMeshErrorCode.ClientProtocol, $"invalid payload length {payload.Length}");
 
             var frame = new byte[HeaderBytes + payload.Length];

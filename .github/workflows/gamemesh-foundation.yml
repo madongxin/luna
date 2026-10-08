@@ -40,6 +40,11 @@ jobs:
         run: |
           ver=$(tr -d '\r' < ProjectSettings/ProjectVersion.txt | awk -F: '/m_EditorVersion:/{print $2}' | xargs)
           echo "ProjectVersion=$ver runner=2022.3.62f1"
+      # UNITY_LICENSE secret placeholder:
+      # Add repository secret UNITY_LICENSE (game-ci / Unity license contents).
+      # Also set UNITY_EMAIL and UNITY_PASSWORD when the license activation needs them.
+      # If UNITY_LICENSE is missing, EditMode, PlayMode, and the integration build are skipped
+      # (BLOCKED). They fail the job only on main and tags.
       - name: License gate
         id: lic
         env:

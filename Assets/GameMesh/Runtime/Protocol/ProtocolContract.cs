@@ -23,7 +23,18 @@ namespace GameMesh.Protocol
             "QueryMapLinesReq", "QueryMapLinesRsp",
             "SwitchLineReq", "SwitchLineRsp",
             "EnqueueMapReq", "EnqueueMapRsp", "MapLineInfo",
-            "InteractPortalReq", "InteractPortalRsp", "PortalDef"
+            "InteractPortalReq", "InteractPortalRsp", "PortalDef",
+            "FriendBrief", "FriendListReq", "FriendListRsp",
+            "FriendSearchReq", "FriendSearchRsp",
+            "FriendApplyReq", "FriendApplyRsp",
+            "FriendAcceptReq", "FriendAcceptRsp",
+            "FriendRejectReq", "FriendRejectRsp",
+            "FriendDeleteReq", "FriendDeleteRsp",
+            "FriendRequestListReq", "FriendRequestListRsp",
+            "FriendBlockReq", "FriendBlockRsp",
+            "FriendUnblockReq", "FriendUnblockRsp",
+            "FriendBlockListReq", "FriendBlockListRsp",
+            "FriendRequestPush", "FriendAddedPush", "FriendRemovedPush", "FriendPresencePush"
         };
 
         public static bool HasType(string typeName)

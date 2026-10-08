@@ -35,7 +35,7 @@ namespace GameMesh.Protocol
                 clientProtocolVersion < hello.MinSupportedProtocolVersion)
             {
                 errorCode = "ERR_CLIENT_UPGRADE_REQUIRED";
-                message = "client protocol below server minimum";
+                message = "协议版本不匹配，请更新客户端";
                 return false;
             }
 
@@ -45,7 +45,7 @@ namespace GameMesh.Protocol
                  clientProtocolVersion < hello.MinSupportedProtocolVersion))
             {
                 errorCode = "ERR_PROTOCOL_VERSION";
-                message = "protocol generation mismatch";
+                message = "协议版本不匹配，请更新客户端";
                 return false;
             }
 
@@ -55,7 +55,8 @@ namespace GameMesh.Protocol
                 !string.Equals(serverHash, localHash, StringComparison.OrdinalIgnoreCase))
             {
                 errorCode = "ERR_SCHEMA_MISMATCH";
-                message = "schema_sha256 mismatch local=" + localHash + " server=" + serverHash;
+                message = "协议版本不匹配，请更新客户端";
+                GameMesh.Network.GameMeshLog.Warn("schema_sha256 mismatch local=" + localHash + " server=" + serverHash);
                 return false;
             }
 

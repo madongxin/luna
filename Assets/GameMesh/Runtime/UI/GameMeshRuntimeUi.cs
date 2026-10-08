@@ -1,4 +1,5 @@
 using GameMesh.Bootstrap;
+using GameMesh.Friends;
 using GameMesh.LoadTest;
 using GameMesh.Map;
 using GameMesh.Network;
@@ -14,12 +15,14 @@ namespace GameMesh.UI
     public sealed class GameMeshRuntimeUi : MonoBehaviour
     {
         bool _showMail;
+        bool _showFriends;
         bool _showDebug;
         bool _panelOpen = true;
         ConnectionState _lastState = ConnectionState.Disconnected;
         string _mailTitle = "hello";
         string _mailBody = "from luna";
         string _peerId = "";
+        string _friendQuery = "";
         string _loadCount = "100";
         string _loadMinutes = "5";
         string _loadStaggerMs = "40";
@@ -27,6 +30,7 @@ namespace GameMesh.UI
         string _loadPortB = "8083";
         string _loadPassword = "loadtest";
         Vector2 _mailScroll;
+        Vector2 _friendScroll;
         Vector2 _panelScroll;
         bool _cursorUnlocked = true;
         bool _stylesReady;
@@ -173,6 +177,7 @@ namespace GameMesh.UI
             DrawLines(client);
             DrawLoadTest();
             DrawWorld(client);
+            DrawFriends(client);
             DrawMail(client);
             GUILayout.EndScrollView();
             GUILayout.EndArea();
@@ -206,7 +211,11 @@ namespace GameMesh.UI
             EatMouseOver(launcher);
 
             string text;
-            if (state != ConnectionState.InWorld && client.Session.MapInstanceId == 0)
+            if (client.ReconnectGaveUp)
+                text = "连接断开";
+            else if (!string.IsNullOrEmpty(client.ReconnectStatus))
+                text = client.ReconnectStatus;
+            else if (state != ConnectionState.InWorld && client.Session.MapInstanceId == 0)
                 text = "还没进服，压测机器人不会出现。进游戏会自动登录，或按 F2。";
             else
             {
@@ -232,6 +241,9 @@ namespace GameMesh.UI
             var hint = new Rect(24f, launcher.yMax + 12f, Mathf.Min(Screen.width - 48f, 1400f), 96f);
             GUI.DrawTexture(hint, _bg);
             GUI.Label(new Rect(hint.x + 16f, hint.y + 10f, hint.width - 32f, hint.height - 20f), text, _hudHint);
+            if (client.ReconnectGaveUp &&
+                GUI.Button(new Rect(hint.x + 16f, hint.y + 52f, 160f, 32f), "手动重试", _btnStyle))
+                client.RequestManualReconnect();
             EatMouseOver(hint);
         }
 
@@ -322,7 +334,8 @@ namespace GameMesh.UI
                 "生命  " + (client.Session.Attributes.LifeState ?? "ALIVE") +
                 (client.Session.SessionReplaced ? "    已被顶号" : ""), _hint);
 
-            if (!string.IsNullOrEmpty(client.LastNotice))
+            DrawReconnect(client);
+            if (!string.IsNullOrEmpty(client.LastNotice) && client.LastNotice != client.ReconnectStatus)
                 GUILayout.Label(client.LastNotice, _statusOk);
             if (!string.IsNullOrEmpty(client.LastErrorUi))
                 GUILayout.Label(client.LastErrorUi, _statusErr);
@@ -601,6 +614,180 @@ namespace GameMesh.UI
             }
         }
 
+        void DrawFriends(GameMeshClient client)
+        {
+            GUILayout.Space(12);
+            var badge = client.Friends.RequestBadge > 0 ? "  (" + client.Friends.RequestBadge + ")" : "";
+            GUILayout.Label("好友" + badge, _section);
+            _showFriends = GUILayout.Toggle(_showFriends, _showFriends ? "  好友面板已打开" : "  点击打开好友", _btnStyle,
+                GUILayout.Height(40));
+            client.Friends.PanelOpen = _showFriends;
+            if (!_showFriends)
+                return;
+
+            var friends = client.Friends;
+            var loggedIn = client.Session.HasIdentity;
+            GUI.enabled = loggedIn;
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button(TabLabel("好友", friends.Tab == FriendPanelTab.Friends), _btnStyle, GUILayout.Height(40)))
+            {
+                friends.Tab = FriendPanelTab.Friends;
+                _ = friends.RefreshFriendsAsync(default);
+            }
+
+            if (GUILayout.Button(TabLabel("申请" + badge, friends.Tab == FriendPanelTab.Requests), _btnStyle,
+                    GUILayout.Height(40)))
+            {
+                friends.Tab = FriendPanelTab.Requests;
+                _ = friends.RefreshRequestsAsync(default);
+            }
+
+            if (GUILayout.Button(TabLabel("黑名单", friends.Tab == FriendPanelTab.Blocked), _btnStyle, GUILayout.Height(40)))
+            {
+                friends.Tab = FriendPanelTab.Blocked;
+                _ = friends.RefreshBlockedAsync(default);
+            }
+
+            GUILayout.EndHorizontal();
+
+            _friendQuery = Field("角色名/ID", _friendQuery);
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("搜索", _loginStyle, GUILayout.Height(40)))
+                _ = friends.SearchAsync(_friendQuery, default);
+            if (GUILayout.Button("刷新", _btnStyle, GUILayout.Height(40)))
+            {
+                if (friends.Tab == FriendPanelTab.Requests)
+                    _ = friends.RefreshRequestsAsync(default);
+                else if (friends.Tab == FriendPanelTab.Blocked)
+                    _ = friends.RefreshBlockedAsync(default);
+                else
+                    _ = friends.RefreshFriendsAsync(default);
+            }
+
+            GUILayout.EndHorizontal();
+
+            if (friends.SearchHit != null)
+            {
+                var hit = friends.SearchHit;
+                GUILayout.Label(
+                    (hit.Online ? "● " : "○ ") + hit.Name + "  #" + hit.PlayerId + "  Lv." + hit.Level +
+                    "  " + FriendClient.SearchRelationLabel(friends.SearchRelation),
+                    _label);
+                GUILayout.BeginHorizontal();
+                GUI.enabled = loggedIn && friends.SearchRelation == FriendRelationState.FriendRelationNone;
+                if (GUILayout.Button("申请", _loginStyle, GUILayout.Height(36)))
+                    _ = friends.ApplyAsync(hit.PlayerId, hit.Name, default);
+                GUI.enabled = loggedIn && friends.SearchRelation == FriendRelationState.FriendRelationReceivedPending;
+                if (GUILayout.Button("去同意", _btnStyle, GUILayout.Height(36)))
+                {
+                    friends.Tab = FriendPanelTab.Requests;
+                    _ = friends.RefreshRequestsAsync(default);
+                }
+
+                GUI.enabled = loggedIn && friends.SearchRelation != FriendRelationState.FriendRelationBlockedBySelf;
+                if (GUILayout.Button("拉黑", _logoutStyle, GUILayout.Height(36)))
+                    _ = friends.BlockAsync(hit.PlayerId, default);
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+            }
+
+            _friendScroll = GUILayout.BeginScrollView(_friendScroll, GUILayout.Height(220));
+            if (friends.Tab == FriendPanelTab.Requests)
+                DrawRequestRows(friends, loggedIn);
+            else if (friends.Tab == FriendPanelTab.Blocked)
+                DrawBlockedRows(friends, loggedIn);
+            else
+                DrawFriendRows(friends, loggedIn);
+            GUILayout.EndScrollView();
+
+            GUI.enabled = true;
+            if (!string.IsNullOrEmpty(friends.LastNotice))
+                GUILayout.Label(friends.LastNotice, _statusOk);
+            if (!string.IsNullOrEmpty(friends.LastError))
+                GUILayout.Label(friends.LastError, _statusErr);
+            if (!loggedIn)
+                GUILayout.Label("登录后即可用好友，不必先进图。", _hint);
+        }
+
+        void DrawFriendRows(FriendClient friends, bool loggedIn)
+        {
+            if (friends.Friends.Count == 0)
+            {
+                GUILayout.Label("还没有好友。搜索角色名或 PlayerID 后点申请。", _hint);
+                return;
+            }
+
+            GUILayout.Label("好友  " + friends.FriendCount + " / " + (friends.FriendCap == 0 ? 100 : friends.FriendCap),
+                _hint);
+            foreach (var f in friends.Friends)
+            {
+                GUILayout.BeginHorizontal();
+                var map = string.IsNullOrEmpty(f.MapName) ? "" : "  " + f.MapName;
+                var remark = string.IsNullOrEmpty(f.Remark) ? "" : "  备注 " + f.Remark;
+                GUILayout.Label(
+                    (f.Online ? "● " : "○ ") + f.Name + "  #" + f.PlayerId +
+                    (f.Online ? "  在线" : "  最近 " + FriendClient.FormatLastOnline(f.LastOnlineTime)) +
+                    map + remark,
+                    _label);
+                GUI.enabled = loggedIn;
+                if (GUILayout.Button("删除", _btnStyle, GUILayout.Width(72), GUILayout.Height(32)))
+                    _ = friends.DeleteAsync(f.PlayerId, default);
+                if (GUILayout.Button("拉黑", _logoutStyle, GUILayout.Width(72), GUILayout.Height(32)))
+                    _ = friends.BlockAsync(f.PlayerId, default);
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+            }
+        }
+
+        void DrawRequestRows(FriendClient friends, bool loggedIn)
+        {
+            if (friends.Requests.Count == 0)
+            {
+                GUILayout.Label("没有待处理申请。离线时收到的申请也会出现在这里。", _hint);
+                return;
+            }
+
+            foreach (var req in friends.Requests)
+            {
+                var name = req.Applicant != null ? req.Applicant.Name : "";
+                var id = req.Applicant != null ? req.Applicant.PlayerId : 0;
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(name + "  #" + id + "  " + FriendClient.FormatLastOnline(req.CreatedAt), _label);
+                GUI.enabled = loggedIn;
+                if (GUILayout.Button("同意", _loginStyle, GUILayout.Width(72), GUILayout.Height(32)))
+                    _ = friends.AcceptAsync(req.RequestId, default);
+                if (GUILayout.Button("拒绝", _btnStyle, GUILayout.Width(72), GUILayout.Height(32)))
+                    _ = friends.RejectAsync(req.RequestId, default);
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+            }
+        }
+
+        void DrawBlockedRows(FriendClient friends, bool loggedIn)
+        {
+            if (friends.Blocked.Count == 0)
+            {
+                GUILayout.Label("黑名单为空。", _hint);
+                return;
+            }
+
+            foreach (var b in friends.Blocked)
+            {
+                GUILayout.BeginHorizontal();
+                GUILayout.Label(b.Name + "  #" + b.PlayerId, _label);
+                GUI.enabled = loggedIn;
+                if (GUILayout.Button("解除", _loginStyle, GUILayout.Width(88), GUILayout.Height(32)))
+                    _ = friends.UnblockAsync(b.PlayerId, default);
+                GUI.enabled = true;
+                GUILayout.EndHorizontal();
+            }
+        }
+
+        static string TabLabel(string text, bool on)
+        {
+            return on ? "▸ " + text : text;
+        }
+
         void DrawMail(GameMeshClient client)
         {
             GUILayout.Space(12);
@@ -678,6 +865,22 @@ namespace GameMesh.UI
         {
             var text = Field(label, value.ToString());
             return int.TryParse(text, out var n) ? n : value;
+        }
+
+        void DrawReconnect(GameMeshClient client)
+        {
+            if (client == null || client.Session.SessionReplaced)
+                return;
+            if (client.ReconnectGaveUp)
+            {
+                GUILayout.Label("连接断开", _statusErr);
+                if (GUILayout.Button("手动重试", _btnStyle, GUILayout.Height(42)))
+                    client.RequestManualReconnect();
+                return;
+            }
+
+            if (!string.IsNullOrEmpty(client.ReconnectStatus))
+                GUILayout.Label(client.ReconnectStatus, _statusWarn);
         }
 
         static string StateText(ConnectionState state)

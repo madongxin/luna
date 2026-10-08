@@ -39,8 +39,8 @@ namespace GameMesh.Protocol
                 "TCP 已断开。关面板不会自动登出；再操作会重新握手。请重新点登录。"),
             [GameMeshErrorCode.ClientInvalidCoord] = new GameErrorInfo(GameMeshErrorCode.ClientInvalidCoord, "坐标非法", false,
                 "提交的坐标不合法。请回到服务器给的位置后再移动。"),
-            [GameMeshErrorCode.MapHashMismatch] = new GameErrorInfo(GameMeshErrorCode.MapHashMismatch, "本地地图与服务器不一致", false,
-                "本地地图资源和服务器不一致。请更新地图数据后再进图。"),
+            [GameMeshErrorCode.MapHashMismatch] = new GameErrorInfo(GameMeshErrorCode.MapHashMismatch, "地图资源版本不匹配，请更新客户端", false,
+                "地图资源版本不匹配，请更新客户端"),
             [GameMeshErrorCode.ProtocolMissing] = new GameErrorInfo(GameMeshErrorCode.ProtocolMissing, "当前协议缺少所需类型", false,
                 "当前导入的协议缺少这个接口。请用服务器导出的 game.proto 重新生成协议。"),
             [GameMeshErrorCode.ServerError] = new GameErrorInfo(GameMeshErrorCode.ServerError, "服务器返回错误", true,
@@ -59,12 +59,12 @@ namespace GameMesh.Protocol
                 "会话不存在或宽限期已过。请填密码重新登录。"),
             [GameMeshErrorCode.SessionReplaced] = new GameErrorInfo(GameMeshErrorCode.SessionReplaced, "账号已在其他设备登录", false,
                 "这个账号在别处登录，本端已被顶号。若要继续玩，请重新登录。"),
-            ["ERR_PROTOCOL_VERSION"] = new GameErrorInfo("ERR_PROTOCOL_VERSION", "协议版本不兼容，请更新客户端", false,
-                "客户端协议世代与服务器不一致。请更新客户端后再连。"),
-            ["ERR_SCHEMA_MISMATCH"] = new GameErrorInfo("ERR_SCHEMA_MISMATCH", "协议 schema 与服务器不一致", false,
-                "game.proto 哈希与服务器不同。请导入服务器当前 schema 后重编客户端。"),
-            ["ERR_CLIENT_UPGRADE_REQUIRED"] = new GameErrorInfo("ERR_CLIENT_UPGRADE_REQUIRED", "客户端版本过低，请更新", false,
-                "客户端版本低于服务器要求。请更新后再连。"),
+            ["ERR_PROTOCOL_VERSION"] = new GameErrorInfo("ERR_PROTOCOL_VERSION", "协议版本不匹配，请更新客户端", false,
+                "协议版本不匹配，请更新客户端"),
+            ["ERR_SCHEMA_MISMATCH"] = new GameErrorInfo("ERR_SCHEMA_MISMATCH", "协议版本不匹配，请更新客户端", false,
+                "协议版本不匹配，请更新客户端"),
+            ["ERR_CLIENT_UPGRADE_REQUIRED"] = new GameErrorInfo("ERR_CLIENT_UPGRADE_REQUIRED", "协议版本不匹配，请更新客户端", false,
+                "协议版本不匹配，请更新客户端"),
             ["ERR_RATE_LIMITED"] = new GameErrorInfo("ERR_RATE_LIMITED", "请求过于频繁", true,
                 "触发了连接/帧/心跳/登录限流。请稍等几秒再试，不要连点。"),
             ["ERR_OVERLOADED"] = new GameErrorInfo("ERR_OVERLOADED", "服务器过载，请稍后重试", true,
@@ -103,12 +103,14 @@ namespace GameMesh.Protocol
                 "服务器返回了非公网码 NOT_FOUND。请看 error_code 是否已提升为 ERR_SESSION_EXPIRED 或 ERR_MAP_NO_LINE，不要解析 message。"),
             [GameMeshErrorCode.MapLineLimit] = new GameErrorInfo(GameMeshErrorCode.MapLineLimit, "分线数量已到上限", false,
                 "这张地图不能再开新线。请选已有线路或稍后再进。"),
-            ["ERR_MAP_DATA_MISMATCH"] = new GameErrorInfo("ERR_MAP_DATA_MISMATCH", "地图数据版本或哈希不匹配，请更新资源", false,
-                "本地地图静态数据与服务器不符。请更新地图资源后再进图。"),
+            ["ERR_MAP_DATA_MISMATCH"] = new GameErrorInfo("ERR_MAP_DATA_MISMATCH", "地图资源版本不匹配，请更新客户端", false,
+                "地图资源版本不匹配，请更新客户端"),
             ["ERR_NOT_ON_MAP"] = new GameErrorInfo("ERR_NOT_ON_MAP", "尚未进入地图", false,
-                "还没进图。请先登录成功，等自动进图或再点进图。"),
+                "还没进图。请先完成 EnterMap，再移动。"),
+            ["ERR_MAP_NOT_LOADED"] = new GameErrorInfo("ERR_MAP_NOT_LOADED", "尚未进入地图", false,
+                "还没进图。请先完成 EnterMap，再移动。"),
             ["ERR_STALE_SEQ"] = new GameErrorInfo("ERR_STALE_SEQ", "客户端序号过旧", false,
-                "这条请求的 seq 比服务器记录的旧。以服务器为准，下一条用新 seq。"),
+                "进图成功或重连导入后，服务器会把序号窗口清零。下一包 Move 用 seq=1 是合法的，继续沿用原来的递增序号也可以。"),
             ["STALE_ROUTE"] = new GameErrorInfo("STALE_ROUTE", "路由版本过期，正在同步", true,
                 "你还在图里。服务器换了路由版本，客户端会拉一次世界快照，不要再点进入。"),
             ["ERR_STALE_ROUTE"] = new GameErrorInfo("ERR_STALE_ROUTE", "路由版本过期，正在同步", true,
@@ -133,6 +135,34 @@ namespace GameMesh.Protocol
                 "收件人玩家 ID 不存在。请核对后再发。"),
             ["ERR_MAIL_SELF"] = new GameErrorInfo("ERR_MAIL_SELF", "不能给自己发邮件", false,
                 "发件人和收件人是同一个玩家。请换成其他玩家 ID。"),
+            ["ERR_PLAYER_NOT_FOUND"] = new GameErrorInfo("ERR_PLAYER_NOT_FOUND", "找不到该玩家", false,
+                "搜索的角色名或 PlayerID 不存在。请核对后再搜。"),
+            ["ERR_CANNOT_ADD_SELF"] = new GameErrorInfo("ERR_CANNOT_ADD_SELF", "不能添加自己为好友", false,
+                "不能向自己发好友申请。"),
+            ["ERR_ALREADY_FRIEND"] = new GameErrorInfo("ERR_ALREADY_FRIEND", "已经是好友", false,
+                "对方已在好友列表中。"),
+            ["ERR_REQUEST_ALREADY_SENT"] = new GameErrorInfo("ERR_REQUEST_ALREADY_SENT", "已经发过申请", false,
+                "已向对方发出过好友申请，请等待处理。"),
+            ["ERR_INCOMING_REQUEST_EXISTS"] = new GameErrorInfo("ERR_INCOMING_REQUEST_EXISTS", "对方已向你申请", false,
+                "对方已经向你发了申请。请到申请列表点同意，不要再发申请。"),
+            ["ERR_REQUEST_NOT_FOUND"] = new GameErrorInfo("ERR_REQUEST_NOT_FOUND", "申请不存在", false,
+                "这条好友申请不存在或已被处理。请刷新申请列表。"),
+            ["ERR_REQUEST_EXPIRED"] = new GameErrorInfo("ERR_REQUEST_EXPIRED", "申请已过期", false,
+                "好友申请已过期（约 7 天）。需要对方重新申请。"),
+            ["ERR_FRIEND_LIMIT"] = new GameErrorInfo("ERR_FRIEND_LIMIT", "好友人数已满", false,
+                "你的好友已达上限（默认 100）。请先删除再添加。"),
+            ["ERR_TARGET_FRIEND_LIMIT"] = new GameErrorInfo("ERR_TARGET_FRIEND_LIMIT", "对方好友已满", false,
+                "对方好友人数已达上限。"),
+            ["ERR_PENDING_LIMIT"] = new GameErrorInfo("ERR_PENDING_LIMIT", "待处理申请已满", false,
+                "待处理申请已达上限（默认 50）。请先处理现有申请。"),
+            ["ERR_ALREADY_BLOCKED"] = new GameErrorInfo("ERR_ALREADY_BLOCKED", "已在黑名单中", false,
+                "你已经拉黑了对方。解除拉黑后才能再申请。"),
+            ["ERR_NOT_FRIEND"] = new GameErrorInfo("ERR_NOT_FRIEND", "还不是好友", false,
+                "对方不在你的好友列表中，无法删除。"),
+            ["ERR_OPERATION_TOO_FREQUENT"] = new GameErrorInfo("ERR_OPERATION_TOO_FREQUENT", "操作过于频繁", true,
+                "好友操作太快。请稍后再试，重试时会沿用同一 operation_id。"),
+            ["ERR_RELATION_CONFLICT"] = new GameErrorInfo("ERR_RELATION_CONFLICT", "好友关系冲突，请刷新后再试", true,
+                "关系状态变了。请刷新好友/申请列表后再操作。"),
             ["ERR_COMMAND_FORBIDDEN"] = new GameErrorInfo("ERR_COMMAND_FORBIDDEN", "该命令不被允许", false,
                 "这条公网命令被策略拒绝。不要重试同一条非法命令。"),
             ["ERR_INTERNAL"] = new GameErrorInfo("ERR_INTERNAL", "服务器内部错误", true,
@@ -217,6 +247,20 @@ namespace GameMesh.Protocol
             if (!string.IsNullOrEmpty(traceShort))
                 ui += "\n追踪  #" + traceShort;
             return ui;
+        }
+
+        public static bool IsNotOnMap(string code)
+        {
+            return code == "ERR_NOT_ON_MAP" || code == "ERR_MAP_NOT_LOADED" || code == "NOT_ON_MAP";
+        }
+
+        public static bool MoveAccepted(GameResponse rsp)
+        {
+            if (rsp == null || !rsp.Ok)
+                return false;
+            if (rsp.Move == null)
+                return true;
+            return rsp.Move.Ok;
         }
 
         public static bool IsSessionMissing(string code)

@@ -23,7 +23,9 @@ function Stop-Tracked {
 }
 
 if (-not $env:GAMEMESH_E2E_GATEWAY) {
-    Write-Host "Real dual-client E2E NOT RUN. Set GAMEMESH_E2E_GATEWAY=1 and provide a live Gateway."
+    Write-Host "BLOCKED: GAMEMESH_E2E_GATEWAY is not set."
+    Write-Host "Real dual-client E2E needs a live Gateway. Set GAMEMESH_E2E_GATEWAY=1, build the integration client, then rerun."
+    Write-Host "Exit code 2 means BLOCKED, not a test failure."
     exit 2
 }
 if (-not (Test-Path $ClientPath)) {

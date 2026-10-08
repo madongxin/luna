@@ -24,6 +24,7 @@ namespace GameMesh.Auth
         public string DeviceId;
         public bool AutoReconnect = true;
         public bool SessionReplaced;
+        public bool LogoutUnconfirmed;
         public PlayerAttributeSnapshot Attributes = new PlayerAttributeSnapshot();
         public bool IsDead =>
             string.Equals(Attributes?.LifeState, "DEAD", StringComparison.OrdinalIgnoreCase);
@@ -37,6 +38,23 @@ namespace GameMesh.Auth
             Token = token ?? "";
             Generation = generation;
             DisplayName = displayName ?? DisplayName;
+            LogoutUnconfirmed = false;
+        }
+
+        public void ApplyLogoutOutcome(LogoutResult result)
+        {
+            AutoReconnect = false;
+            if (result != null && result.RequestSent && !result.AuthorityOk)
+            {
+                LogoutUnconfirmed = true;
+                Token = null;
+                SessionId = null;
+                return;
+            }
+
+            LogoutUnconfirmed = false;
+            ClearSessionKeepIdentity();
+            AutoReconnect = false;
         }
 
         public void ApplyReconnect(string sessionId, string token, ulong generation)
@@ -62,6 +80,7 @@ namespace GameMesh.Auth
             DisplayName = null;
             AutoReconnect = true;
             SessionReplaced = false;
+            LogoutUnconfirmed = false;
         }
 
         public void ClearSessionKeepIdentity()

@@ -318,10 +318,22 @@ namespace GameMesh.Player
                     dead.Add(kv.Key);
             }
 
+            var fadeSeconds = client.Config != null && client.Config.aoiLeaveFadeSeconds > 0f
+                ? client.Config.aoiLeaveFadeSeconds
+                : 0.2f;
             foreach (var id in dead)
             {
-                if (_views.TryGetValue(id, out var view) && view != null)
-                    Destroy(view.gameObject);
+                if (!_views.TryGetValue(id, out var view) || view == null)
+                {
+                    _views.Remove(id);
+                    continue;
+                }
+
+                if (!view.Fading)
+                    view.BeginFade(fadeSeconds);
+                if (!view.FadeFinished)
+                    continue;
+                Destroy(view.gameObject);
                 _views.Remove(id);
             }
         }
@@ -331,7 +343,12 @@ namespace GameMesh.Player
     {
         public ulong EntityId;
         public bool HasModel { get; private set; }
+        public bool Fading { get; private set; }
+        public bool FadeFinished => Fading && Time.unscaledTime >= _fadeUntil;
         Vector3 _target;
+        readonly RemotePoseBuffer _poses = new RemotePoseBuffer();
+        float _fadeUntil;
+        float _fadeSeconds = 0.2f;
         float _targetYaw;
         float _delay;
         TextMesh _label;
@@ -500,36 +517,102 @@ namespace GameMesh.Player
             }
         }
 
+        public void BeginFade(float seconds)
+        {
+            if (Fading)
+                return;
+            Fading = true;
+            _fadeSeconds = Mathf.Max(0.05f, seconds);
+            _fadeUntil = Time.unscaledTime + _fadeSeconds;
+        }
+
+        public void CancelFade()
+        {
+            if (!Fading)
+                return;
+            Fading = false;
+            SetVisualAlpha(1f);
+        }
+
         public void Apply(RemoteEntityState state)
         {
+            CancelFade();
             var next = new Vector3(state.X, state.Y, state.Z);
             next.y = GroundY(next.x, next.z, next.y);
             var err = Vector3.Distance(new Vector3(transform.position.x, 0f, transform.position.z),
                 new Vector3(next.x, 0f, next.z));
+            var now = Time.unscaledTime;
             if (err > 24f)
+            {
                 transform.position = next;
+                _poses.Snap(next.x, next.y, next.z, state.Yaw, now, state.StateSeq);
+            }
+            else
+                _poses.Push(next.x, next.y, next.z, state.Yaw, now, state.StateSeq);
             _target = next;
             _targetYaw = state.Yaw;
             if (_label != null)
                 _label.text = $"{state.Name} {state.Hp:0}/{state.MaxHp:0}";
         }
 
+        void SetVisualAlpha(float alpha)
+        {
+            var renderers = GetComponentsInChildren<Renderer>(true);
+            for (var i = 0; i < renderers.Length; i++)
+            {
+                var renderer = renderers[i];
+                if (renderer == null)
+                    continue;
+                var color = renderer.material.color;
+                color.a = alpha;
+                renderer.material.color = color;
+            }
+
+            if (_label == null)
+                return;
+            var label = _label.color;
+            label.a = alpha;
+            _label.color = label;
+        }
+
         void Update()
         {
-            _target.y = GroundY(_target.x, _target.z, _target.y);
-            var pos = transform.position;
-            var planar = Vector3.Distance(new Vector3(pos.x, 0f, pos.z),
-                new Vector3(_target.x, 0f, _target.z));
-            var speed = planar > 8f ? 7.5f : (planar > 0.08f ? 4.8f : 0f);
-            var next = Vector3.MoveTowards(pos, _target, speed * Time.deltaTime);
-            next.y = GroundY(next.x, next.z, _target.y);
-            var moving = speed > 0.1f;
-            transform.position = next;
-            if (planar > 0.05f)
+            if (Fading)
             {
-                var look = Quaternion.Euler(0f, _targetYaw, 0f);
-                transform.rotation = Quaternion.Slerp(transform.rotation, look, 1f - Mathf.Exp(-Time.deltaTime * 8f));
+                var remain = _fadeUntil - Time.unscaledTime;
+                SetVisualAlpha(Mathf.Clamp01(remain / _fadeSeconds));
+                return;
             }
+
+            var pos = transform.position;
+            Vector3 next;
+            float speed;
+            if (_poses.TrySample(Time.unscaledTime, _delay, out var sx, out var sy, out var sz, out var syaw))
+            {
+                next = new Vector3(sx, GroundY(sx, sz, sy), sz);
+                speed = Vector3.Distance(new Vector3(pos.x, 0f, pos.z), new Vector3(next.x, 0f, next.z)) /
+                        Mathf.Max(Time.deltaTime, 0.0001f);
+                _target = next;
+                _targetYaw = syaw;
+                transform.SetPositionAndRotation(next, Quaternion.Euler(0f, syaw, 0f));
+            }
+            else
+            {
+                _target.y = GroundY(_target.x, _target.z, _target.y);
+                var planar = Vector3.Distance(new Vector3(pos.x, 0f, pos.z),
+                    new Vector3(_target.x, 0f, _target.z));
+                speed = planar > 8f ? 7.5f : (planar > 0.08f ? 4.8f : 0f);
+                next = Vector3.MoveTowards(pos, _target, speed * Time.deltaTime);
+                next.y = GroundY(next.x, next.z, _target.y);
+                transform.position = next;
+                if (planar > 0.05f)
+                {
+                    var look = Quaternion.Euler(0f, _targetYaw, 0f);
+                    transform.rotation = Quaternion.Slerp(transform.rotation, look, 1f - Mathf.Exp(-Time.deltaTime * 8f));
+                }
+            }
+
+            var moving = speed > 0.1f;
 
             if (_anim != null)
             {

@@ -3,6 +3,7 @@ using System.Threading.Tasks;
 using GameMesh.Aoi;
 using GameMesh.Auth;
 using GameMesh.Bootstrap;
+using GameMesh.Friends;
 using GameMesh.Mail;
 using GameMesh.Map;
 using GameMesh.Network;
@@ -72,6 +73,32 @@ namespace GameMesh.Tests.EditMode
             var low = new ServerHelloRsp { Ok = true, ProtocolVersion = 2, MinSupportedProtocolVersion = 2, SchemaSha256 = "abc" };
             Assert.IsFalse(ProtocolHandshake.TryValidate(low, "abc", 1, out code, out _));
             Assert.AreEqual("ERR_CLIENT_UPGRADE_REQUIRED", code);
+        }
+
+        [Test]
+        public void MoveAccepted_UsesOkAndIgnoresErrorCodeText()
+        {
+            var ok = new GameResponse
+            {
+                Ok = true,
+                Move = new MoveRsp { Ok = true, ErrorCode = "", Message = "" }
+            };
+            Assert.IsTrue(GameErrorCatalog.MoveAccepted(ok));
+            var legacyOk = new GameResponse
+            {
+                Ok = true,
+                Move = new MoveRsp { Ok = true, ErrorCode = "OK", Message = "OK" }
+            };
+            Assert.IsTrue(GameErrorCatalog.MoveAccepted(legacyOk));
+            var notLoaded = new GameResponse
+            {
+                Ok = false,
+                Move = new MoveRsp { Ok = false, ErrorCode = "ERR_MAP_NOT_LOADED", Message = "map not loaded" }
+            };
+            Assert.IsFalse(GameErrorCatalog.MoveAccepted(notLoaded));
+            Assert.IsTrue(GameErrorCatalog.IsNotOnMap("ERR_MAP_NOT_LOADED"));
+            Assert.IsTrue(GameErrorCatalog.IsNotOnMap("ERR_NOT_ON_MAP"));
+            Assert.AreEqual("尚未进入地图", GameErrorCatalog.Resolve("ERR_MAP_NOT_LOADED").Chinese);
         }
 
         [Test]
@@ -190,7 +217,9 @@ namespace GameMesh.Tests.EditMode
         [Test]
         public void ErrorCatalog_CoversHelloMapMailAndKick()
         {
-            Assert.AreEqual("协议 schema 与服务器不一致", GameErrorCatalog.Resolve("ERR_SCHEMA_MISMATCH").Chinese);
+            Assert.AreEqual("协议版本不匹配，请更新客户端", GameErrorCatalog.Resolve("ERR_SCHEMA_MISMATCH").Chinese);
+            Assert.AreEqual("地图资源版本不匹配，请更新客户端", GameErrorCatalog.Resolve("ERR_MAP_DATA_MISMATCH").Chinese);
+            Assert.AreEqual("地图资源版本不匹配，请更新客户端", GameErrorCatalog.Resolve("MAP_HASH_MISMATCH").Chinese);
             Assert.AreEqual("账号已在其他设备登录", GameErrorCatalog.Resolve("ERR_SESSION_REPLACED").Chinese);
             Assert.IsTrue(GameErrorCatalog.Resolve("ERR_AOI_RESYNC_REQUIRED").Retryable);
             Assert.IsTrue(GameErrorCatalog.IsSessionReplaced("ERR_FENCE_STALE"));
@@ -336,6 +365,48 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void FriendClient_SortsOnlineThenLastSeen()
+        {
+            var offlineNew = new FriendBrief { PlayerId = 1, Name = "a", Online = false, LastOnlineTime = 200 };
+            var online = new FriendBrief { PlayerId = 2, Name = "b", Online = true, LastOnlineTime = 1 };
+            var offlineOld = new FriendBrief { PlayerId = 3, Name = "c", Online = false, LastOnlineTime = 10 };
+            Assert.Less(FriendClient.CompareFriends(online, offlineNew), 0);
+            Assert.Less(FriendClient.CompareFriends(offlineNew, offlineOld), 0);
+            Assert.AreEqual("未知", FriendClient.FormatLastOnline(0));
+        }
+
+        [Test]
+        public void FriendClient_AppliesPushWithoutReplayPresenceHistory()
+        {
+            var session = new GameSession();
+            session.ApplyLogin(8, "s", "t", 1, "me");
+            var friends = new FriendClient(session, (req, ct) => Task.FromResult(new GameResponse { Ok = true }));
+            Assert.IsTrue(friends.ApplyPush(new GameResponse
+            {
+                FriendAddedPush = new FriendAddedPush
+                {
+                    Peer = new FriendBrief { PlayerId = 9, Name = "peer", Online = false, LastOnlineTime = 10 }
+                }
+            }));
+            Assert.AreEqual(1, friends.Friends.Count);
+            Assert.IsTrue(friends.ApplyPush(new GameResponse
+            {
+                FriendPresencePush = new FriendPresencePush
+                {
+                    FriendPlayerId = 9,
+                    Online = true,
+                    LastOnlineTime = 99
+                }
+            }));
+            Assert.IsTrue(friends.Friends[0].Online);
+            Assert.IsTrue(friends.ApplyPush(new GameResponse
+            {
+                FriendRemovedPush = new FriendRemovedPush { FriendPlayerId = 9 }
+            }));
+            Assert.AreEqual(0, friends.Friends.Count);
+        }
+
+        [Test]
         public void ErrorCatalog_BranchesOnCodeNotEnglishMessage()
         {
             var info = GameErrorCatalog.Resolve("ERR_UNWALKABLE", "totally different english");
@@ -360,6 +431,11 @@ namespace GameMesh.Tests.EditMode
             Assert.AreEqual("服务器要求走传送门开副本", GameErrorCatalog.Resolve("ERR_PORTAL_REQUIRED").Chinese);
             Assert.IsFalse(GameErrorCatalog.Resolve("ERR_PORTAL_UNKNOWN").Retryable);
             Assert.IsTrue(GameErrorCatalog.Resolve("ERR_PORTAL_TOO_FAR").Retryable);
+            Assert.AreEqual("找不到该玩家", GameErrorCatalog.Resolve("ERR_PLAYER_NOT_FOUND").Chinese);
+            Assert.AreEqual("对方已向你申请", GameErrorCatalog.Resolve("ERR_INCOMING_REQUEST_EXISTS").Chinese);
+            Assert.IsTrue(GameErrorCatalog.Resolve("ERR_OPERATION_TOO_FREQUENT").Retryable);
+            Assert.IsTrue(GameErrorCatalog.Resolve("ERR_RELATION_CONFLICT").Retryable);
+            Assert.IsFalse(GameErrorCatalog.Resolve("ERR_ALREADY_FRIEND").Retryable);
         }
 
         [Test]

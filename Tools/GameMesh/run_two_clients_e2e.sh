@@ -14,7 +14,9 @@ TIMEOUT="${TIMEOUT_SEC:-90}"
 SCENARIO="${GAMEMESH_E2E_SCENARIO:-presence-move-logout}"
 
 if [[ -z "${GAMEMESH_E2E_GATEWAY:-}" ]]; then
-  echo "Real dual-client E2E NOT RUN. Set GAMEMESH_E2E_GATEWAY=1 and provide a live Gateway."
+  echo "BLOCKED: GAMEMESH_E2E_GATEWAY is not set."
+  echo "Real dual-client E2E needs a live Gateway. Set GAMEMESH_E2E_GATEWAY=1, build the integration client, then rerun."
+  echo "Exit code 2 means BLOCKED, not a test failure."
   exit 2
 fi
 if [[ ! -x "$CLIENT" && ! -f "$CLIENT" ]]; then

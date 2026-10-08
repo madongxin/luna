@@ -274,6 +274,58 @@ namespace GameMesh.Network
                 case GameRequest.BodyOneofCase.InteractPortal:
                     rsp.InteractPortal = PortalRsp(req.InteractPortal);
                     break;
+                case GameRequest.BodyOneofCase.FriendList:
+                    rsp.FriendList = new FriendListRsp { Ok = true, FriendN = 0, FriendCap = 100 };
+                    break;
+                case GameRequest.BodyOneofCase.FriendSearch:
+                    rsp.FriendSearch = new FriendSearchRsp
+                    {
+                        Ok = true,
+                        Player = new FriendBrief
+                        {
+                            PlayerId = req.FriendSearch.TargetPlayerId != 0
+                                ? req.FriendSearch.TargetPlayerId
+                                : 9001,
+                            Name = string.IsNullOrEmpty(req.FriendSearch.ExactName)
+                                ? "peer"
+                                : req.FriendSearch.ExactName,
+                            Online = true
+                        },
+                        Relation = FriendRelationState.FriendRelationNone
+                    };
+                    break;
+                case GameRequest.BodyOneofCase.FriendApply:
+                    rsp.FriendApply = new FriendApplyRsp
+                    {
+                        Ok = true,
+                        RequestId = 1
+                    };
+                    break;
+                case GameRequest.BodyOneofCase.FriendAccept:
+                    rsp.FriendAccept = new FriendAcceptRsp
+                    {
+                        Ok = true,
+                        Peer = new FriendBrief { PlayerId = 9001, Name = "peer", Online = true }
+                    };
+                    break;
+                case GameRequest.BodyOneofCase.FriendReject:
+                    rsp.FriendReject = new FriendRejectRsp { Ok = true };
+                    break;
+                case GameRequest.BodyOneofCase.FriendDelete:
+                    rsp.FriendDelete = new FriendDeleteRsp { Ok = true };
+                    break;
+                case GameRequest.BodyOneofCase.FriendRequestList:
+                    rsp.FriendRequestList = new FriendRequestListRsp { Ok = true };
+                    break;
+                case GameRequest.BodyOneofCase.FriendBlock:
+                    rsp.FriendBlock = new FriendBlockRsp { Ok = true };
+                    break;
+                case GameRequest.BodyOneofCase.FriendUnblock:
+                    rsp.FriendUnblock = new FriendUnblockRsp { Ok = true };
+                    break;
+                case GameRequest.BodyOneofCase.FriendBlockList:
+                    rsp.FriendBlockList = new FriendBlockListRsp { Ok = true };
+                    break;
                 case GameRequest.BodyOneofCase.Move:
                     rsp.Move = new MoveRsp
                     {

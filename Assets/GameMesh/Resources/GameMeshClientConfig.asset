@@ -19,10 +19,18 @@ MonoBehaviour:
   requestTimeoutMs: 8000
   helloTimeoutMs: 5000
   heartbeatTimeoutMs: 4000
-  reconnectMaxAttempts: 6
+  heartbeatIntervalMs: 5000
+  heartbeatIdleTimeoutMs: 15000
+  reconnectMaxAttempts: 5
   reconnectMaxTotalMs: 30000
   moveSendHz: 10
+  moveFastSendHz: 20
+  moveFastSpeed: 6
   interpolationDelayMs: 100
+  aoiLeaveFadeSeconds: 0.2
+  maxFrameBytes: 4194304
+  sendQueueLimit: 128
+  pendingLimit: 256
   mapTemplateId: 1002
   realmId: 1
   dataVersion: 1

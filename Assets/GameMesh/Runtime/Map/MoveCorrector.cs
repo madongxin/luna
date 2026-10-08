@@ -6,6 +6,8 @@ namespace GameMesh.Map
     public sealed class MoveSampler
     {
         public float SendHz = 10f;
+        public float FastSendHz = 20f;
+        public float FastSpeed = 6f;
         public float PositionThreshold = 0.05f;
         public float YawThreshold = 2f;
         public int MaxInFlight = 3;
@@ -28,11 +30,16 @@ namespace GameMesh.Map
 
             if (InFlight >= MaxInFlight)
                 return false;
-            if (now - _lastSendTime < 1f / Math.Max(0.1f, SendHz))
+            var hasBaseline = _lastSendTime > 0f;
+            var dt = hasBaseline ? now - _lastSendTime : float.MaxValue;
+            var dist = hasBaseline ? Vector3.Distance(pos, _lastSent) : float.MaxValue;
+            var speed = hasBaseline && dt > 0.0001f ? dist / dt : 0f;
+            var hz = speed >= FastSpeed ? Math.Max(SendHz, FastSendHz) : SendHz;
+            if (dt < 1f / Math.Max(0.1f, hz))
                 return false;
-            var moved = Vector3.Distance(pos, _lastSent) >= PositionThreshold;
+            var moved = dist >= PositionThreshold;
             var rotated = Mathf.Abs(Mathf.DeltaAngle(_lastYaw, yaw)) >= YawThreshold;
-            if (!moved && !rotated && _lastSendTime > 0f)
+            if (hasBaseline && !moved && !rotated)
                 return false;
             return true;
         }

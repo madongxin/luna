@@ -1,5 +1,6 @@
 using System.IO;
 using GameMesh.Aoi;
+using GameMesh.Auth;
 using GameMesh.Map;
 using GameMesh.Network;
 using GameMesh.Protocol;
@@ -57,6 +58,30 @@ namespace GameMesh.Tests.EditMode
                 new GameRequest { InteractPortal = new InteractPortalReq() }.BodyCase);
             Assert.AreEqual(GameResponse.BodyOneofCase.InteractPortal,
                 new GameResponse { InteractPortal = new InteractPortalRsp() }.BodyCase);
+            Assert.AreEqual(51, GameRequest.FriendListFieldNumber);
+            Assert.AreEqual(81, GameRequest.FriendSearchFieldNumber);
+            Assert.AreEqual(82, GameRequest.FriendApplyFieldNumber);
+            Assert.AreEqual(83, GameRequest.FriendAcceptFieldNumber);
+            Assert.AreEqual(84, GameRequest.FriendRejectFieldNumber);
+            Assert.AreEqual(85, GameRequest.FriendDeleteFieldNumber);
+            Assert.AreEqual(86, GameRequest.FriendRequestListFieldNumber);
+            Assert.AreEqual(87, GameRequest.FriendBlockFieldNumber);
+            Assert.AreEqual(88, GameRequest.FriendUnblockFieldNumber);
+            Assert.AreEqual(89, GameRequest.FriendBlockListFieldNumber);
+            Assert.AreEqual(51, GameResponse.FriendListFieldNumber);
+            Assert.AreEqual(82, GameResponse.FriendApplyFieldNumber);
+            Assert.AreEqual(90, GameResponse.FriendRequestPushFieldNumber);
+            Assert.AreEqual(91, GameResponse.FriendAddedPushFieldNumber);
+            Assert.AreEqual(92, GameResponse.FriendRemovedPushFieldNumber);
+            Assert.AreEqual(93, GameResponse.FriendPresencePushFieldNumber);
+            Assert.AreEqual(94, GameResponse.FriendSearchFieldNumber);
+            Assert.IsTrue(ProtocolCapabilities.HasType("FriendBrief"));
+            Assert.IsTrue(ProtocolCapabilities.HasType("FriendSearchReq"));
+            Assert.IsTrue(ProtocolCapabilities.HasType("FriendRequestPush"));
+            Assert.AreEqual(GameRequest.BodyOneofCase.FriendSearch,
+                new GameRequest { FriendSearch = new FriendSearchReq() }.BodyCase);
+            Assert.AreEqual(GameResponse.BodyOneofCase.FriendAccept,
+                new GameResponse { FriendAccept = new FriendAcceptRsp() }.BodyCase);
             var rsp = new GameResponse
             {
                 AoiDelta = new AoiDelta(),
@@ -182,6 +207,82 @@ namespace GameMesh.Tests.EditMode
             sampler.MarkSent(Vector3.zero, 0, 1f);
             Assert.IsFalse(sampler.ShouldSend(new Vector3(0.01f, 0, 0), 0, 1.01f, out _));
             Assert.IsTrue(sampler.ShouldSend(new Vector3(1, 0, 0), 0, 1.2f, out _));
+            sampler.MarkSent(new Vector3(1, 0, 0), 0, 1.2f);
+            Assert.IsFalse(sampler.ShouldSend(new Vector3(1, 0, 0), 0, 3f, out _), "stationary must not send a zero delta");
+            var fast = new MoveSampler { SendHz = 10f, FastSendHz = 20f, FastSpeed = 6f, PositionThreshold = 0.05f };
+            fast.MarkSent(Vector3.zero, 0, 1f);
+            Assert.IsTrue(fast.ShouldSend(new Vector3(1f, 0, 0), 0, 1.06f, out _), "fast motion may send at 20 Hz");
+        }
+
+        [Test]
+        public void RequestSeq_ResetsAfterLoginAndEnterMap()
+        {
+            var conn = new GameConnection(new ImmediateDispatcher());
+            var hello = new GameRequest { ClientHello = new ClientHelloReq() };
+            var login = new GameRequest { Login = new LoginReq() };
+            Assert.AreEqual(1UL, conn.AssignRequestSeq(hello));
+            Assert.AreEqual(2UL, conn.AssignRequestSeq(login));
+            conn.ResetRequestSeq();
+            var enter = new GameRequest { EnterMap = new EnterMapReq() };
+            Assert.AreEqual(1UL, conn.AssignRequestSeq(enter));
+            conn.ResetRequestSeq();
+            var move = new GameRequest { Move = new MoveReq() };
+            var move2 = new GameRequest { Move = new MoveReq() };
+            Assert.AreEqual(1UL, conn.AssignRequestSeq(move));
+            Assert.AreEqual(2UL, conn.AssignRequestSeq(move2));
+            Assert.Greater(move2.Seq, move.Seq);
+            conn.ResetRequestSeq();
+            var afterReconnect = new GameRequest { Move = new MoveReq() };
+            Assert.AreEqual(1UL, conn.AssignRequestSeq(afterReconnect));
+        }
+
+        [Test]
+        public void Logout_NotOkMarksSessionUnknown()
+        {
+            var session = new GameSession();
+            session.ApplyLogin(9, "sess", "token", 3, "Luna");
+            var rsp = new GameResponse
+            {
+                Ok = true,
+                Logout = new LogoutRsp { Ok = false, ErrorCode = "ERR_SESSION_EXPIRED", Message = "no" }
+            };
+            var parsed = AuthResponse.FromLogout(rsp, true);
+            Assert.IsFalse(parsed.AuthorityOk);
+            session.ApplyLogoutOutcome(parsed);
+            Assert.IsTrue(session.LogoutUnconfirmed);
+            Assert.IsFalse(session.AutoReconnect);
+            Assert.IsFalse(session.HasIdentity);
+
+            var okSession = new GameSession();
+            okSession.ApplyLogin(9, "sess", "token", 3, "Luna");
+            var ok = AuthResponse.FromLogout(new GameResponse
+            {
+                Ok = true,
+                Logout = new LogoutRsp { Ok = true }
+            }, true);
+            okSession.ApplyLogoutOutcome(ok);
+            Assert.IsFalse(okSession.LogoutUnconfirmed);
+            Assert.IsFalse(okSession.HasIdentity);
+        }
+
+        [Test]
+        public void RemotePoseBuffer_InterpolatesAndDropsStaleSeq()
+        {
+            var buffer = new RemotePoseBuffer();
+            Assert.IsTrue(buffer.Push(0, 0, 0, 0, 1f, 1));
+            Assert.IsTrue(buffer.Push(10, 0, 0, 90, 1.1f, 2));
+            Assert.IsFalse(buffer.Push(99, 0, 0, 0, 1.2f, 2));
+            Assert.IsTrue(buffer.TrySample(1.10f, 0.05f, out var x, out _, out _, out var yaw));
+            Assert.AreEqual(5f, x, 0.01f);
+            Assert.AreEqual(45f, yaw, 0.01f);
+        }
+
+        [Test]
+        public void HeartbeatClock_TimesOutWithoutReply()
+        {
+            var clock = new HeartbeatClock();
+            clock.Arm(clock.MonotonicMs);
+            Assert.IsFalse(clock.ResponseTimedOut(15000));
         }
 
         [Test]

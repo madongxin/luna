@@ -12,7 +12,24 @@ namespace GameMesh.Auth
         public int JitterMs { get; private set; }
         public long ServerTimeOffsetMs { get; private set; }
         public long LastReceivedMonotonicMs { get; private set; }
+        public long AwaitSinceMs { get; private set; }
         public bool HasSample { get; private set; }
+
+        public void Arm(long nowMs)
+        {
+            if (AwaitSinceMs <= 0)
+                AwaitSinceMs = nowMs;
+        }
+
+        public bool ResponseTimedOut(int timeoutMs)
+        {
+            if (timeoutMs <= 0)
+                return false;
+            var baseline = HasSample ? LastReceivedMonotonicMs : AwaitSinceMs;
+            if (baseline <= 0)
+                return false;
+            return MonotonicMs - baseline > timeoutMs;
+        }
 
         public void OnReply(long sendMonotonicMs, long recvMonotonicMs, long serverTimeMs, int jitterHintMs)
         {
