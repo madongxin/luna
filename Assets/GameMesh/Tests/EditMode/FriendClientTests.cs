@@ -956,6 +956,176 @@ namespace GameMesh.Tests.EditMode
             StringAssert.DoesNotContain("token", text);
         }
 
+        [Test]
+        public void FriendPages_MergeDuplicateIds_AndKeepOldListWhenALaterPageFails()
+        {
+            var cursors = new List<string>();
+            var friends = Client((req, ct) =>
+            {
+                if (req.FriendList == null)
+                    return Task.FromResult(new GameResponse { Ok = true });
+                cursors.Add(req.FriendList.Cursor ?? "");
+                Assert.AreEqual(50u, req.FriendList.PageSize);
+                if (string.IsNullOrEmpty(req.FriendList.Cursor))
+                {
+                    var body = new FriendListRsp { Ok = true, NextCursor = "p2", FriendN = 3, FriendCap = 100 };
+                    body.Friends.Add(new FriendBrief { PlayerId = 1, Name = "Ann", Level = 2 });
+                    body.Friends.Add(new FriendBrief { PlayerId = 2, Name = "Bo", Level = 2 });
+                    return Task.FromResult(new GameResponse { Ok = true, FriendList = body });
+                }
+
+                var page2 = new FriendListRsp { Ok = true, FriendN = 3, FriendCap = 100 };
+                page2.Friends.Add(new FriendBrief { PlayerId = 2, Name = "Bo2", Level = 4 });
+                page2.Friends.Add(new FriendBrief { PlayerId = 3, Name = "Cee", Level = 1 });
+                return Task.FromResult(new GameResponse { Ok = true, FriendList = page2 });
+            });
+            friends.RefreshFriendsAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(2, cursors.Count);
+            Assert.AreEqual("", cursors[0]);
+            Assert.AreEqual("p2", cursors[1]);
+            Assert.AreEqual(3, friends.Friends.Count);
+            Assert.AreEqual(3u, friends.FriendCount);
+            Assert.AreEqual(100u, friends.FriendCap);
+            Assert.IsFalse(friends.FriendHasMore);
+            Assert.AreEqual("Bo2", friends.Friends.Find(row => row.PlayerId == 2).Name);
+
+            friends.Friends.Clear();
+            friends.Friends.Add(new FriendBrief { PlayerId = 9, Name = "old" });
+            var failing = Client((req, ct) =>
+            {
+                if (req.FriendList != null && req.FriendList.Cursor == "p2")
+                {
+                    return Task.FromResult(new GameResponse
+                    {
+                        Ok = false,
+                        FriendList = new FriendListRsp { Ok = false, ErrorCode = "ERR_DEPENDENCY_UNAVAILABLE" }
+                    });
+                }
+
+                var body = new FriendListRsp { Ok = true, NextCursor = "p2" };
+                body.Friends.Add(new FriendBrief { PlayerId = 1, Name = "new" });
+                return Task.FromResult(new GameResponse { Ok = true, FriendList = body });
+            });
+            failing.Friends.Add(new FriendBrief { PlayerId = 9, Name = "old" });
+            failing.RefreshFriendsAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(1, failing.Friends.Count);
+            Assert.AreEqual(9UL, failing.Friends[0].PlayerId);
+            StringAssert.Contains("服务暂不可用", failing.FriendListError);
+        }
+
+        [Test]
+        public void LoadMoreFriends_AppendsNextPageWithoutDroppingTheFirst()
+        {
+            var friends = Client((req, ct) =>
+            {
+                var cursor = req.FriendList != null ? req.FriendList.Cursor : "";
+                var body = new FriendListRsp { Ok = true, NextCursor = string.IsNullOrEmpty(cursor) ? "p2" : "" };
+                body.Friends.Add(new FriendBrief
+                {
+                    PlayerId = string.IsNullOrEmpty(cursor) ? 1UL : 2UL,
+                    Name = string.IsNullOrEmpty(cursor) ? "Ann" : "Bo",
+                    Level = 2
+                });
+                return Task.FromResult(new GameResponse { Ok = true, FriendList = body });
+            });
+            friends.OpenFriendPageAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(1, friends.Friends.Count);
+            Assert.IsTrue(friends.FriendHasMore);
+            friends.LoadMoreFriendsAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(2, friends.Friends.Count);
+            Assert.IsTrue(friends.Friends.Exists(row => row.PlayerId == 1));
+            Assert.IsTrue(friends.Friends.Exists(row => row.PlayerId == 2));
+            Assert.IsFalse(friends.FriendHasMore);
+        }
+
+        [Test]
+        public void EmptyFriendPage_DoesNotInventFriends()
+        {
+            var friends = Client((req, ct) => Task.FromResult(new GameResponse
+            {
+                Ok = true,
+                FriendList = new FriendListRsp { Ok = true, FriendN = 0, FriendCap = 100 }
+            }));
+            friends.RefreshFriendsAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(0, friends.Friends.Count);
+            Assert.AreEqual(0u, friends.FriendCount);
+            Assert.AreEqual("", friends.FriendListError);
+        }
+
+        [Test]
+        public void RequestPages_DedupeByRequestId()
+        {
+            var friends = Client((req, ct) =>
+            {
+                var cursor = req.FriendRequestList != null ? req.FriendRequestList.Cursor : "";
+                var body = new FriendRequestListRsp { Ok = true, NextCursor = string.IsNullOrEmpty(cursor) ? "n" : "" };
+                body.Requests.Add(new FriendRequestInfo
+                {
+                    RequestId = 7,
+                    Applicant = new FriendBrief { PlayerId = 3, Name = string.IsNullOrEmpty(cursor) ? "old" : "new" }
+                });
+                if (!string.IsNullOrEmpty(cursor))
+                {
+                    body.Requests.Add(new FriendRequestInfo
+                    {
+                        RequestId = 8,
+                        Applicant = new FriendBrief { PlayerId = 4, Name = "other" }
+                    });
+                }
+
+                return Task.FromResult(new GameResponse { Ok = true, FriendRequestList = body });
+            });
+            friends.RefreshRequestsAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(2, friends.Requests.Count);
+            Assert.AreEqual("new", friends.Requests[0].Applicant.Name);
+            Assert.AreEqual(2, friends.RequestBadge);
+            Assert.IsFalse(friends.RequestHasMore);
+        }
+
+        [Test]
+        public void ExpiredRequest_DoesNotSendAccept()
+        {
+            var sends = 0;
+            var friends = Client((req, ct) =>
+            {
+                sends++;
+                return Task.FromResult(new GameResponse { Ok = true });
+            });
+            var past = (ulong)DateTimeOffset.UtcNow.AddMinutes(-5).ToUnixTimeSeconds();
+            friends.Requests.Add(new FriendRequestInfo
+            {
+                RequestId = 4,
+                ExpireAt = past,
+                Applicant = new FriendBrief { PlayerId = 3, Name = "Ann" }
+            });
+            Assert.IsTrue(FriendClient.IsRequestExpired(friends.Requests[0]));
+            friends.AcceptAsync(4, CancellationToken.None).GetAwaiter().GetResult();
+            friends.RejectAsync(4, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(0, sends);
+            StringAssert.Contains("申请已过期", friends.LastError);
+        }
+
+        [Test]
+        public void OperationId_StaysWithinServerLimit()
+        {
+            var friends = Client((req, ct) => Task.FromResult(new GameResponse
+            {
+                Ok = true,
+                FriendApply = new FriendApplyRsp { Ok = true, RequestId = 1 }
+            }));
+            friends.ApplyAsync(3, "A", CancellationToken.None).GetAwaiter().GetResult();
+            Assert.LessOrEqual(friends.LastOperationId.Length, FriendClient.MaxOperationIdLength);
+            Assert.Greater(friends.LastOperationId.Length, 0);
+        }
+
+        [Test]
+        public void MissingLevel_IsNotShownAsZero()
+        {
+            var line = FriendClient.FormatFriendLine(new FriendBrief { Name = "Ann", Online = true, Level = 0 });
+            StringAssert.Contains("等级未知", line);
+            StringAssert.DoesNotContain("Lv.0", line);
+        }
+
         static void AssertNoRetryHint(string code, System.Action<FriendClient> send)
         {
             var friends = Client((req, ct) =>

@@ -184,7 +184,10 @@ namespace GameMesh.UI
                 return;
             }
 
-            var badge = friends.RequestBadge > 0 ? "好友 (" + friends.RequestBadge + ")" : "好友";
+            var badgeCount = friends.RequestBadge > 0
+                ? "好友 (" + friends.RequestBadge + (friends.RequestHasMore ? "+)" : ")")
+                : "好友";
+            var badge = badgeCount;
             if (_badge != null && _badge.text != badge)
                 _badge.text = badge;
             if (_diag != null && _diagOpen)
@@ -317,7 +320,7 @@ namespace GameMesh.UI
             if (friends.Tab == FriendPanelTab.Friends)
             {
                 if (friends.Friends.Count == 0)
-                    labels.Add(friends.FriendsLoading ? "加载中" : (!string.IsNullOrEmpty(friends.LastError) ? "加载失败，请重试" : "还没有好友"));
+                    labels.Add(friends.FriendsLoading ? "加载中" : (!string.IsNullOrEmpty(friends.FriendListError) ? "加载失败，请重试" : "还没有好友"));
                 else
                     for (var i = 0; i < friends.Friends.Count; i++)
                         if (friends.Friends[i] != null)
@@ -326,7 +329,7 @@ namespace GameMesh.UI
             else if (friends.Tab == FriendPanelTab.Requests)
             {
                 if (friends.Requests.Count == 0)
-                    labels.Add(friends.RequestsLoading ? "加载中" : (!string.IsNullOrEmpty(friends.LastError) ? "加载失败，请重试" : "没有待处理的申请"));
+                    labels.Add(friends.RequestsLoading ? "加载中" : (!string.IsNullOrEmpty(friends.RequestListError) ? "加载失败，请重试" : "没有待处理的申请"));
                 else
                     for (var i = 0; i < friends.Requests.Count; i++)
                     {
@@ -338,7 +341,7 @@ namespace GameMesh.UI
             }
             else if (friends.Blocked.Count == 0)
             {
-                labels.Add(friends.BlockedLoading ? "加载中" : (!string.IsNullOrEmpty(friends.LastError) ? "加载失败，请重试" : "黑名单是空的"));
+                labels.Add(friends.BlockedLoading ? "加载中" : (!string.IsNullOrEmpty(friends.BlockListError) ? "加载失败，请重试" : "黑名单是空的"));
             }
             else
             {
@@ -374,76 +377,92 @@ namespace GameMesh.UI
         void BuildFriends(FriendClient friends)
         {
             if (friends.Friends.Count == 0)
+                AddLine(friends.FriendsLoading ? "加载中" : (!string.IsNullOrEmpty(friends.FriendListError) ? "加载失败，请重试" : "还没有好友"));
+            else
             {
-                AddLine(friends.FriendsLoading ? "加载中" : (!string.IsNullOrEmpty(friends.LastError) ? "加载失败，请重试" : "还没有好友"));
-                return;
+                for (var i = 0; i < friends.Friends.Count; i++)
+                {
+                    var row = friends.Friends[i];
+                    if (row == null)
+                        continue;
+                    var id = row.PlayerId;
+                    AddLine(FriendClient.FormatFriendLine(row));
+                    var actions = AddRow();
+                    AddSmall(actions, "删除", () => BeginConfirm(id, false));
+                    AddSmall(actions, "拉黑", () => BeginConfirm(id, true));
+                }
             }
 
-            for (var i = 0; i < friends.Friends.Count; i++)
-            {
-                var row = friends.Friends[i];
-                if (row == null)
-                    continue;
-                var id = row.PlayerId;
-                AddLine(FriendClient.FormatFriendLine(row));
-                var actions = AddRow();
-                AddSmall(actions, "删除", () => BeginConfirm(id, false));
-                AddSmall(actions, "拉黑", () => BeginConfirm(id, true));
-            }
+            AddFooter(friends.FriendHasMore, () => _ = friends.RefreshFriendsAsync(default),
+                () => _ = friends.LoadMoreFriendsAsync(default));
         }
 
         void BuildRequests(FriendClient friends)
         {
             if (friends.Requests.Count == 0)
+                AddLine(friends.RequestsLoading ? "加载中" : (!string.IsNullOrEmpty(friends.RequestListError) ? "加载失败，请重试" : "没有待处理的申请"));
+            else
             {
-                AddLine(friends.RequestsLoading ? "加载中" : (!string.IsNullOrEmpty(friends.LastError) ? "加载失败，请重试" : "没有待处理的申请"));
-                return;
+                for (var i = 0; i < friends.Requests.Count; i++)
+                {
+                    var row = friends.Requests[i];
+                    if (row == null)
+                        continue;
+                    AddLine(RequestLine(row));
+                    if (FriendClient.IsRequestExpired(row))
+                        continue;
+                    var requestId = row.RequestId;
+                    var actions = AddRow();
+                    AddSmall(actions, "同意", () =>
+                    {
+                        if (friends.CanRequest)
+                            _ = friends.AcceptAsync(requestId, default);
+                    });
+                    AddSmall(actions, "拒绝", () =>
+                    {
+                        if (friends.CanRequest)
+                            _ = friends.RejectAsync(requestId, default);
+                    });
+                }
             }
 
-            for (var i = 0; i < friends.Requests.Count; i++)
-            {
-                var row = friends.Requests[i];
-                if (row == null)
-                    continue;
-                AddLine(RequestLine(row));
-                var requestId = row.RequestId;
-                var actions = AddRow();
-                AddSmall(actions, "同意", () =>
-                {
-                    if (friends.CanRequest)
-                        _ = friends.AcceptAsync(requestId, default);
-                });
-                AddSmall(actions, "拒绝", () =>
-                {
-                    if (friends.CanRequest)
-                        _ = friends.RejectAsync(requestId, default);
-                });
-            }
+            AddFooter(friends.RequestHasMore, () => _ = friends.RefreshRequestsAsync(default),
+                () => _ = friends.LoadMoreRequestsAsync(default));
         }
 
         void BuildBlocked(FriendClient friends)
         {
             if (friends.Blocked.Count == 0)
+                AddLine(friends.BlockedLoading ? "加载中" : (!string.IsNullOrEmpty(friends.BlockListError) ? "加载失败，请重试" : "黑名单是空的"));
+            else
             {
-                AddLine(friends.BlockedLoading ? "加载中" : (!string.IsNullOrEmpty(friends.LastError) ? "加载失败，请重试" : "黑名单是空的"));
-                return;
+                for (var i = 0; i < friends.Blocked.Count; i++)
+                {
+                    var row = friends.Blocked[i];
+                    if (row == null)
+                        continue;
+                    var name = FriendClient.DisplayName(row, true);
+                    AddLine(name + "  #" + row.PlayerId);
+                    var id = row.PlayerId;
+                    var actions = AddRow();
+                    AddSmall(actions, "解除拉黑", () =>
+                    {
+                        if (friends.CanRequest)
+                            _ = friends.UnblockAsync(id, default);
+                    });
+                }
             }
 
-            for (var i = 0; i < friends.Blocked.Count; i++)
-            {
-                var row = friends.Blocked[i];
-                if (row == null)
-                    continue;
-                var name = FriendClient.DisplayName(row, true);
-                AddLine(name + "  #" + row.PlayerId);
-                var id = row.PlayerId;
-                var actions = AddRow();
-                AddSmall(actions, "解除拉黑", () =>
-                {
-                    if (friends.CanRequest)
-                        _ = friends.UnblockAsync(id, default);
-                });
-            }
+            AddFooter(friends.BlockHasMore, () => _ = friends.RefreshBlockedAsync(default),
+                () => _ = friends.LoadMoreBlockedAsync(default));
+        }
+
+        void AddFooter(bool hasMore, UnityEngine.Events.UnityAction refresh, UnityEngine.Events.UnityAction more)
+        {
+            var actions = AddRow();
+            AddSmall(actions, "刷新", refresh);
+            if (hasMore)
+                AddSmall(actions, "加载更多", more);
         }
 
         void AddSearchRow(FriendClient friends)
@@ -513,8 +532,8 @@ namespace GameMesh.UI
         static string SearchLine(FriendBrief hit, FriendRelationState relation)
         {
             return (hit.Online ? "在线  " : "离线  ") + FriendClient.DisplayName(hit, false) + "  #" +
-                   hit.PlayerId.ToString(CultureInfo.InvariantCulture) + "  Lv." +
-                   hit.Level.ToString(CultureInfo.InvariantCulture) + "  " +
+                   hit.PlayerId.ToString(CultureInfo.InvariantCulture) + "  " +
+                   (hit.Level == 0 ? "等级未知" : "Lv." + hit.Level.ToString(CultureInfo.InvariantCulture)) + "  " +
                    FriendClient.SearchRelationLabel(relation);
         }
 
@@ -556,7 +575,12 @@ namespace GameMesh.UI
             {
                 var h = (int)friends.Tab * 17 + friends.Friends.Count * 31 + friends.Requests.Count * 13 +
                         friends.Blocked.Count + friends.RequestBadge + (friends.Busy ? 7 : 0) +
+                        (friends.FriendHasMore ? 11 : 0) + (friends.RequestHasMore ? 13 : 0) +
+                        (friends.BlockHasMore ? 17 : 0) +
                         (int)_confirmId + (_confirmBlock ? 3 : 0);
+                h = h * 31 + (friends.FriendListError ?? "").GetHashCode();
+                h = h * 31 + (friends.RequestListError ?? "").GetHashCode();
+                h = h * 31 + (friends.BlockListError ?? "").GetHashCode();
                 h = h * 31 + (friends.LastError ?? "").GetHashCode();
                 h = h * 31 + (friends.LastNotice ?? "").GetHashCode();
                 h = h * 31 + (int)friends.SearchRelation;

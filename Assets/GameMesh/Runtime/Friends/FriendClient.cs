@@ -60,8 +60,21 @@ namespace GameMesh.Friends
         public bool PresenceHold { get; private set; }
         public string LastErrorCode { get; private set; } = "";
         public string LastOperationId { get; private set; } = "";
+        public string FriendNextCursor { get; private set; } = "";
+        public string RequestNextCursor { get; private set; } = "";
+        public string BlockNextCursor { get; private set; } = "";
+        public string FriendListError { get; private set; } = "";
+        public string RequestListError { get; private set; } = "";
+        public string BlockListError { get; private set; } = "";
+        public bool FriendHasMore => FriendNextCursor.Length > 0;
+        public bool RequestHasMore => RequestNextCursor.Length > 0;
+        public bool BlockHasMore => BlockNextCursor.Length > 0;
         public const int MaxSearchLength = 32;
         public const int MaxNameChars = 16;
+        public const int MaxOperationIdLength = 96;
+        const uint FriendPageSize = 50;
+        const uint RequestPageSize = 20;
+        const int MaxListPages = 20;
         readonly HashSet<string> _busyKeys = new HashSet<string>();
 
         public void BeginPresenceHold()
@@ -106,6 +119,12 @@ namespace GameMesh.Friends
             PresenceHold = false;
             LastErrorCode = "";
             LastOperationId = "";
+            FriendNextCursor = "";
+            RequestNextCursor = "";
+            BlockNextCursor = "";
+            FriendListError = "";
+            RequestListError = "";
+            BlockListError = "";
         }
 
         public bool ShouldPoll(float now, float lastPoll, bool panelOpen)
@@ -124,38 +143,102 @@ namespace GameMesh.Friends
                 return;
             await RefreshFriendsAsync(ct).ConfigureAwait(false);
             await RefreshRequestsAsync(ct).ConfigureAwait(false);
+            await RefreshBlockedAsync(ct).ConfigureAwait(false);
         }
 
-        public async Task RefreshFriendsAsync(CancellationToken ct)
+        public Task RefreshFriendsAsync(CancellationToken ct)
+        {
+            return ReadFriendsAsync(ct, true, true);
+        }
+
+        public Task OpenFriendPageAsync(CancellationToken ct)
+        {
+            return ReadFriendsAsync(ct, true, false);
+        }
+
+        public Task LoadMoreFriendsAsync(CancellationToken ct)
+        {
+            return ReadFriendsAsync(ct, false, false);
+        }
+
+        async Task ReadFriendsAsync(CancellationToken ct, bool reset, bool drain)
         {
             if (!CanRequest)
+                return;
+            if (!reset && FriendNextCursor.Length == 0)
                 return;
             Interlocked.Increment(ref _friendLoads);
             try
             {
                 var sessionGen = _sessionGeneration;
                 var epoch = Interlocked.Increment(ref _friendListEpoch);
-                var rsp = await _request(new GameRequest
+                var cursor = reset ? "" : FriendNextCursor;
+                var acc = new List<FriendBrief>();
+                if (!reset)
+                    acc.AddRange(Friends);
+                var seen = new HashSet<string> { cursor ?? "" };
+                var pages = 0;
+                var friendN = FriendCount;
+                var friendCap = FriendCap;
+                while (true)
                 {
-                    FriendList = new FriendListReq
+                    pages++;
+                    if (pages > MaxListPages)
                     {
-                        PlayerId = _session.PlayerId,
-                        PageSize = 100
+                        FriendListError = GameErrorCatalog.FormatUi(GameMeshErrorCode.ServerError, "好友列表页数异常");
+                        LastError = FriendListError;
+                        return;
                     }
-                }, ct).ConfigureAwait(false);
-                if (sessionGen != _sessionGeneration || epoch != _friendListEpoch)
-                    return;
-                var body = rsp.FriendList;
-                if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
-                    return;
-                Friends.Clear();
-                if (body != null)
-                {
-                    Friends.AddRange(body.Friends);
-                    FriendCount = body.FriendN;
-                    FriendCap = body.FriendCap;
+
+                    var rsp = await _request(new GameRequest
+                    {
+                        FriendList = new FriendListReq
+                        {
+                            PlayerId = _session.PlayerId,
+                            Cursor = cursor ?? "",
+                            PageSize = FriendPageSize
+                        }
+                    }, ct).ConfigureAwait(false);
+                    if (sessionGen != _sessionGeneration || epoch != _friendListEpoch)
+                        return;
+                    var body = rsp.FriendList;
+                    if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
+                    {
+                        FriendListError = LastError;
+                        return;
+                    }
+
+                    if (body != null)
+                    {
+                        for (var i = 0; i < body.Friends.Count; i++)
+                            AddUniqueFriend(acc, body.Friends[i]);
+                        if (body.FriendN != 0)
+                            friendN = body.FriendN;
+                        if (body.FriendCap != 0)
+                            friendCap = body.FriendCap;
+                        cursor = body.NextCursor ?? "";
+                    }
+                    else
+                        cursor = "";
+
+                    if (!drain || cursor.Length == 0)
+                        break;
+                    if (!seen.Add(cursor))
+                    {
+                        FriendListError = GameErrorCatalog.FormatUi(GameMeshErrorCode.ServerError, "好友列表游标重复");
+                        LastError = FriendListError;
+                        return;
+                    }
                 }
 
+                if (sessionGen != _sessionGeneration || epoch != _friendListEpoch)
+                    return;
+                Friends.Clear();
+                Friends.AddRange(acc);
+                FriendCount = friendN != 0 ? friendN : (uint)acc.Count;
+                FriendCap = friendCap;
+                FriendNextCursor = cursor ?? "";
+                FriendListError = "";
                 SortFriends();
                 LastError = "";
                 ShowRetryHint = false;
@@ -167,45 +250,90 @@ namespace GameMesh.Friends
             }
         }
 
-        public async Task RefreshRequestsAsync(CancellationToken ct)
+        public Task RefreshRequestsAsync(CancellationToken ct)
+        {
+            return ReadRequestsAsync(ct, true, true);
+        }
+
+        public Task LoadMoreRequestsAsync(CancellationToken ct)
+        {
+            return ReadRequestsAsync(ct, false, false);
+        }
+
+        async Task ReadRequestsAsync(CancellationToken ct, bool reset, bool drain)
         {
             if (!CanRequest)
+                return;
+            if (!reset && RequestNextCursor.Length == 0)
                 return;
             Interlocked.Increment(ref _requestLoads);
             try
             {
-            var sessionGen = _sessionGeneration;
-            var epoch = Interlocked.Increment(ref _requestListEpoch);
-            var accumulated = new List<FriendRequestInfo>();
-            var cursor = "";
-            do
-            {
-                var rsp = await _request(new GameRequest
+                var sessionGen = _sessionGeneration;
+                var epoch = Interlocked.Increment(ref _requestListEpoch);
+                var cursor = reset ? "" : RequestNextCursor;
+                var acc = new List<FriendRequestInfo>();
+                if (!reset)
+                    acc.AddRange(Requests);
+                var seen = new HashSet<string> { cursor ?? "" };
+                var pages = 0;
+                while (true)
                 {
-                    FriendRequestList = new FriendRequestListReq
+                    pages++;
+                    if (pages > MaxListPages)
                     {
-                        PlayerId = _session.PlayerId,
-                        Cursor = cursor ?? "",
-                        PageSize = 20
+                        RequestListError = GameErrorCatalog.FormatUi(GameMeshErrorCode.ServerError, "申请列表页数异常");
+                        LastError = RequestListError;
+                        return;
                     }
-                }, ct).ConfigureAwait(false);
+
+                    var rsp = await _request(new GameRequest
+                    {
+                        FriendRequestList = new FriendRequestListReq
+                        {
+                            PlayerId = _session.PlayerId,
+                            Cursor = cursor ?? "",
+                            PageSize = RequestPageSize
+                        }
+                    }, ct).ConfigureAwait(false);
+                    if (sessionGen != _sessionGeneration || epoch != _requestListEpoch)
+                        return;
+                    var body = rsp.FriendRequestList;
+                    if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
+                    {
+                        RequestListError = LastError;
+                        return;
+                    }
+
+                    if (body != null)
+                    {
+                        for (var i = 0; i < body.Requests.Count; i++)
+                            AddUniqueRequest(acc, body.Requests[i]);
+                        cursor = body.NextCursor ?? "";
+                    }
+                    else
+                        cursor = "";
+
+                    if (!drain || cursor.Length == 0)
+                        break;
+                    if (!seen.Add(cursor))
+                    {
+                        RequestListError = GameErrorCatalog.FormatUi(GameMeshErrorCode.ServerError, "申请列表游标重复");
+                        LastError = RequestListError;
+                        return;
+                    }
+                }
+
                 if (sessionGen != _sessionGeneration || epoch != _requestListEpoch)
                     return;
-                var body = rsp.FriendRequestList;
-                if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
-                    return;
-                if (body != null)
-                    accumulated.AddRange(body.Requests);
-                cursor = body != null ? body.NextCursor : "";
-            } while (!string.IsNullOrEmpty(cursor));
-
-            if (sessionGen != _sessionGeneration || epoch != _requestListEpoch)
-                return;
-            Requests.Clear();
-            Requests.AddRange(accumulated);
-            RequestBadge = Requests.Count;
-            LastError = "";
-            ShowRetryHint = false;
+                Requests.Clear();
+                Requests.AddRange(acc);
+                RequestNextCursor = cursor ?? "";
+                RequestListError = "";
+                if (RequestNextCursor.Length == 0)
+                    RequestBadge = Requests.Count;
+                LastError = "";
+                ShowRetryHint = false;
             }
             finally
             {
@@ -213,33 +341,88 @@ namespace GameMesh.Friends
             }
         }
 
-        public async Task RefreshBlockedAsync(CancellationToken ct)
+        public Task RefreshBlockedAsync(CancellationToken ct)
+        {
+            return ReadBlockedAsync(ct, true, true);
+        }
+
+        public Task LoadMoreBlockedAsync(CancellationToken ct)
+        {
+            return ReadBlockedAsync(ct, false, false);
+        }
+
+        async Task ReadBlockedAsync(CancellationToken ct, bool reset, bool drain)
         {
             if (!CanRequest)
+                return;
+            if (!reset && BlockNextCursor.Length == 0)
                 return;
             Interlocked.Increment(ref _blockLoads);
             try
             {
-            var sessionGen = _sessionGeneration;
-            var epoch = Interlocked.Increment(ref _blockListEpoch);
-            var rsp = await _request(new GameRequest
-            {
-                FriendBlockList = new FriendBlockListReq
+                var sessionGen = _sessionGeneration;
+                var epoch = Interlocked.Increment(ref _blockListEpoch);
+                var cursor = reset ? "" : BlockNextCursor;
+                var acc = new List<FriendBrief>();
+                if (!reset)
+                    acc.AddRange(Blocked);
+                var seen = new HashSet<string> { cursor ?? "" };
+                var pages = 0;
+                while (true)
                 {
-                    PlayerId = _session.PlayerId,
-                    PageSize = 100
+                    pages++;
+                    if (pages > MaxListPages)
+                    {
+                        BlockListError = GameErrorCatalog.FormatUi(GameMeshErrorCode.ServerError, "黑名单页数异常");
+                        LastError = BlockListError;
+                        return;
+                    }
+
+                    var rsp = await _request(new GameRequest
+                    {
+                        FriendBlockList = new FriendBlockListReq
+                        {
+                            PlayerId = _session.PlayerId,
+                            Cursor = cursor ?? "",
+                            PageSize = FriendPageSize
+                        }
+                    }, ct).ConfigureAwait(false);
+                    if (sessionGen != _sessionGeneration || epoch != _blockListEpoch)
+                        return;
+                    var body = rsp.FriendBlockList;
+                    if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
+                    {
+                        BlockListError = LastError;
+                        return;
+                    }
+
+                    if (body != null)
+                    {
+                        for (var i = 0; i < body.Blocked.Count; i++)
+                            AddUniqueFriend(acc, body.Blocked[i]);
+                        cursor = body.NextCursor ?? "";
+                    }
+                    else
+                        cursor = "";
+
+                    if (!drain || cursor.Length == 0)
+                        break;
+                    if (!seen.Add(cursor))
+                    {
+                        BlockListError = GameErrorCatalog.FormatUi(GameMeshErrorCode.ServerError, "黑名单游标重复");
+                        LastError = BlockListError;
+                        return;
+                    }
                 }
-            }, ct).ConfigureAwait(false);
-            if (sessionGen != _sessionGeneration || epoch != _blockListEpoch)
-                return;
-            var body = rsp.FriendBlockList;
-            if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
-                return;
-            Blocked.Clear();
-            if (body != null)
-                Blocked.AddRange(body.Blocked);
-            LastError = "";
-            ShowRetryHint = false;
+
+                if (sessionGen != _sessionGeneration || epoch != _blockListEpoch)
+                    return;
+                Blocked.Clear();
+                Blocked.AddRange(acc);
+                BlockNextCursor = cursor ?? "";
+                BlockListError = "";
+                LastError = "";
+                ShowRetryHint = false;
             }
             finally
             {
@@ -356,7 +539,7 @@ namespace GameMesh.Friends
 
         public async Task AcceptAsync(ulong requestId, CancellationToken ct)
         {
-            if (Cooling() || RejectIfClosed() || !BeginTarget("accept", requestId))
+            if (Cooling() || RejectIfClosed() || LocalRequestExpired(requestId) || !BeginTarget("accept", requestId))
                 return;
             var sessionGen = _sessionGeneration;
             try
@@ -407,7 +590,7 @@ namespace GameMesh.Friends
 
         public async Task RejectAsync(ulong requestId, CancellationToken ct)
         {
-            if (RejectIfClosed() || !BeginTarget("reject", requestId))
+            if (RejectIfClosed() || LocalRequestExpired(requestId) || !BeginTarget("reject", requestId))
                 return;
             var sessionGen = _sessionGeneration;
             try
@@ -692,6 +875,70 @@ namespace GameMesh.Friends
             Friends.Sort(CompareFriends);
         }
 
+        static void AddUniqueFriend(List<FriendBrief> acc, FriendBrief row)
+        {
+            if (acc == null || row == null || row.PlayerId == 0)
+                return;
+            for (var i = 0; i < acc.Count; i++)
+            {
+                if (acc[i] != null && acc[i].PlayerId == row.PlayerId)
+                {
+                    acc[i] = row;
+                    return;
+                }
+            }
+
+            acc.Add(row);
+        }
+
+        static void AddUniqueRequest(List<FriendRequestInfo> acc, FriendRequestInfo row)
+        {
+            if (acc == null || row == null || row.RequestId == 0)
+                return;
+            for (var i = 0; i < acc.Count; i++)
+            {
+                if (acc[i] != null && acc[i].RequestId == row.RequestId)
+                {
+                    acc[i] = row;
+                    return;
+                }
+            }
+
+            acc.Add(row);
+        }
+
+        bool LocalRequestExpired(ulong requestId)
+        {
+            for (var i = 0; i < Requests.Count; i++)
+            {
+                if (Requests[i] == null || Requests[i].RequestId != requestId)
+                    continue;
+                if (!IsRequestExpired(Requests[i]))
+                    return false;
+                LastErrorCode = "ERR_REQUEST_EXPIRED";
+                LastError = GameErrorCatalog.FormatUi("ERR_REQUEST_EXPIRED");
+                ShowRetryHint = false;
+                return true;
+            }
+
+            return false;
+        }
+
+        public static bool IsRequestExpired(FriendRequestInfo row, DateTimeOffset? now = null)
+        {
+            if (row == null || row.ExpireAt == 0 || row.ExpireAt > (ulong)long.MaxValue)
+                return false;
+            try
+            {
+                var exp = DateTimeOffset.FromUnixTimeSeconds((long)row.ExpireAt);
+                return exp <= (now ?? DateTimeOffset.UtcNow);
+            }
+            catch
+            {
+                return true;
+            }
+        }
+
         void UpsertFriend(FriendBrief peer)
         {
             if (peer == null || peer.PlayerId == 0)
@@ -872,6 +1119,8 @@ namespace GameMesh.Friends
             }
             var op = kind + ":" + _session.PlayerId.ToString(CultureInfo.InvariantCulture) + ":" +
                      id.ToString(CultureInfo.InvariantCulture) + ":" + Guid.NewGuid().ToString("N");
+            if (op.Length > MaxOperationIdLength)
+                op = op.Substring(0, MaxOperationIdLength);
             _ops[key] = op;
             LastOperationId = op;
             return op;
@@ -978,7 +1227,7 @@ namespace GameMesh.Friends
             if (row == null)
                 return "";
             var text = (row.Online ? "在线" : "离线") + "  " + DisplayName(row, false) +
-                       "  Lv." + row.Level.ToString(CultureInfo.InvariantCulture);
+                       (row.Level == 0 ? "  等级未知" : "  Lv." + row.Level.ToString(CultureInfo.InvariantCulture));
             if (row.Profession != 0)
                 text += "  职业 " + row.Profession.ToString(CultureInfo.InvariantCulture);
             if (!row.Online)
