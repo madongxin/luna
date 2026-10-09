@@ -58,6 +58,13 @@ namespace GameMesh.Friends
         public bool BlockedLoading => _blockLoads > 0;
         public bool ShowRetryHint { get; private set; }
         public bool PresenceHold { get; private set; }
+        public bool DataStale { get; private set; }
+        Task _friendRefreshTask;
+        Task _requestRefreshTask;
+        Task _blockRefreshTask;
+        int _friendRefreshAgain;
+        int _requestRefreshAgain;
+        int _blockRefreshAgain;
         public string LastErrorCode { get; private set; } = "";
         public string LastOperationId { get; private set; } = "";
         public string FriendNextCursor { get; private set; } = "";
@@ -80,6 +87,7 @@ namespace GameMesh.Friends
         public void BeginPresenceHold()
         {
             PresenceHold = true;
+            DataStale = true;
         }
 
         public bool CanRequest =>
@@ -88,6 +96,8 @@ namespace GameMesh.Friends
         public void SetRequestsOpen(bool open)
         {
             _requestsOpen = open;
+            if (!open)
+                DataStale = true;
         }
 
         public FriendClient(GameSession session, Func<GameRequest, CancellationToken, Task<GameResponse>> request)
@@ -119,6 +129,7 @@ namespace GameMesh.Friends
             PresenceHold = false;
             LastErrorCode = "";
             LastOperationId = "";
+            DataStale = false;
             FriendNextCursor = "";
             RequestNextCursor = "";
             BlockNextCursor = "";
@@ -148,7 +159,24 @@ namespace GameMesh.Friends
 
         public Task RefreshFriendsAsync(CancellationToken ct)
         {
-            return ReadFriendsAsync(ct, true, true);
+            if (_friendRefreshTask != null && !_friendRefreshTask.IsCompleted)
+            {
+                Interlocked.Exchange(ref _friendRefreshAgain, 1);
+                return _friendRefreshTask;
+            }
+
+            _friendRefreshTask = RunFriendRefresh(ct);
+            return _friendRefreshTask;
+        }
+
+        async Task RunFriendRefresh(CancellationToken ct)
+        {
+            do
+            {
+                Interlocked.Exchange(ref _friendRefreshAgain, 0);
+                await ReadFriendsAsync(ct, true, true).ConfigureAwait(false);
+            }
+            while (Interlocked.Exchange(ref _friendRefreshAgain, 0) == 1);
         }
 
         public Task OpenFriendPageAsync(CancellationToken ct)
@@ -243,6 +271,7 @@ namespace GameMesh.Friends
                 LastError = "";
                 ShowRetryHint = false;
                 PresenceHold = false;
+                DataStale = false;
             }
             finally
             {
@@ -252,7 +281,24 @@ namespace GameMesh.Friends
 
         public Task RefreshRequestsAsync(CancellationToken ct)
         {
-            return ReadRequestsAsync(ct, true, true);
+            if (_requestRefreshTask != null && !_requestRefreshTask.IsCompleted)
+            {
+                Interlocked.Exchange(ref _requestRefreshAgain, 1);
+                return _requestRefreshTask;
+            }
+
+            _requestRefreshTask = RunRequestRefresh(ct);
+            return _requestRefreshTask;
+        }
+
+        async Task RunRequestRefresh(CancellationToken ct)
+        {
+            do
+            {
+                Interlocked.Exchange(ref _requestRefreshAgain, 0);
+                await ReadRequestsAsync(ct, true, true).ConfigureAwait(false);
+            }
+            while (Interlocked.Exchange(ref _requestRefreshAgain, 0) == 1);
         }
 
         public Task LoadMoreRequestsAsync(CancellationToken ct)
@@ -343,7 +389,24 @@ namespace GameMesh.Friends
 
         public Task RefreshBlockedAsync(CancellationToken ct)
         {
-            return ReadBlockedAsync(ct, true, true);
+            if (_blockRefreshTask != null && !_blockRefreshTask.IsCompleted)
+            {
+                Interlocked.Exchange(ref _blockRefreshAgain, 1);
+                return _blockRefreshTask;
+            }
+
+            _blockRefreshTask = RunBlockRefresh(ct);
+            return _blockRefreshTask;
+        }
+
+        async Task RunBlockRefresh(CancellationToken ct)
+        {
+            do
+            {
+                Interlocked.Exchange(ref _blockRefreshAgain, 0);
+                await ReadBlockedAsync(ct, true, true).ConfigureAwait(false);
+            }
+            while (Interlocked.Exchange(ref _blockRefreshAgain, 0) == 1);
         }
 
         public Task LoadMoreBlockedAsync(CancellationToken ct)
@@ -513,28 +576,35 @@ namespace GameMesh.Friends
             }, sessionGen, ct).ConfigureAwait(false);
             if (sessionGen != _sessionGeneration)
                 return;
-            var body = rsp.FriendApply;
-            var code = ProtocolMapper.ExtractErrorCode(rsp);
-            if (code == "ERR_INCOMING_REQUEST_EXISTS")
+            try
             {
-                Tab = FriendPanelTab.Requests;
-                LastErrorCode = code;
-                LastError = GameErrorCatalog.FormatUi(code);
-                await RefreshKeepingNoticeAsync(ct, true, false).ConfigureAwait(false);
-                return;
-            }
+                var body = rsp.FriendApply;
+                var code = ProtocolMapper.ExtractErrorCode(rsp);
+                if (code == "ERR_INCOMING_REQUEST_EXISTS")
+                {
+                    Tab = FriendPanelTab.Requests;
+                    LastErrorCode = code;
+                    LastError = GameErrorCatalog.FormatUi(code);
+                    await RefreshKeepingNoticeAsync(ct, true, false).ConfigureAwait(false);
+                    return;
+                }
 
-            if (code == "ERR_OPERATION_TOO_FREQUENT")
+                if (code == "ERR_OPERATION_TOO_FREQUENT")
+                {
+                    Ok(rsp, false, code, rsp.Message, true);
+                    return;
+                }
+
+                if (!await CommitAsync(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message, ct).ConfigureAwait(false))
+                    return;
+                SearchRelation = FriendRelationState.FriendRelationSentPending;
+                NoteSuccess(body != null && body.RequestId == 0 ? "已提交" : "已发送好友申请");
+            }
+            finally
             {
-                Ok(rsp, false, code, rsp.Message, true);
-                return;
+                if (sessionGen == _sessionGeneration)
+                    ForgetOp("apply", targetPlayerId);
             }
-
-            if (!await CommitAsync(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message, ct).ConfigureAwait(false))
-                return;
-            ForgetOp("apply", targetPlayerId);
-            SearchRelation = FriendRelationState.FriendRelationSentPending;
-            NoteSuccess(body != null && body.RequestId == 0 ? "已提交" : "已发送好友申请");
         }
 
         public async Task AcceptAsync(ulong requestId, CancellationToken ct)
@@ -571,21 +641,28 @@ namespace GameMesh.Friends
             }, sessionGen, ct).ConfigureAwait(false);
             if (sessionGen != _sessionGeneration)
                 return;
-            var body = rsp.FriendAccept;
-            var code = ProtocolMapper.ExtractErrorCode(rsp);
-            if (code == "ERR_OPERATION_TOO_FREQUENT")
+            try
             {
-                Ok(rsp, false, code, rsp.Message, true);
-                return;
-            }
+                var body = rsp.FriendAccept;
+                var code = ProtocolMapper.ExtractErrorCode(rsp);
+                if (code == "ERR_OPERATION_TOO_FREQUENT")
+                {
+                    Ok(rsp, false, code, rsp.Message, true);
+                    return;
+                }
 
-            if (!await CommitAsync(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message, ct).ConfigureAwait(false))
-                return;
-            ForgetOp("accept", requestId);
-            RemoveRequest(requestId);
-            if (body?.Peer != null)
-                UpsertFriend(body.Peer);
-            NoteSuccess("已成为好友");
+                if (!await CommitAsync(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message, ct).ConfigureAwait(false))
+                    return;
+                RemoveRequest(requestId);
+                if (body?.Peer != null)
+                    UpsertFriend(body.Peer);
+                NoteSuccess("已成为好友");
+            }
+            finally
+            {
+                if (sessionGen == _sessionGeneration)
+                    ForgetOp("accept", requestId);
+            }
         }
 
         public async Task RejectAsync(ulong requestId, CancellationToken ct)
@@ -621,12 +698,19 @@ namespace GameMesh.Friends
             }, sessionGen, ct).ConfigureAwait(false);
             if (sessionGen != _sessionGeneration)
                 return;
-            var body = rsp.FriendReject;
-            if (!await CommitAsync(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message, ct).ConfigureAwait(false))
-                return;
-            ForgetOp("reject", requestId);
-            RemoveRequest(requestId);
-            NoteSuccess("已拒绝申请");
+            try
+            {
+                var body = rsp.FriendReject;
+                if (!await CommitAsync(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message, ct).ConfigureAwait(false))
+                    return;
+                RemoveRequest(requestId);
+                NoteSuccess("已拒绝申请");
+            }
+            finally
+            {
+                if (sessionGen == _sessionGeneration)
+                    ForgetOp("reject", requestId);
+            }
         }
 
         public async Task DeleteAsync(ulong friendPlayerId, CancellationToken ct)
@@ -662,12 +746,19 @@ namespace GameMesh.Friends
             }, sessionGen, ct).ConfigureAwait(false);
             if (sessionGen != _sessionGeneration)
                 return;
-            var body = rsp.FriendDelete;
-            if (!await CommitAsync(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message, ct).ConfigureAwait(false))
-                return;
-            ForgetOp("delete", friendPlayerId);
-            RemoveFriend(friendPlayerId);
-            NoteSuccess("已删除好友");
+            try
+            {
+                var body = rsp.FriendDelete;
+                if (!await CommitAsync(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message, ct).ConfigureAwait(false))
+                    return;
+                RemoveFriend(friendPlayerId);
+                NoteSuccess("已删除好友");
+            }
+            finally
+            {
+                if (sessionGen == _sessionGeneration)
+                    ForgetOp("delete", friendPlayerId);
+            }
         }
 
         public async Task BlockAsync(ulong targetPlayerId, CancellationToken ct)
@@ -703,10 +794,11 @@ namespace GameMesh.Friends
             }, sessionGen, ct).ConfigureAwait(false);
             if (sessionGen != _sessionGeneration)
                 return;
+            try
+            {
             var body = rsp.FriendBlock;
             if (!await CommitAsync(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message, ct).ConfigureAwait(false))
                 return;
-            ForgetOp("block", targetPlayerId);
             RemoveFriend(targetPlayerId);
             RemoveRequestsFrom(targetPlayerId);
             if (FindBlocked(targetPlayerId) == null)
@@ -723,6 +815,12 @@ namespace GameMesh.Friends
             await RefreshBlockedAsync(ct).ConfigureAwait(false);
             if (string.IsNullOrEmpty(LastNotice))
                 NoteSuccess("已拉黑");
+            }
+            finally
+            {
+                if (sessionGen == _sessionGeneration)
+                    ForgetOp("block", targetPlayerId);
+            }
         }
 
         public async Task UnblockAsync(ulong targetPlayerId, CancellationToken ct)
@@ -758,10 +856,11 @@ namespace GameMesh.Friends
             }, sessionGen, ct).ConfigureAwait(false);
             if (sessionGen != _sessionGeneration)
                 return;
+            try
+            {
             var body = rsp.FriendUnblock;
             if (!await CommitAsync(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message, ct).ConfigureAwait(false))
                 return;
-            ForgetOp("unblock", targetPlayerId);
             var removedBlock = false;
             for (var i = Blocked.Count - 1; i >= 0; i--)
             {
@@ -777,6 +876,12 @@ namespace GameMesh.Friends
             if (SearchHit != null && SearchHit.PlayerId == targetPlayerId)
                 SearchRelation = FriendRelationState.FriendRelationNone;
             NoteSuccess("已解除拉黑");
+            }
+            finally
+            {
+                if (sessionGen == _sessionGeneration)
+                    ForgetOp("unblock", targetPlayerId);
+            }
         }
 
         public bool ApplyPush(GameResponse inner)

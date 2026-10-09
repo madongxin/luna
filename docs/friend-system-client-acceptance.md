@@ -1,5 +1,7 @@
 # 好友系统客户端验收
 
+后续验收记录见 `docs/friend_system_client_acceptance.md`。
+
 结论：**部分通过**。EditMode 97/97 通过。双账号实机流程没有 Gateway，不能记为通过。
 
 ## 1. 现状

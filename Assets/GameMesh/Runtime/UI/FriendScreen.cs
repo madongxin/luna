@@ -278,6 +278,8 @@ namespace GameMesh.UI
         void ApplyStatus(FriendClient friends)
         {
             var status = !string.IsNullOrEmpty(friends.LastError) ? friends.LastError : friends.LastNotice ?? "";
+            if (friends.DataStale)
+                status = string.IsNullOrEmpty(status) ? "在线状态可能不是最新" : status + "\n在线状态可能不是最新";
             _status.text = status;
             _count.text = friends.FriendCount + "/" +
                           (friends.FriendCap == 0 ? "—" : friends.FriendCap.ToString(CultureInfo.InvariantCulture));
@@ -576,7 +578,7 @@ namespace GameMesh.UI
                 var h = (int)friends.Tab * 17 + friends.Friends.Count * 31 + friends.Requests.Count * 13 +
                         friends.Blocked.Count + friends.RequestBadge + (friends.Busy ? 7 : 0) +
                         (friends.FriendHasMore ? 11 : 0) + (friends.RequestHasMore ? 13 : 0) +
-                        (friends.BlockHasMore ? 17 : 0) +
+                        (friends.BlockHasMore ? 17 : 0) + (friends.DataStale ? 19 : 0) +
                         (int)_confirmId + (_confirmBlock ? 3 : 0);
                 h = h * 31 + (friends.FriendListError ?? "").GetHashCode();
                 h = h * 31 + (friends.RequestListError ?? "").GetHashCode();
