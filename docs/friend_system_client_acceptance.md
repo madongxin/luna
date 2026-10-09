@@ -1,15 +1,15 @@
 # 好友系统客户端验收
 
-本地 HEAD（改动前）：`be94fa3`。Unity `2022.3.62f3c1`。这些改动还没提交。
+改动前 HEAD：`5b2a1dd`。Unity `2022.3.62f3c1`。
 
-结论：**部分通过**。EditMode 102/102 通过。双账号实机没有跑。
+结论：**部分通过**。EditMode 105/105 通过。双账号实机没有跑。
 
 ## 功能映射
 
 | 功能 | 已有位置 | 协议 | 这次 |
 | --- | --- | --- | --- |
 | 入口和面板 | `FriendScreen.Ensure`，运行时创建，右上角「好友」 | 不直接发协议 | 断线或重连保持期间，状态行显示「在线状态可能不是最新」 |
-| 好友 / 申请 / 黑名单 | `FriendClient.ReadFriendsAsync` 等 | `FriendList`、`FriendRequestList`、`FriendBlockList` | 同一种全量刷新在进行时再点一次，不会并行再开一轮，结束后再补拉一次 |
+| 好友 / 申请 / 黑名单 | `FriendClient.ReadFriendsAsync` 等 | `FriendList`、`FriendRequestList`、`FriendBlockList` | 空页却带 `next_cursor`，或游标重复，都不替换已有列表 |
 | 搜索和申请 | `SearchAsync`、`ApplyAsync` | `FriendSearch`、`FriendApply` | 一次点击结束后释放 `operation_id`；超时重试仍复用；下一次点击用新 id |
 | 同意 / 拒绝 / 删除 / 拉黑 | 对应 `*Async` | 对应 Req，带 `operation_id` | 业务结果返回后同样释放 id |
 | 推送 | `ApplyPush` | 四种好友 push | 删除之后迟到的在线推送不会把好友加回来 |
@@ -33,13 +33,13 @@
 
 命令：
 
-`Unity.exe -batchmode -nographics -projectPath C:\Users\dongx\FirstFPS -runTests -testPlatform EditMode -testResults Logs/editmode-friends6.xml`
+`Unity.exe -batchmode -nographics -projectPath C:\Users\dongx\FirstFPS -runTests -testPlatform EditMode -testResults Logs/editmode-friends7.xml`
 
-结果：`total=102`，`passed=102`，`failed=0`。时间 `2026-10-09 04:35:16Z`。
+结果：`total=105`，`passed=105`，`failed=0`。时间 `2026-10-09 05:12:14Z`。
 
 | ID | 结果 | 证据 |
 | --- | --- | --- |
-| C01 | 通过 | `EmptyFriendPage_DoesNotInventFriends`、`FriendPages_MergeDuplicateIds_AndKeepOldListWhenALaterPageFails`、`LoadMoreFriends_AppendsNextPageWithoutDroppingTheFirst` |
+| C01 | 通过 | `EmptyPageWithCursor_KeepsPreviousFriends`、`EmptyRequestAndBlockPageWithCursor_KeepsPreviousLists`、`RepeatedFriendCursor_KeepsPreviousList` |
 | C02 | 通过 | `Search_DebouncesAndAcceptsOddCharacters` |
 | C03 | 通过 | `Apply_CompletedClickUsesNewOperationId`、`TransportTimeout_RetriesOnceWithSameOperationId` |
 | C04 | 通过 | `Accept_InsertsPeerAndClearsRequest`、`ExpiredRequest_DoesNotSendAccept` |
@@ -50,9 +50,9 @@
 | C09 | 通过 | `RefreshAfterDisconnect_ClearsStaleAndReplacesSnapshot`。实机重连未跑 |
 | C10 | 通过 | `SwitchCharacter_DropsPreviousSnapshot`、`Clear_DropsLateResponseFromPreviousGeneration` |
 | C11 | 通过 | `ClearThenPush_DoesNotThrowOrRestoreOldFriend`。面板只在 `BuildOnce` 绑监听。未做切场景销毁的 PlayMode |
-| C12 | 通过 | `RetryableFriendError_ShowsLaterHint_AndDoesNotAutoResend`、`TransportTimeout_BothFailuresDoNotWrite`。`ERR_DEPENDENCY_UNAVAILABLE` 文案是「服务暂不可用」 |
+| C12 | 通过 | `RetryableFriendError_ShowsLaterHint_AndDoesNotAutoResend`。可重试错误只写「稍后重试」，不再套 2.5 秒冷却。协议里没有 `ERR_NAME_AMBIGUOUS`，没有新增这个码 |
 | C13 | 通过 | `FormatLastOnline_RelativeBuckets_DoNotThrow`、`PresenceHold_KeepsLastStateUntilFriendListArrives` |
-| C14 | 未执行 | `run_friends_e2e.ps1` 需要 `GAMEMESH_E2E_GATEWAY`。本次没有重跑脚本 |
+| C14 | 未执行 | `run_friends_e2e.ps1` 退出码 2。`GAMEMESH_E2E_GATEWAY` 未设置。这是阻塞，不是通过 |
 
 `git diff --check` 无输出。
 
@@ -74,4 +74,3 @@
 
 - 设置 Gateway 后跑双账号脚本。
 - 私聊、修改备注、查看他人资料都还没有服务端写接口或现有界面，没有补假功能。
-- 这些改动还在工作区，没有提交。

@@ -56,14 +56,12 @@ namespace GameMesh.Tests.EditMode
             friends.ApplyAsync(42, "Peer", CancellationToken.None).GetAwaiter().GetResult();
             Assert.AreEqual(FriendPanelTab.Requests, friends.Tab);
             StringAssert.Contains("对方已向你申请", friends.LastError);
-            var afterIncoming = sends;
 
+            var beforeFrequent = sends;
             friends.ApplyAsync(42, "Peer", CancellationToken.None).GetAwaiter().GetResult();
-            Assert.Greater(sends, afterIncoming);
-            var duringCooldown = sends;
-            friends.ApplyAsync(42, "Peer", CancellationToken.None).GetAwaiter().GetResult();
-            Assert.AreEqual(duringCooldown, sends);
+            Assert.AreEqual(beforeFrequent + 1, sends);
             StringAssert.Contains("操作过于频繁", friends.LastError);
+            StringAssert.DoesNotContain("2.5", friends.LastError);
         }
 
         [Test]
@@ -565,8 +563,7 @@ namespace GameMesh.Tests.EditMode
             Assert.AreEqual(1, sends);
             Assert.IsTrue(friends.ShowRetryHint);
             StringAssert.Contains("稍后重试", friends.LastError);
-            friends.ApplyAsync(3, "A", CancellationToken.None).GetAwaiter().GetResult();
-            Assert.AreEqual(1, sends);
+            StringAssert.DoesNotContain("2.5", friends.LastError);
 
             var terminal = Client((req, ct) => Task.FromResult(new GameResponse
             {
@@ -1036,6 +1033,67 @@ namespace GameMesh.Tests.EditMode
             Assert.IsTrue(friends.Friends.Exists(row => row.PlayerId == 1));
             Assert.IsTrue(friends.Friends.Exists(row => row.PlayerId == 2));
             Assert.IsFalse(friends.FriendHasMore);
+        }
+
+        [Test]
+        public void EmptyPageWithCursor_KeepsPreviousFriends()
+        {
+            var friends = Client((req, ct) =>
+            {
+                var body = new FriendListRsp { Ok = true, NextCursor = "orphan", FriendN = 1, FriendCap = 100 };
+                return Task.FromResult(new GameResponse { Ok = true, FriendList = body });
+            });
+            friends.Friends.Add(new FriendBrief { PlayerId = 9, Name = "kept", Level = 2 });
+            friends.RefreshFriendsAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(1, friends.Friends.Count);
+            Assert.AreEqual(9UL, friends.Friends[0].PlayerId);
+            StringAssert.Contains("空页", friends.FriendListError);
+        }
+
+        [Test]
+        public void EmptyRequestAndBlockPageWithCursor_KeepsPreviousLists()
+        {
+            var requests = Client((req, ct) =>
+            {
+                var body = new FriendRequestListRsp { Ok = true, NextCursor = "orphan" };
+                return Task.FromResult(new GameResponse { Ok = true, FriendRequestList = body });
+            });
+            requests.Requests.Add(new FriendRequestInfo
+            {
+                RequestId = 4,
+                Applicant = new FriendBrief { PlayerId = 1, Name = "old" }
+            });
+            requests.RefreshRequestsAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(1, requests.Requests.Count);
+            Assert.AreEqual(4UL, requests.Requests[0].RequestId);
+            StringAssert.Contains("空页", requests.RequestListError);
+
+            var blocked = Client((req, ct) =>
+            {
+                var body = new FriendBlockListRsp { Ok = true, NextCursor = "orphan" };
+                return Task.FromResult(new GameResponse { Ok = true, FriendBlockList = body });
+            });
+            blocked.Blocked.Add(new FriendBrief { PlayerId = 8, Name = "kept" });
+            blocked.RefreshBlockedAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(1, blocked.Blocked.Count);
+            Assert.AreEqual(8UL, blocked.Blocked[0].PlayerId);
+            StringAssert.Contains("空页", blocked.BlockListError);
+        }
+
+        [Test]
+        public void RepeatedFriendCursor_KeepsPreviousList()
+        {
+            var friends = Client((req, ct) =>
+            {
+                var body = new FriendListRsp { Ok = true, NextCursor = "loop", FriendN = 1, FriendCap = 100 };
+                body.Friends.Add(new FriendBrief { PlayerId = 2, Name = "page" });
+                return Task.FromResult(new GameResponse { Ok = true, FriendList = body });
+            });
+            friends.Friends.Add(new FriendBrief { PlayerId = 9, Name = "kept" });
+            friends.RefreshFriendsAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(1, friends.Friends.Count);
+            Assert.AreEqual(9UL, friends.Friends[0].PlayerId);
+            StringAssert.Contains("游标重复", friends.FriendListError);
         }
 
         [Test]

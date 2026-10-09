@@ -160,7 +160,7 @@ namespace GameMesh.Protocol
             ["ERR_NOT_FRIEND"] = new GameErrorInfo("ERR_NOT_FRIEND", "还不是好友", false,
                 "对方不在你的好友列表中，无法删除。"),
             ["ERR_OPERATION_TOO_FREQUENT"] = new GameErrorInfo("ERR_OPERATION_TOO_FREQUENT", "操作过于频繁", true,
-                "好友操作太快。请稍后再试，重试时会沿用同一 operation_id。"),
+                "好友操作太快。请稍后再试。"),
             ["ERR_RELATION_CONFLICT"] = new GameErrorInfo("ERR_RELATION_CONFLICT", "好友关系冲突，请刷新后再试", true,
                 "关系状态变了。请刷新好友/申请列表后再操作。"),
             ["ERR_WRONG_ROUTE"] = new GameErrorInfo("ERR_WRONG_ROUTE", "服务暂不可用，请稍后重试", true,

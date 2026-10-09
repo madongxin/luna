@@ -26,7 +26,6 @@ namespace GameMesh.Friends
         int _requestListEpoch;
         int _blockListEpoch;
         bool _requestsOpen = true;
-        float _cooldownUntil;
 
         public readonly List<FriendBrief> Friends = new List<FriendBrief>();
         public readonly List<FriendRequestInfo> Requests = new List<FriendRequestInfo>();
@@ -123,7 +122,6 @@ namespace GameMesh.Friends
             _ops.Clear();
             _busyKeys.Clear();
             _inFlight = 0;
-            _cooldownUntil = 0f;
             _nextSearchAt = 0f;
             ShowRetryHint = false;
             PresenceHold = false;
@@ -238,13 +236,20 @@ namespace GameMesh.Friends
 
                     if (body != null)
                     {
+                        cursor = body.NextCursor ?? "";
+                        if (body.Friends.Count == 0 && cursor.Length > 0)
+                        {
+                            FriendListError = GameErrorCatalog.FormatUi(GameMeshErrorCode.ServerError, "好友列表返回了空页");
+                            LastError = FriendListError;
+                            return;
+                        }
+
                         for (var i = 0; i < body.Friends.Count; i++)
                             AddUniqueFriend(acc, body.Friends[i]);
                         if (body.FriendN != 0)
                             friendN = body.FriendN;
                         if (body.FriendCap != 0)
                             friendCap = body.FriendCap;
-                        cursor = body.NextCursor ?? "";
                     }
                     else
                         cursor = "";
@@ -353,9 +358,16 @@ namespace GameMesh.Friends
 
                     if (body != null)
                     {
+                        cursor = body.NextCursor ?? "";
+                        if (body.Requests.Count == 0 && cursor.Length > 0)
+                        {
+                            RequestListError = GameErrorCatalog.FormatUi(GameMeshErrorCode.ServerError, "申请列表返回了空页");
+                            LastError = RequestListError;
+                            return;
+                        }
+
                         for (var i = 0; i < body.Requests.Count; i++)
                             AddUniqueRequest(acc, body.Requests[i]);
-                        cursor = body.NextCursor ?? "";
                     }
                     else
                         cursor = "";
@@ -461,9 +473,16 @@ namespace GameMesh.Friends
 
                     if (body != null)
                     {
+                        cursor = body.NextCursor ?? "";
+                        if (body.Blocked.Count == 0 && cursor.Length > 0)
+                        {
+                            BlockListError = GameErrorCatalog.FormatUi(GameMeshErrorCode.ServerError, "黑名单返回了空页");
+                            LastError = BlockListError;
+                            return;
+                        }
+
                         for (var i = 0; i < body.Blocked.Count; i++)
                             AddUniqueFriend(acc, body.Blocked[i]);
-                        cursor = body.NextCursor ?? "";
                     }
                     else
                         cursor = "";
@@ -536,7 +555,7 @@ namespace GameMesh.Friends
 
         public async Task ApplyAsync(ulong targetPlayerId, string exactName, CancellationToken ct)
         {
-            if (Cooling() || RejectIfClosed() || !BeginTarget("apply", targetPlayerId))
+            if (RejectIfClosed() || !BeginTarget("apply", targetPlayerId))
                 return;
             var sessionGen = _sessionGeneration;
             try
@@ -591,7 +610,7 @@ namespace GameMesh.Friends
 
                 if (code == "ERR_OPERATION_TOO_FREQUENT")
                 {
-                    Ok(rsp, false, code, rsp.Message, true);
+                    Ok(rsp, false, code, rsp.Message);
                     return;
                 }
 
@@ -609,7 +628,7 @@ namespace GameMesh.Friends
 
         public async Task AcceptAsync(ulong requestId, CancellationToken ct)
         {
-            if (Cooling() || RejectIfClosed() || LocalRequestExpired(requestId) || !BeginTarget("accept", requestId))
+            if (RejectIfClosed() || LocalRequestExpired(requestId) || !BeginTarget("accept", requestId))
                 return;
             var sessionGen = _sessionGeneration;
             try
@@ -647,7 +666,7 @@ namespace GameMesh.Friends
                 var code = ProtocolMapper.ExtractErrorCode(rsp);
                 if (code == "ERR_OPERATION_TOO_FREQUENT")
                 {
-                    Ok(rsp, false, code, rsp.Message, true);
+                    Ok(rsp, false, code, rsp.Message);
                     return;
                 }
 
@@ -1236,31 +1255,13 @@ namespace GameMesh.Friends
             _ops.Remove(kind + ":" + id.ToString(CultureInfo.InvariantCulture));
         }
 
-        bool Cooling()
-        {
-            if (UnityEngine.Time.unscaledTime < _cooldownUntil)
-            {
-                ShowRetryHint = true;
-                LastErrorCode = "ERR_OPERATION_TOO_FREQUENT";
-                LastError = GameErrorCatalog.FormatUi("ERR_OPERATION_TOO_FREQUENT") + "\n稍后重试";
-                return true;
-            }
-
-            return false;
-        }
-
-        void MarkCooldown()
-        {
-            _cooldownUntil = UnityEngine.Time.unscaledTime + 2.5f;
-        }
-
         async Task<bool> CommitAsync(GameResponse rsp, bool bodyOk, string bodyCode, string message,
             CancellationToken ct)
         {
             var code = ProtocolMapper.ExtractErrorCode(rsp);
             if (string.IsNullOrEmpty(code))
                 code = bodyCode ?? "";
-            var ok = Ok(rsp, bodyOk, bodyCode, message, true);
+            var ok = Ok(rsp, bodyOk, bodyCode, message);
             if (!ok && (NeedsRequestRefresh(code) || NeedsFriendRefresh(code)))
                 await RefreshKeepingNoticeAsync(ct, NeedsRequestRefresh(code), NeedsFriendRefresh(code))
                     .ConfigureAwait(false);
@@ -1386,7 +1387,7 @@ namespace GameMesh.Friends
             return ex is TimeoutException || ex is System.IO.IOException;
         }
 
-        bool Ok(GameResponse rsp, bool bodyOk, string bodyCode, string message, bool cooldownOnRetry = false)
+        bool Ok(GameResponse rsp, bool bodyOk, string bodyCode, string message)
         {
             var code = ProtocolMapper.ExtractErrorCode(rsp);
             if (string.IsNullOrEmpty(code))
@@ -1413,8 +1414,6 @@ namespace GameMesh.Friends
                     string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code, message);
             if (retryable)
                 LastError += "\n稍后重试";
-            if (retryable && cooldownOnRetry)
-                MarkCooldown();
             return false;
         }
     }
