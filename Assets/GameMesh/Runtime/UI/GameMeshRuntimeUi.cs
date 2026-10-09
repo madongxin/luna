@@ -728,7 +728,7 @@ namespace GameMesh.UI
                 var remark = string.IsNullOrEmpty(f.Remark) ? "" : "  备注 " + f.Remark;
                 GUILayout.Label(
                     (f.Online ? "● " : "○ ") + f.Name + "  #" + f.PlayerId +
-                    (f.Online ? "  在线" : "  最近 " + FriendClient.FormatLastOnline(f.LastOnlineTime)) +
+                    (f.Online ? "  在线" : "  " + FriendClient.FormatLastOnline(f.LastOnlineTime)) +
                     map + remark,
                     _label);
                 GUI.enabled = loggedIn;

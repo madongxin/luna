@@ -111,7 +111,7 @@ try {
     Assert-Event $ae "friend_blocked"
     Assert-Event $ae "session_closed"
     $request = Assert-Event $be "friend_request_seen"
-    if ([string]::IsNullOrWhiteSpace([string]$request.name)) { throw "friend request missing name" }
+    if ($request.name_ok -ne $true) { throw "friend request missing name" }
     if ([int]$request.level -le 0) { throw "friend request missing level" }
     Assert-Event $be "friend_accepted"
     Assert-Event $be "friend_deleted"

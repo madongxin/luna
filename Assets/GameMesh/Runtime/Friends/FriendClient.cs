@@ -47,8 +47,23 @@ namespace GameMesh.Friends
         // Presence is best-effort and is restored by the open-panel friend refresh.
         public float ClosedPanelRequestPollSeconds = 60f;
         int _inFlight;
+        int _friendLoads;
+        int _requestLoads;
+        int _blockLoads;
+        float _nextSearchAt;
 
         public bool Busy => _inFlight > 0;
+        public bool FriendsLoading => _friendLoads > 0;
+        public bool RequestsLoading => _requestLoads > 0;
+        public bool BlockedLoading => _blockLoads > 0;
+        public bool ShowRetryHint { get; private set; }
+        public bool PresenceHold { get; private set; }
+        public const int MaxSearchLength = 32;
+
+        public void BeginPresenceHold()
+        {
+            PresenceHold = true;
+        }
 
         public bool CanRequest =>
             _requestsOpen && _session != null && _session.HasIdentity && !_session.SessionReplaced;
@@ -80,6 +95,9 @@ namespace GameMesh.Friends
             RequestBadge = 0;
             _ops.Clear();
             _cooldownUntil = 0f;
+            _nextSearchAt = 0f;
+            ShowRetryHint = false;
+            PresenceHold = false;
         }
 
         public bool ShouldPoll(float now, float lastPoll, bool panelOpen)
@@ -104,37 +122,50 @@ namespace GameMesh.Friends
         {
             if (!CanRequest)
                 return;
-            var sessionGen = _sessionGeneration;
-            var epoch = Interlocked.Increment(ref _friendListEpoch);
-            var rsp = await _request(new GameRequest
+            Interlocked.Increment(ref _friendLoads);
+            try
             {
-                FriendList = new FriendListReq
+                var sessionGen = _sessionGeneration;
+                var epoch = Interlocked.Increment(ref _friendListEpoch);
+                var rsp = await _request(new GameRequest
                 {
-                    PlayerId = _session.PlayerId,
-                    PageSize = 100
+                    FriendList = new FriendListReq
+                    {
+                        PlayerId = _session.PlayerId,
+                        PageSize = 100
+                    }
+                }, ct).ConfigureAwait(false);
+                if (sessionGen != _sessionGeneration || epoch != _friendListEpoch)
+                    return;
+                var body = rsp.FriendList;
+                if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
+                    return;
+                Friends.Clear();
+                if (body != null)
+                {
+                    Friends.AddRange(body.Friends);
+                    FriendCount = body.FriendN;
+                    FriendCap = body.FriendCap;
                 }
-            }, ct).ConfigureAwait(false);
-            if (sessionGen != _sessionGeneration || epoch != _friendListEpoch)
-                return;
-            var body = rsp.FriendList;
-            if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
-                return;
-            Friends.Clear();
-            if (body != null)
-            {
-                Friends.AddRange(body.Friends);
-                FriendCount = body.FriendN;
-                FriendCap = body.FriendCap;
-            }
 
-            SortFriends();
-            LastError = "";
+                SortFriends();
+                LastError = "";
+                ShowRetryHint = false;
+                PresenceHold = false;
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _friendLoads);
+            }
         }
 
         public async Task RefreshRequestsAsync(CancellationToken ct)
         {
             if (!CanRequest)
                 return;
+            Interlocked.Increment(ref _requestLoads);
+            try
+            {
             var sessionGen = _sessionGeneration;
             var epoch = Interlocked.Increment(ref _requestListEpoch);
             var accumulated = new List<FriendRequestInfo>();
@@ -166,12 +197,21 @@ namespace GameMesh.Friends
             Requests.AddRange(accumulated);
             RequestBadge = Requests.Count;
             LastError = "";
+            ShowRetryHint = false;
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _requestLoads);
+            }
         }
 
         public async Task RefreshBlockedAsync(CancellationToken ct)
         {
             if (!CanRequest)
                 return;
+            Interlocked.Increment(ref _blockLoads);
+            try
+            {
             var sessionGen = _sessionGeneration;
             var epoch = Interlocked.Increment(ref _blockListEpoch);
             var rsp = await _request(new GameRequest
@@ -191,6 +231,12 @@ namespace GameMesh.Friends
             if (body != null)
                 Blocked.AddRange(body.Blocked);
             LastError = "";
+            ShowRetryHint = false;
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _blockLoads);
+            }
         }
 
         public async Task SearchAsync(string query, CancellationToken ct)
@@ -198,11 +244,17 @@ namespace GameMesh.Friends
             if (RejectIfClosed())
                 return;
             query = (query ?? "").Trim();
+            if (query.Length > MaxSearchLength)
+                query = query.Substring(0, MaxSearchLength);
             if (query.Length == 0)
             {
                 LastError = GameErrorCatalog.FormatUi("ERR_INVALID_ARGUMENT", "请输入角色名或 PlayerID");
                 return;
             }
+
+            if (UnityEngine.Time.unscaledTime < _nextSearchAt)
+                return;
+            _nextSearchAt = UnityEngine.Time.unscaledTime + 0.4f;
 
             var req = new FriendSearchReq { PlayerId = _session.PlayerId };
             if (ulong.TryParse(query, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) && id != 0)
@@ -252,7 +304,7 @@ namespace GameMesh.Friends
             }
 
             var sessionGen = _sessionGeneration;
-            var rsp = await _request(new GameRequest
+            var rsp = await SendWriteAsync(new GameRequest
             {
                 FriendApply = new FriendApplyReq
                 {
@@ -261,7 +313,7 @@ namespace GameMesh.Friends
                     ExactName = exactName ?? "",
                     OperationId = StableOp("apply", targetPlayerId)
                 }
-            }, ct).ConfigureAwait(false);
+            }, sessionGen, ct).ConfigureAwait(false);
             if (sessionGen != _sessionGeneration)
                 return;
             var body = rsp.FriendApply;
@@ -276,8 +328,7 @@ namespace GameMesh.Friends
 
             if (code == "ERR_OPERATION_TOO_FREQUENT")
             {
-                MarkCooldown();
-                Ok(rsp, false, code, rsp.Message);
+                Ok(rsp, false, code, rsp.Message, true);
                 return;
             }
 
@@ -307,7 +358,7 @@ namespace GameMesh.Friends
         async Task AcceptCoreAsync(ulong requestId, CancellationToken ct)
         {
             var sessionGen = _sessionGeneration;
-            var rsp = await _request(new GameRequest
+            var rsp = await SendWriteAsync(new GameRequest
             {
                 FriendAccept = new FriendAcceptReq
                 {
@@ -315,15 +366,14 @@ namespace GameMesh.Friends
                     RequestId = requestId,
                     OperationId = StableOp("accept", requestId)
                 }
-            }, ct).ConfigureAwait(false);
+            }, sessionGen, ct).ConfigureAwait(false);
             if (sessionGen != _sessionGeneration)
                 return;
             var body = rsp.FriendAccept;
             var code = ProtocolMapper.ExtractErrorCode(rsp);
             if (code == "ERR_OPERATION_TOO_FREQUENT")
             {
-                MarkCooldown();
-                Ok(rsp, false, code, rsp.Message);
+                Ok(rsp, false, code, rsp.Message, true);
                 return;
             }
 
@@ -342,7 +392,7 @@ namespace GameMesh.Friends
             if (RejectIfClosed())
                 return;
             var sessionGen = _sessionGeneration;
-            var rsp = await _request(new GameRequest
+            var rsp = await SendWriteAsync(new GameRequest
             {
                 FriendReject = new FriendRejectReq
                 {
@@ -350,7 +400,7 @@ namespace GameMesh.Friends
                     RequestId = requestId,
                     OperationId = StableOp("reject", requestId)
                 }
-            }, ct).ConfigureAwait(false);
+            }, sessionGen, ct).ConfigureAwait(false);
             if (sessionGen != _sessionGeneration)
                 return;
             var body = rsp.FriendReject;
@@ -367,7 +417,7 @@ namespace GameMesh.Friends
             if (RejectIfClosed())
                 return;
             var sessionGen = _sessionGeneration;
-            var rsp = await _request(new GameRequest
+            var rsp = await SendWriteAsync(new GameRequest
             {
                 FriendDelete = new FriendDeleteReq
                 {
@@ -375,7 +425,7 @@ namespace GameMesh.Friends
                     FriendPlayerId = friendPlayerId,
                     OperationId = StableOp("delete", friendPlayerId)
                 }
-            }, ct).ConfigureAwait(false);
+            }, sessionGen, ct).ConfigureAwait(false);
             if (sessionGen != _sessionGeneration)
                 return;
             var body = rsp.FriendDelete;
@@ -392,7 +442,7 @@ namespace GameMesh.Friends
             if (RejectIfClosed())
                 return;
             var sessionGen = _sessionGeneration;
-            var rsp = await _request(new GameRequest
+            var rsp = await SendWriteAsync(new GameRequest
             {
                 FriendBlock = new FriendBlockReq
                 {
@@ -400,7 +450,7 @@ namespace GameMesh.Friends
                     TargetPlayerId = targetPlayerId,
                     OperationId = StableOp("block", targetPlayerId)
                 }
-            }, ct).ConfigureAwait(false);
+            }, sessionGen, ct).ConfigureAwait(false);
             if (sessionGen != _sessionGeneration)
                 return;
             var body = rsp.FriendBlock;
@@ -430,7 +480,7 @@ namespace GameMesh.Friends
             if (RejectIfClosed())
                 return;
             var sessionGen = _sessionGeneration;
-            var rsp = await _request(new GameRequest
+            var rsp = await SendWriteAsync(new GameRequest
             {
                 FriendUnblock = new FriendUnblockReq
                 {
@@ -438,7 +488,7 @@ namespace GameMesh.Friends
                     TargetPlayerId = targetPlayerId,
                     OperationId = StableOp("unblock", targetPlayerId)
                 }
-            }, ct).ConfigureAwait(false);
+            }, sessionGen, ct).ConfigureAwait(false);
             if (sessionGen != _sessionGeneration)
                 return;
             var body = rsp.FriendUnblock;
@@ -488,26 +538,39 @@ namespace GameMesh.Friends
 
             if (inner.FriendPresencePush != null)
             {
-                ApplyPresence(inner.FriendPresencePush);
+                if (!PresenceHold)
+                    ApplyPresence(inner.FriendPresencePush);
                 return true;
             }
 
             return false;
         }
 
-        public static string FormatLastOnline(ulong unixSeconds)
+        public static string FormatLastOnline(ulong unixSeconds, DateTimeOffset? now = null)
         {
-            if (unixSeconds == 0)
+            if (unixSeconds == 0 || unixSeconds > (ulong)long.MaxValue)
                 return "未知";
+            DateTimeOffset seen;
             try
             {
-                var dt = DateTimeOffset.FromUnixTimeSeconds((long)unixSeconds).ToLocalTime();
-                return dt.ToString("yyyy-MM-dd HH:mm", CultureInfo.InvariantCulture);
+                seen = DateTimeOffset.FromUnixTimeSeconds((long)unixSeconds);
             }
             catch
             {
                 return "未知";
             }
+
+            var clock = now ?? DateTimeOffset.UtcNow;
+            var delta = clock - seen;
+            if (delta.TotalSeconds < -300 || delta.TotalDays > 36500)
+                return "未知";
+            if (delta.TotalMinutes < 1)
+                return "刚刚";
+            if (delta.TotalHours < 1)
+                return ((int)delta.TotalMinutes).ToString(CultureInfo.InvariantCulture) + " 分钟前";
+            if (delta.TotalDays < 1)
+                return ((int)delta.TotalHours).ToString(CultureInfo.InvariantCulture) + " 小时前";
+            return ((int)delta.TotalDays).ToString(CultureInfo.InvariantCulture) + " 天前";
         }
 
         public static string SearchRelationLabel(FriendRelationState relation)
@@ -686,7 +749,7 @@ namespace GameMesh.Friends
             var code = ProtocolMapper.ExtractErrorCode(rsp);
             if (string.IsNullOrEmpty(code))
                 code = bodyCode ?? "";
-            var ok = Ok(rsp, bodyOk, bodyCode, message);
+            var ok = Ok(rsp, bodyOk, bodyCode, message, true);
             if (!ok && (NeedsRequestRefresh(code) || NeedsFriendRefresh(code)))
                 await RefreshKeepingNoticeAsync(ct, NeedsRequestRefresh(code), NeedsFriendRefresh(code))
                     .ConfigureAwait(false);
@@ -708,11 +771,13 @@ namespace GameMesh.Friends
         {
             var error = LastError;
             var notice = LastNotice;
+            var retry = ShowRetryHint;
             if (requests)
                 await RefreshRequestsAsync(ct).ConfigureAwait(false);
             if (friends)
                 await RefreshFriendsAsync(ct).ConfigureAwait(false);
             LastError = error;
+            ShowRetryHint = retry;
             if (!string.IsNullOrEmpty(notice))
                 LastNotice = notice;
         }
@@ -741,22 +806,57 @@ namespace GameMesh.Friends
             return "玩家";
         }
 
-        bool Ok(GameResponse rsp, bool bodyOk, string bodyCode, string message)
+        async Task<GameResponse> SendWriteAsync(GameRequest req, int sessionGen, CancellationToken ct)
+        {
+            try
+            {
+                return await _request(req, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsTransportFailure(ex))
+            {
+                if (sessionGen != _sessionGeneration)
+                    throw;
+                return await _request(req, ct).ConfigureAwait(false);
+            }
+        }
+
+        static bool IsTransportFailure(Exception ex)
+        {
+            var mesh = ex as GameMeshException;
+            if (mesh != null)
+            {
+                return mesh.ErrorCode == GameMeshErrorCode.ClientTimeout ||
+                       mesh.ErrorCode == GameMeshErrorCode.ClientDisconnected;
+            }
+
+            return ex is TimeoutException || ex is System.IO.IOException;
+        }
+
+        bool Ok(GameResponse rsp, bool bodyOk, string bodyCode, string message, bool cooldownOnRetry = false)
         {
             var code = ProtocolMapper.ExtractErrorCode(rsp);
             if (string.IsNullOrEmpty(code))
                 code = bodyCode ?? "";
             if (rsp != null && rsp.Ok && bodyOk)
-                return true;
-            if (code == "ERR_RELATION_CONFLICT" || code == "ERR_DEPENDENCY_UNAVAILABLE" ||
-                code == "ERR_OPERATION_TOO_FREQUENT")
             {
-                LastError = GameErrorCatalog.FormatUi(code, message);
-                return false;
+                ShowRetryHint = false;
+                return true;
             }
 
-            LastError = GameErrorCatalog.FormatUi(
-                string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code, message);
+            var retryable = rsp != null && rsp.Retryable;
+            if (!retryable && !string.IsNullOrEmpty(code))
+                retryable = GameErrorCatalog.Resolve(code).Retryable;
+            ShowRetryHint = retryable;
+            if (code == "ERR_RELATION_CONFLICT" || code == "ERR_DEPENDENCY_UNAVAILABLE" ||
+                code == "ERR_OPERATION_TOO_FREQUENT")
+                LastError = GameErrorCatalog.FormatUi(code, message);
+            else
+                LastError = GameErrorCatalog.FormatUi(
+                    string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code, message);
+            if (retryable)
+                LastError += "\n稍后重试";
+            if (retryable && cooldownOnRetry)
+                MarkCooldown();
             return false;
         }
     }

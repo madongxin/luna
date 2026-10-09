@@ -2024,6 +2024,8 @@ namespace GameMesh.Bootstrap
             }
 
             ReconnectGaveUp = false;
+            if (Friends != null)
+                Friends.BeginPresenceHold();
             ReconnectStatus = "正在重连 (尝试 " + Reconnect.Attempts + "/" +
                               Math.Max(1, Config.reconnectMaxAttempts) + ")...";
             SetNotice(ReconnectStatus);

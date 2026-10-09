@@ -218,7 +218,7 @@ namespace GameMesh.Bootstrap
                 if (applicant == null || string.IsNullOrEmpty(applicant.Name) || applicant.Level == 0)
                     throw new InvalidOperationException("friend request push missing name or level");
                 Event("friend_request_seen", "peer_id", peer, "request_id", request.RequestId,
-                    "name", applicant.Name, "level", applicant.Level);
+                    "name_ok", true, "level", applicant.Level);
                 await _client.Friends.AcceptAsync(request.RequestId, default).ConfigureAwait(true);
                 if (!string.IsNullOrEmpty(_client.Friends.LastError))
                     throw new InvalidOperationException(_client.Friends.LastError);

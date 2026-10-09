@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using GameMesh.Bootstrap;
 using GameMesh.Friends;
@@ -28,6 +29,7 @@ namespace GameMesh.UI
         RectTransform _rows;
         ScrollRect _scroll;
         int _signature;
+        string _rowShape = "";
         ulong _confirmId;
         bool _confirmBlock;
         bool _open;
@@ -220,12 +222,18 @@ namespace GameMesh.UI
 
         void Rebuild(FriendClient friends)
         {
+            var shape = RowShape(friends);
+            if (shape == _rowShape && _rows.childCount > 0 && TryRefreshLabels(friends))
+            {
+                ApplyStatus(friends);
+                return;
+            }
+
+            _rowShape = shape;
             for (var i = _rows.childCount - 1; i >= 0; i--)
                 Destroy(_rows.GetChild(i).gameObject);
 
-            var status = !string.IsNullOrEmpty(friends.LastError) ? friends.LastError : friends.LastNotice ?? "";
-            _status.text = status;
-            _count.text = friends.FriendCount + "/" + (friends.FriendCap == 0 ? "—" : friends.FriendCap.ToString(CultureInfo.InvariantCulture));
+            ApplyStatus(friends);
 
             if (friends.SearchHit != null)
                 AddSearchRow(friends);
@@ -241,11 +249,105 @@ namespace GameMesh.UI
                 BuildFriends(friends);
         }
 
+        void ApplyStatus(FriendClient friends)
+        {
+            var status = !string.IsNullOrEmpty(friends.LastError) ? friends.LastError : friends.LastNotice ?? "";
+            _status.text = status;
+            _count.text = friends.FriendCount + "/" +
+                          (friends.FriendCap == 0 ? "—" : friends.FriendCap.ToString(CultureInfo.InvariantCulture));
+        }
+
+        static string RowShape(FriendClient friends)
+        {
+            var text = ((int)friends.Tab).ToString(CultureInfo.InvariantCulture);
+            if (friends.SearchHit != null)
+                text += "S" + friends.SearchHit.PlayerId.ToString(CultureInfo.InvariantCulture);
+            text += "C" + friends.Tab.ToString();
+            if (friends.Tab == FriendPanelTab.Requests)
+            {
+                for (var i = 0; i < friends.Requests.Count; i++)
+                    text += "R" + (friends.Requests[i] != null ? friends.Requests[i].RequestId.ToString(CultureInfo.InvariantCulture) : "0");
+            }
+            else if (friends.Tab == FriendPanelTab.Blocked)
+            {
+                for (var i = 0; i < friends.Blocked.Count; i++)
+                    text += "B" + (friends.Blocked[i] != null ? friends.Blocked[i].PlayerId.ToString(CultureInfo.InvariantCulture) : "0");
+            }
+            else
+            {
+                for (var i = 0; i < friends.Friends.Count; i++)
+                    text += "F" + (friends.Friends[i] != null ? friends.Friends[i].PlayerId.ToString(CultureInfo.InvariantCulture) : "0");
+            }
+
+            return text;
+        }
+
+        bool TryRefreshLabels(FriendClient friends)
+        {
+            var labels = new List<string>();
+            if (friends.SearchHit != null)
+                labels.Add((friends.SearchHit.Online ? "在线  " : "离线  ") + friends.SearchHit.Name + "  #" +
+                           friends.SearchHit.PlayerId + "  Lv." + friends.SearchHit.Level + "  " +
+                           FriendClient.SearchRelationLabel(friends.SearchRelation));
+            if (_confirmId != 0)
+                labels.Add(_confirmBlock ? "确认拉黑 #" + _confirmId + "？" : "确认删除好友 #" + _confirmId + "？");
+            if (friends.Tab == FriendPanelTab.Friends)
+            {
+                if (friends.Friends.Count == 0)
+                    labels.Add(friends.FriendsLoading ? "加载中" : (!string.IsNullOrEmpty(friends.LastError) ? "加载失败，请重试" : "还没有好友"));
+                else
+                    for (var i = 0; i < friends.Friends.Count; i++)
+                        if (friends.Friends[i] != null)
+                            labels.Add(DescribeFriend(friends.Friends[i]));
+            }
+            else if (friends.Tab == FriendPanelTab.Requests)
+            {
+                if (friends.Requests.Count == 0)
+                    labels.Add(friends.RequestsLoading ? "加载中" : (!string.IsNullOrEmpty(friends.LastError) ? "加载失败，请重试" : "没有待处理的申请"));
+                else
+                    for (var i = 0; i < friends.Requests.Count; i++)
+                    {
+                        var row = friends.Requests[i];
+                        if (row == null)
+                            continue;
+                        var who = row.Applicant;
+                        labels.Add(FriendClient.DisplayName(who, false) + "  #" + (who != null ? who.PlayerId : 0UL) +
+                                   (string.IsNullOrEmpty(Remain(row.ExpireAt)) ? "" : "  " + Remain(row.ExpireAt)));
+                    }
+            }
+            else if (friends.Blocked.Count == 0)
+            {
+                labels.Add(friends.BlockedLoading ? "加载中" : (!string.IsNullOrEmpty(friends.LastError) ? "加载失败，请重试" : "黑名单是空的"));
+            }
+            else
+            {
+                for (var i = 0; i < friends.Blocked.Count; i++)
+                {
+                    if (friends.Blocked[i] == null)
+                        continue;
+                    labels.Add(FriendClient.DisplayName(friends.Blocked[i], true) + "  #" + friends.Blocked[i].PlayerId);
+                }
+            }
+
+            var seen = 0;
+            for (var i = 0; i < _rows.childCount; i++)
+            {
+                var label = _rows.GetChild(i).GetComponent<Text>();
+                if (label == null)
+                    continue;
+                if (seen >= labels.Count)
+                    return false;
+                label.text = labels[seen++];
+            }
+
+            return seen == labels.Count;
+        }
+
         void BuildFriends(FriendClient friends)
         {
             if (friends.Friends.Count == 0)
             {
-                AddLine("还没有好友");
+                AddLine(friends.FriendsLoading ? "加载中" : (!string.IsNullOrEmpty(friends.LastError) ? "加载失败，请重试" : "还没有好友"));
                 return;
             }
 
@@ -266,7 +368,7 @@ namespace GameMesh.UI
         {
             if (friends.Requests.Count == 0)
             {
-                AddLine("没有待处理的申请");
+                AddLine(friends.RequestsLoading ? "加载中" : (!string.IsNullOrEmpty(friends.LastError) ? "加载失败，请重试" : "没有待处理的申请"));
                 return;
             }
 
@@ -299,7 +401,7 @@ namespace GameMesh.UI
         {
             if (friends.Blocked.Count == 0)
             {
-                AddLine("黑名单是空的");
+                AddLine(friends.BlockedLoading ? "加载中" : (!string.IsNullOrEmpty(friends.LastError) ? "加载失败，请重试" : "黑名单是空的"));
                 return;
             }
 
@@ -393,7 +495,7 @@ namespace GameMesh.UI
             if (row.Profession != 0)
                 text += "  职业 " + row.Profession.ToString(CultureInfo.InvariantCulture);
             if (!row.Online)
-                text += "  最近在线 " + FriendClient.FormatLastOnline(row.LastOnlineTime);
+                text += "  " + FriendClient.FormatLastOnline(row.LastOnlineTime);
             if (!string.IsNullOrEmpty(row.MapName))
                 text += "  " + row.MapName;
             if (!string.IsNullOrEmpty(row.Remark))
@@ -532,6 +634,7 @@ namespace GameMesh.UI
             Stretch(hint.rectTransform);
             hint.rectTransform.offsetMin = new Vector2(8, 0);
             var field = go.GetComponent<InputField>();
+            field.characterLimit = FriendClient.MaxSearchLength;
             field.textComponent = text;
             field.placeholder = hint;
             return field;

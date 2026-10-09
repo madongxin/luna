@@ -1,8 +1,10 @@
+using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using GameMesh.Auth;
 using GameMesh.Friends;
+using GameMesh.Network;
 using GameMesh.Protocol;
 using NUnit.Framework;
 
@@ -77,7 +79,7 @@ namespace GameMesh.Tests.EditMode
                     return Task.FromResult(new GameResponse
                     {
                         Ok = false,
-                        FriendApply = new FriendApplyRsp { Ok = false, ErrorCode = "ERR_DEPENDENCY_UNAVAILABLE" }
+                        FriendApply = new FriendApplyRsp { Ok = false, ErrorCode = "ERR_PLAYER_NOT_FOUND" }
                     });
                 }
 
@@ -522,6 +524,129 @@ namespace GameMesh.Tests.EditMode
             }));
             Assert.GreaterOrEqual(friendLists, 1);
             Assert.AreEqual("加载中", FriendClient.DisplayName(new FriendBrief { PlayerId = 12 }, true));
+        }
+
+        [Test]
+        public void FormatLastOnline_RelativeBuckets_DoNotThrow()
+        {
+            var now = DateTimeOffset.FromUnixTimeSeconds(1_700_000_000);
+            Assert.AreEqual("未知", FriendClient.FormatLastOnline(0, now));
+            Assert.AreEqual("刚刚", FriendClient.FormatLastOnline(1_700_000_000 - 10, now));
+            Assert.AreEqual("5 分钟前", FriendClient.FormatLastOnline(1_700_000_000 - 5 * 60, now));
+            Assert.AreEqual("3 小时前", FriendClient.FormatLastOnline(1_700_000_000 - 3 * 3600, now));
+            Assert.AreEqual("2 天前", FriendClient.FormatLastOnline(1_700_000_000 - 2 * 86400, now));
+            Assert.AreEqual("刚刚", FriendClient.FormatLastOnline(1_700_000_000 + 30, now));
+            Assert.AreEqual("未知", FriendClient.FormatLastOnline(1_700_000_000 + 3600, now));
+            Assert.AreEqual("未知", FriendClient.FormatLastOnline(ulong.MaxValue, now));
+        }
+
+        [Test]
+        public void RetryableFriendError_ShowsLaterHint_AndDoesNotAutoResend()
+        {
+            var sends = 0;
+            var friends = Client((req, ct) =>
+            {
+                sends++;
+                return Task.FromResult(new GameResponse
+                {
+                    Ok = false,
+                    Retryable = true,
+                    FriendApply = new FriendApplyRsp { Ok = false, ErrorCode = "ERR_OPERATION_TOO_FREQUENT" }
+                });
+            });
+            friends.ApplyAsync(3, "A", CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(1, sends);
+            Assert.IsTrue(friends.ShowRetryHint);
+            StringAssert.Contains("稍后重试", friends.LastError);
+            friends.ApplyAsync(3, "A", CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(1, sends);
+
+            var terminal = Client((req, ct) => Task.FromResult(new GameResponse
+            {
+                Ok = false,
+                Retryable = false,
+                FriendApply = new FriendApplyRsp { Ok = false, ErrorCode = "ERR_ALREADY_FRIEND" }
+            }));
+            terminal.ApplyAsync(3, "A", CancellationToken.None).GetAwaiter().GetResult();
+            Assert.IsFalse(terminal.ShowRetryHint);
+            StringAssert.DoesNotContain("稍后重试", terminal.LastError);
+        }
+
+        [Test]
+        public void TransportTimeout_RetriesOnceWithSameOperationId()
+        {
+            var ops = new List<string>();
+            var n = 0;
+            var friends = Client((req, ct) =>
+            {
+                n++;
+                ops.Add(req.FriendApply.OperationId);
+                if (n == 1)
+                    throw new GameMeshException(GameMeshErrorCode.ClientTimeout, "timeout");
+                return Task.FromResult(new GameResponse
+                {
+                    Ok = true,
+                    FriendApply = new FriendApplyRsp { Ok = true, RequestId = 0 }
+                });
+            });
+            friends.ApplyAsync(9, "A", CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(2, n);
+            Assert.AreEqual(ops[0], ops[1]);
+            Assert.AreEqual("已提交", friends.LastNotice);
+        }
+
+        [Test]
+        public void PresenceHold_KeepsLastStateUntilFriendListArrives()
+        {
+            var friends = Client((req, ct) =>
+            {
+                var body = new FriendListRsp { Ok = true };
+                body.Friends.Add(new FriendBrief { PlayerId = 4, Name = "Ann", Online = false, LastOnlineTime = 10 });
+                return Task.FromResult(new GameResponse { Ok = true, FriendList = body });
+            });
+            friends.Friends.Add(new FriendBrief { PlayerId = 4, Name = "Ann", Online = true, LastOnlineTime = 1 });
+            friends.BeginPresenceHold();
+            friends.ApplyPush(new GameResponse
+            {
+                FriendPresencePush = new FriendPresencePush { FriendPlayerId = 4, Online = false, LastOnlineTime = 9 }
+            });
+            Assert.IsTrue(friends.Friends[0].Online);
+            friends.RefreshFriendsAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.IsFalse(friends.PresenceHold);
+            Assert.IsFalse(friends.Friends[0].Online);
+        }
+
+        [Test]
+        public void Search_DebouncesAndAcceptsOddCharacters()
+        {
+            var sends = 0;
+            var friends = Client((req, ct) =>
+            {
+                sends++;
+                return Task.FromResult(new GameResponse
+                {
+                    Ok = true,
+                    FriendSearch = new FriendSearchRsp
+                    {
+                        Ok = true,
+                        Player = new FriendBrief { PlayerId = 6, Name = "n" },
+                        Relation = FriendRelationState.FriendRelationNone
+                    }
+                });
+            });
+            friends.SearchAsync("*\n\t名字", CancellationToken.None).GetAwaiter().GetResult();
+            friends.SearchAsync("另一个", CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(1, sends);
+            friends.SearchAsync("   ", CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(1, sends);
+            StringAssert.Contains("请输入", friends.LastError);
+        }
+
+        [Test]
+        public void ErrorCatalog_WrongRouteHasCopy()
+        {
+            Assert.AreEqual("服务暂不可用，请稍后重试", GameErrorCatalog.Resolve("ERR_WRONG_ROUTE").Chinese);
+            Assert.IsTrue(GameErrorCatalog.Resolve("ERR_WRONG_ROUTE").Retryable);
         }
 
         [Test]
