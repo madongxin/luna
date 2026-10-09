@@ -672,7 +672,7 @@ namespace GameMesh.UI
             {
                 var hit = friends.SearchHit;
                 GUILayout.Label(
-                    (hit.Online ? "● " : "○ ") + hit.Name + "  #" + hit.PlayerId + "  Lv." + hit.Level +
+                    (hit.Online ? "● " : "○ ") + FriendClient.ClipText(hit.Name) + "  #" + hit.PlayerId + "  Lv." + hit.Level +
                     "  " + FriendClient.SearchRelationLabel(friends.SearchRelation),
                     _label);
                 GUILayout.BeginHorizontal();
@@ -724,10 +724,10 @@ namespace GameMesh.UI
             foreach (var f in friends.Friends)
             {
                 GUILayout.BeginHorizontal();
-                var map = string.IsNullOrEmpty(f.MapName) ? "" : "  " + f.MapName;
-                var remark = string.IsNullOrEmpty(f.Remark) ? "" : "  备注 " + f.Remark;
+                var map = string.IsNullOrEmpty(f.MapName) ? "" : "  " + FriendClient.ClipText(f.MapName);
+                var remark = string.IsNullOrEmpty(f.Remark) ? "" : "  备注 " + FriendClient.ClipText(f.Remark);
                 GUILayout.Label(
-                    (f.Online ? "● " : "○ ") + f.Name + "  #" + f.PlayerId +
+                    (f.Online ? "● " : "○ ") + FriendClient.ClipText(f.Name) + "  #" + f.PlayerId +
                     (f.Online ? "  在线" : "  " + FriendClient.FormatLastOnline(f.LastOnlineTime)) +
                     map + remark,
                     _label);
@@ -776,7 +776,7 @@ namespace GameMesh.UI
             foreach (var b in friends.Blocked)
             {
                 GUILayout.BeginHorizontal();
-                GUILayout.Label(b.Name + "  #" + b.PlayerId, _label);
+                GUILayout.Label(FriendClient.DisplayName(b, true) + "  #" + b.PlayerId, _label);
                 GUI.enabled = loggedIn;
                 if (GUILayout.Button("解除", _loginStyle, GUILayout.Width(88), GUILayout.Height(32)))
                     _ = friends.UnblockAsync(b.PlayerId, default);

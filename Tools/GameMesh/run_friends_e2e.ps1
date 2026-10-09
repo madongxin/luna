@@ -107,6 +107,11 @@ try {
     Assert-Event $ae "friend_added_seen"
     Assert-Event $ae "friend_presence_offline"
     Assert-Event $ae "friend_presence_online"
+    $restored = Assert-Event $ae "friend_state_from_list"
+    if ($restored.online -ne $true) { throw "friend state was not restored from the list" }
+    # Same-account kick (A must stop sending friend requests) is EditMode
+    # FriendClientTests.KickedSession_DoesNotSendFriendRequests. A third live login
+    # needs A's account and races this scenario, so it is not started here.
     Assert-Event $ae "friend_removed_seen"
     Assert-Event $ae "friend_blocked"
     Assert-Event $ae "session_closed"

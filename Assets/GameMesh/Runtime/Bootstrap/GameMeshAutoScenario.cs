@@ -201,6 +201,11 @@ namespace GameMesh.Bootstrap
                 await WaitMarkerAsync("b-back", 40f).ConfigureAwait(true);
                 await WaitFriendOnlineAsync(peer, true, 25f).ConfigureAwait(true);
                 Event("friend_presence_online", "peer_id", peer);
+                await _client.Friends.RefreshFriendsAsync(default).ConfigureAwait(true);
+                var restored = FindFriend(peer);
+                if (restored == null || !restored.Online)
+                    throw new InvalidOperationException("friend list did not restore online state");
+                Event("friend_state_from_list", "peer_id", peer, "online", true);
                 await WaitFriendAsync(peer, false, 30f).ConfigureAwait(true);
                 Event("friend_removed_seen", "peer_id", peer);
                 await _client.Friends.BlockAsync(peer, default).ConfigureAwait(true);

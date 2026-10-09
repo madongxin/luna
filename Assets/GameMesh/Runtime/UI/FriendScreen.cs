@@ -33,6 +33,8 @@ namespace GameMesh.UI
         ulong _confirmId;
         bool _confirmBlock;
         bool _open;
+        Text _diag;
+        bool _diagOpen;
 
         public static void Ensure(GameMeshClient client)
         {
@@ -151,7 +153,26 @@ namespace GameMesh.UI
             _scroll.viewport = viewRect;
             _scroll.content = _rows;
             _scroll.horizontal = false;
+            if (_client != null && _client.Config != null && _client.Config.friendDiagnostics)
+            {
+                panelRect.sizeDelta = new Vector2(460, 820);
+                MakeButton(_panel.transform, "诊断", new Vector2(1, 1), new Vector2(1, 1),
+                    new Vector2(-16, -668), new Vector2(120, 36), ToggleDiag);
+                _diag = MakeLabel(_panel.transform, "", 14, TextAnchor.UpperLeft);
+                Place(_diag.rectTransform, 16, -708, 428, 96);
+                _diag.horizontalOverflow = HorizontalWrapMode.Wrap;
+                _diag.verticalOverflow = VerticalWrapMode.Overflow;
+                _diag.gameObject.SetActive(false);
+            }
+
             _panel.SetActive(false);
+        }
+
+        void ToggleDiag()
+        {
+            _diagOpen = !_diagOpen;
+            if (_diag != null)
+                _diag.gameObject.SetActive(_diagOpen);
         }
 
         void LateUpdate()
@@ -166,6 +187,8 @@ namespace GameMesh.UI
             var badge = friends.RequestBadge > 0 ? "好友 (" + friends.RequestBadge + ")" : "好友";
             if (_badge != null && _badge.text != badge)
                 _badge.text = badge;
+            if (_diag != null && _diagOpen)
+                _diag.text = friends.DiagnosticsText();
             OwnsPointer = _open;
             if (!_open)
                 return;
@@ -215,7 +238,7 @@ namespace GameMesh.UI
 
         void DoSearch()
         {
-            if (_client == null || !_client.Friends.CanRequest || _client.Friends.Busy)
+            if (_client == null || !_client.Friends.CanRequest)
                 return;
             _ = _client.Friends.SearchAsync(_query != null ? _query.text : "", default);
         }
@@ -257,7 +280,7 @@ namespace GameMesh.UI
                           (friends.FriendCap == 0 ? "—" : friends.FriendCap.ToString(CultureInfo.InvariantCulture));
         }
 
-        static string RowShape(FriendClient friends)
+        public static string RowShape(FriendClient friends)
         {
             var text = ((int)friends.Tab).ToString(CultureInfo.InvariantCulture);
             if (friends.SearchHit != null)
@@ -282,15 +305,15 @@ namespace GameMesh.UI
             return text;
         }
 
-        bool TryRefreshLabels(FriendClient friends)
+        public static List<string> CollectLabels(FriendClient friends, ulong confirmId, bool confirmBlock)
         {
             var labels = new List<string>();
+            if (friends == null)
+                return labels;
             if (friends.SearchHit != null)
-                labels.Add((friends.SearchHit.Online ? "在线  " : "离线  ") + friends.SearchHit.Name + "  #" +
-                           friends.SearchHit.PlayerId + "  Lv." + friends.SearchHit.Level + "  " +
-                           FriendClient.SearchRelationLabel(friends.SearchRelation));
-            if (_confirmId != 0)
-                labels.Add(_confirmBlock ? "确认拉黑 #" + _confirmId + "？" : "确认删除好友 #" + _confirmId + "？");
+                labels.Add(SearchLine(friends.SearchHit, friends.SearchRelation));
+            if (confirmId != 0)
+                labels.Add(confirmBlock ? "确认拉黑 #" + confirmId + "？" : "确认删除好友 #" + confirmId + "？");
             if (friends.Tab == FriendPanelTab.Friends)
             {
                 if (friends.Friends.Count == 0)
@@ -298,7 +321,7 @@ namespace GameMesh.UI
                 else
                     for (var i = 0; i < friends.Friends.Count; i++)
                         if (friends.Friends[i] != null)
-                            labels.Add(DescribeFriend(friends.Friends[i]));
+                            labels.Add(FriendClient.FormatFriendLine(friends.Friends[i]));
             }
             else if (friends.Tab == FriendPanelTab.Requests)
             {
@@ -310,9 +333,7 @@ namespace GameMesh.UI
                         var row = friends.Requests[i];
                         if (row == null)
                             continue;
-                        var who = row.Applicant;
-                        labels.Add(FriendClient.DisplayName(who, false) + "  #" + (who != null ? who.PlayerId : 0UL) +
-                                   (string.IsNullOrEmpty(Remain(row.ExpireAt)) ? "" : "  " + Remain(row.ExpireAt)));
+                        labels.Add(RequestLine(row));
                     }
             }
             else if (friends.Blocked.Count == 0)
@@ -328,6 +349,13 @@ namespace GameMesh.UI
                     labels.Add(FriendClient.DisplayName(friends.Blocked[i], true) + "  #" + friends.Blocked[i].PlayerId);
                 }
             }
+
+            return labels;
+        }
+
+        bool TryRefreshLabels(FriendClient friends)
+        {
+            var labels = CollectLabels(friends, _confirmId, _confirmBlock);
 
             var seen = 0;
             for (var i = 0; i < _rows.childCount; i++)
@@ -357,7 +385,7 @@ namespace GameMesh.UI
                 if (row == null)
                     continue;
                 var id = row.PlayerId;
-                AddLine(DescribeFriend(row));
+                AddLine(FriendClient.FormatFriendLine(row));
                 var actions = AddRow();
                 AddSmall(actions, "删除", () => BeginConfirm(id, false));
                 AddSmall(actions, "拉黑", () => BeginConfirm(id, true));
@@ -377,21 +405,17 @@ namespace GameMesh.UI
                 var row = friends.Requests[i];
                 if (row == null)
                     continue;
-                var who = row.Applicant;
-                var name = FriendClient.DisplayName(who, false);
-                var id = who != null ? who.PlayerId : 0UL;
-                var remain = Remain(row.ExpireAt);
-                AddLine(name + "  #" + id + (string.IsNullOrEmpty(remain) ? "" : "  " + remain));
+                AddLine(RequestLine(row));
                 var requestId = row.RequestId;
                 var actions = AddRow();
                 AddSmall(actions, "同意", () =>
                 {
-                    if (friends.CanRequest && !friends.Busy)
+                    if (friends.CanRequest)
                         _ = friends.AcceptAsync(requestId, default);
                 });
                 AddSmall(actions, "拒绝", () =>
                 {
-                    if (friends.CanRequest && !friends.Busy)
+                    if (friends.CanRequest)
                         _ = friends.RejectAsync(requestId, default);
                 });
             }
@@ -416,7 +440,7 @@ namespace GameMesh.UI
                 var actions = AddRow();
                 AddSmall(actions, "解除拉黑", () =>
                 {
-                    if (friends.CanRequest && !friends.Busy)
+                    if (friends.CanRequest)
                         _ = friends.UnblockAsync(id, default);
                 });
             }
@@ -425,8 +449,7 @@ namespace GameMesh.UI
         void AddSearchRow(FriendClient friends)
         {
             var hit = friends.SearchHit;
-            AddLine((hit.Online ? "在线  " : "离线  ") + hit.Name + "  #" + hit.PlayerId + "  Lv." + hit.Level +
-                    "  " + FriendClient.SearchRelationLabel(friends.SearchRelation));
+            AddLine(SearchLine(hit, friends.SearchRelation));
             var actions = AddRow();
             var relation = friends.SearchRelation;
             var id = hit.PlayerId;
@@ -435,7 +458,7 @@ namespace GameMesh.UI
             {
                 AddSmall(actions, "申请", () =>
                 {
-                    if (friends.CanRequest && !friends.Busy)
+                    if (friends.CanRequest)
                         _ = friends.ApplyAsync(id, name, default);
                 });
             }
@@ -473,7 +496,7 @@ namespace GameMesh.UI
             AddSmall(actions, "确认", () =>
             {
                 _confirmId = 0;
-                if (!friends.CanRequest || friends.Busy)
+                if (!friends.CanRequest)
                     return;
                 if (block)
                     _ = friends.BlockAsync(id, default);
@@ -487,20 +510,21 @@ namespace GameMesh.UI
             });
         }
 
-        static string DescribeFriend(FriendBrief row)
+        static string SearchLine(FriendBrief hit, FriendRelationState relation)
         {
-            var state = row.Online ? "在线" : "离线";
-            var text = state + "  " + FriendClient.DisplayName(row, false) +
-                       "  Lv." + row.Level;
-            if (row.Profession != 0)
-                text += "  职业 " + row.Profession.ToString(CultureInfo.InvariantCulture);
-            if (!row.Online)
-                text += "  " + FriendClient.FormatLastOnline(row.LastOnlineTime);
-            if (!string.IsNullOrEmpty(row.MapName))
-                text += "  " + row.MapName;
-            if (!string.IsNullOrEmpty(row.Remark))
-                text += "  备注 " + row.Remark;
-            return text;
+            return (hit.Online ? "在线  " : "离线  ") + FriendClient.DisplayName(hit, false) + "  #" +
+                   hit.PlayerId.ToString(CultureInfo.InvariantCulture) + "  Lv." +
+                   hit.Level.ToString(CultureInfo.InvariantCulture) + "  " +
+                   FriendClient.SearchRelationLabel(relation);
+        }
+
+        static string RequestLine(FriendRequestInfo row)
+        {
+            var who = row != null ? row.Applicant : null;
+            var remain = row != null ? Remain(row.ExpireAt) : "";
+            return FriendClient.DisplayName(who, false) + "  #" +
+                   (who != null ? who.PlayerId : 0UL).ToString(CultureInfo.InvariantCulture) +
+                   (string.IsNullOrEmpty(remain) ? "" : "  " + remain);
         }
 
         static string Remain(ulong expireAt)
@@ -584,7 +608,7 @@ namespace GameMesh.UI
             element.minWidth = 96;
             element.minHeight = 32;
             button.interactable = click != null &&
-                                   (_client == null || (_client.Friends.CanRequest && !_client.Friends.Busy));
+                                   (_client == null || _client.Friends.CanRequest);
         }
 
         Button MakeButton(Transform parent, string title, UnityEngine.Events.UnityAction click)

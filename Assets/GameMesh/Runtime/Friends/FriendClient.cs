@@ -58,7 +58,11 @@ namespace GameMesh.Friends
         public bool BlockedLoading => _blockLoads > 0;
         public bool ShowRetryHint { get; private set; }
         public bool PresenceHold { get; private set; }
+        public string LastErrorCode { get; private set; } = "";
+        public string LastOperationId { get; private set; } = "";
         public const int MaxSearchLength = 32;
+        public const int MaxNameChars = 16;
+        readonly HashSet<string> _busyKeys = new HashSet<string>();
 
         public void BeginPresenceHold()
         {
@@ -94,10 +98,14 @@ namespace GameMesh.Friends
             FriendCap = 0;
             RequestBadge = 0;
             _ops.Clear();
+            _busyKeys.Clear();
+            _inFlight = 0;
             _cooldownUntil = 0f;
             _nextSearchAt = 0f;
             ShowRetryHint = false;
             PresenceHold = false;
+            LastErrorCode = "";
+            LastOperationId = "";
         }
 
         public bool ShouldPoll(float now, float lastPoll, bool panelOpen)
@@ -248,6 +256,7 @@ namespace GameMesh.Friends
                 query = query.Substring(0, MaxSearchLength);
             if (query.Length == 0)
             {
+                LastErrorCode = "ERR_INVALID_ARGUMENT";
                 LastError = GameErrorCatalog.FormatUi("ERR_INVALID_ARGUMENT", "请输入角色名或 PlayerID");
                 return;
             }
@@ -281,16 +290,21 @@ namespace GameMesh.Friends
 
         public async Task ApplyAsync(ulong targetPlayerId, string exactName, CancellationToken ct)
         {
-            if (Cooling() || RejectIfClosed())
+            if (Cooling() || RejectIfClosed() || !BeginTarget("apply", targetPlayerId))
                 return;
-            Interlocked.Increment(ref _inFlight);
+            var sessionGen = _sessionGeneration;
             try
             {
                 await ApplyCoreAsync(targetPlayerId, exactName, ct).ConfigureAwait(false);
             }
+            catch (Exception ex) when (IsTransportFailure(ex))
+            {
+                if (sessionGen == _sessionGeneration)
+                    NoteTransportFailure(ex);
+            }
             finally
             {
-                Interlocked.Decrement(ref _inFlight);
+                EndTarget("apply", targetPlayerId);
             }
         }
 
@@ -321,6 +335,7 @@ namespace GameMesh.Friends
             if (code == "ERR_INCOMING_REQUEST_EXISTS")
             {
                 Tab = FriendPanelTab.Requests;
+                LastErrorCode = code;
                 LastError = GameErrorCatalog.FormatUi(code);
                 await RefreshKeepingNoticeAsync(ct, true, false).ConfigureAwait(false);
                 return;
@@ -336,22 +351,26 @@ namespace GameMesh.Friends
                 return;
             ForgetOp("apply", targetPlayerId);
             SearchRelation = FriendRelationState.FriendRelationSentPending;
-            LastNotice = body != null && body.RequestId == 0 ? "已提交" : "已发送好友申请";
-            LastError = "";
+            NoteSuccess(body != null && body.RequestId == 0 ? "已提交" : "已发送好友申请");
         }
 
         public async Task AcceptAsync(ulong requestId, CancellationToken ct)
         {
-            if (Cooling() || RejectIfClosed())
+            if (Cooling() || RejectIfClosed() || !BeginTarget("accept", requestId))
                 return;
-            Interlocked.Increment(ref _inFlight);
+            var sessionGen = _sessionGeneration;
             try
             {
                 await AcceptCoreAsync(requestId, ct).ConfigureAwait(false);
             }
+            catch (Exception ex) when (IsTransportFailure(ex))
+            {
+                if (sessionGen == _sessionGeneration)
+                    NoteTransportFailure(ex);
+            }
             finally
             {
-                Interlocked.Decrement(ref _inFlight);
+                EndTarget("accept", requestId);
             }
         }
 
@@ -383,15 +402,31 @@ namespace GameMesh.Friends
             RemoveRequest(requestId);
             if (body?.Peer != null)
                 UpsertFriend(body.Peer);
-            LastNotice = "已成为好友";
-            LastError = "";
+            NoteSuccess("已成为好友");
         }
 
         public async Task RejectAsync(ulong requestId, CancellationToken ct)
         {
-            if (RejectIfClosed())
+            if (RejectIfClosed() || !BeginTarget("reject", requestId))
                 return;
             var sessionGen = _sessionGeneration;
+            try
+            {
+                await RejectCoreAsync(requestId, sessionGen, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsTransportFailure(ex))
+            {
+                if (sessionGen == _sessionGeneration)
+                    NoteTransportFailure(ex);
+            }
+            finally
+            {
+                EndTarget("reject", requestId);
+            }
+        }
+
+        async Task RejectCoreAsync(ulong requestId, int sessionGen, CancellationToken ct)
+        {
             var rsp = await SendWriteAsync(new GameRequest
             {
                 FriendReject = new FriendRejectReq
@@ -408,15 +443,31 @@ namespace GameMesh.Friends
                 return;
             ForgetOp("reject", requestId);
             RemoveRequest(requestId);
-            LastNotice = "已拒绝申请";
-            LastError = "";
+            NoteSuccess("已拒绝申请");
         }
 
         public async Task DeleteAsync(ulong friendPlayerId, CancellationToken ct)
         {
-            if (RejectIfClosed())
+            if (RejectIfClosed() || !BeginTarget("delete", friendPlayerId))
                 return;
             var sessionGen = _sessionGeneration;
+            try
+            {
+                await DeleteCoreAsync(friendPlayerId, sessionGen, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsTransportFailure(ex))
+            {
+                if (sessionGen == _sessionGeneration)
+                    NoteTransportFailure(ex);
+            }
+            finally
+            {
+                EndTarget("delete", friendPlayerId);
+            }
+        }
+
+        async Task DeleteCoreAsync(ulong friendPlayerId, int sessionGen, CancellationToken ct)
+        {
             var rsp = await SendWriteAsync(new GameRequest
             {
                 FriendDelete = new FriendDeleteReq
@@ -433,15 +484,31 @@ namespace GameMesh.Friends
                 return;
             ForgetOp("delete", friendPlayerId);
             RemoveFriend(friendPlayerId);
-            LastNotice = "已删除好友";
-            LastError = "";
+            NoteSuccess("已删除好友");
         }
 
         public async Task BlockAsync(ulong targetPlayerId, CancellationToken ct)
         {
-            if (RejectIfClosed())
+            if (RejectIfClosed() || !BeginTarget("block", targetPlayerId))
                 return;
             var sessionGen = _sessionGeneration;
+            try
+            {
+                await BlockCoreAsync(targetPlayerId, sessionGen, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsTransportFailure(ex))
+            {
+                if (sessionGen == _sessionGeneration)
+                    NoteTransportFailure(ex);
+            }
+            finally
+            {
+                EndTarget("block", targetPlayerId);
+            }
+        }
+
+        async Task BlockCoreAsync(ulong targetPlayerId, int sessionGen, CancellationToken ct)
+        {
             var rsp = await SendWriteAsync(new GameRequest
             {
                 FriendBlock = new FriendBlockReq
@@ -465,21 +532,38 @@ namespace GameMesh.Friends
                     ? SearchHit.Clone()
                     : new FriendBrief { PlayerId = targetPlayerId };
                 Blocked.Add(brief);
+                Interlocked.Increment(ref _blockListEpoch);
             }
 
             SearchRelation = FriendRelationState.FriendRelationBlockedBySelf;
-            LastNotice = "已拉黑";
-            LastError = "";
+            NoteSuccess("已拉黑");
             await RefreshBlockedAsync(ct).ConfigureAwait(false);
             if (string.IsNullOrEmpty(LastNotice))
-                LastNotice = "已拉黑";
+                NoteSuccess("已拉黑");
         }
 
         public async Task UnblockAsync(ulong targetPlayerId, CancellationToken ct)
         {
-            if (RejectIfClosed())
+            if (RejectIfClosed() || !BeginTarget("unblock", targetPlayerId))
                 return;
             var sessionGen = _sessionGeneration;
+            try
+            {
+                await UnblockCoreAsync(targetPlayerId, sessionGen, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsTransportFailure(ex))
+            {
+                if (sessionGen == _sessionGeneration)
+                    NoteTransportFailure(ex);
+            }
+            finally
+            {
+                EndTarget("unblock", targetPlayerId);
+            }
+        }
+
+        async Task UnblockCoreAsync(ulong targetPlayerId, int sessionGen, CancellationToken ct)
+        {
             var rsp = await SendWriteAsync(new GameRequest
             {
                 FriendUnblock = new FriendUnblockReq
@@ -495,16 +579,21 @@ namespace GameMesh.Friends
             if (!await CommitAsync(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message, ct).ConfigureAwait(false))
                 return;
             ForgetOp("unblock", targetPlayerId);
+            var removedBlock = false;
             for (var i = Blocked.Count - 1; i >= 0; i--)
             {
                 if (Blocked[i].PlayerId == targetPlayerId)
+                {
                     Blocked.RemoveAt(i);
+                    removedBlock = true;
+                }
             }
 
+            if (removedBlock)
+                Interlocked.Increment(ref _blockListEpoch);
             if (SearchHit != null && SearchHit.PlayerId == targetPlayerId)
                 SearchRelation = FriendRelationState.FriendRelationNone;
-            LastNotice = "已解除拉黑";
-            LastError = "";
+            NoteSuccess("已解除拉黑");
         }
 
         public bool ApplyPush(GameResponse inner)
@@ -562,7 +651,7 @@ namespace GameMesh.Friends
 
             var clock = now ?? DateTimeOffset.UtcNow;
             var delta = clock - seen;
-            if (delta.TotalSeconds < -300 || delta.TotalDays > 36500)
+            if (delta.TotalSeconds < -300 || delta.TotalDays >= 365)
                 return "未知";
             if (delta.TotalMinutes < 1)
                 return "刚刚";
@@ -613,6 +702,7 @@ namespace GameMesh.Friends
                 {
                     Friends[i] = peer;
                     SortFriends();
+                    Interlocked.Increment(ref _friendListEpoch);
                     return;
                 }
             }
@@ -620,6 +710,7 @@ namespace GameMesh.Friends
             Friends.Add(peer);
             SortFriends();
             FriendCount = (uint)Friends.Count;
+            Interlocked.Increment(ref _friendListEpoch);
         }
 
         void RemoveFriend(ulong playerId)
@@ -631,6 +722,7 @@ namespace GameMesh.Friends
             }
 
             FriendCount = (uint)Friends.Count;
+            Interlocked.Increment(ref _friendListEpoch);
         }
 
         void UpsertRequest(FriendRequestPush push)
@@ -648,6 +740,7 @@ namespace GameMesh.Friends
                         CreatedAt = push.CreatedAt,
                         ExpireAt = push.ExpireAt
                     };
+                    Interlocked.Increment(ref _requestListEpoch);
                     return;
                 }
             }
@@ -659,6 +752,7 @@ namespace GameMesh.Friends
                 CreatedAt = push.CreatedAt,
                 ExpireAt = push.ExpireAt
             });
+            Interlocked.Increment(ref _requestListEpoch);
         }
 
         void RemoveRequest(ulong requestId)
@@ -670,6 +764,7 @@ namespace GameMesh.Friends
             }
 
             RequestBadge = Requests.Count;
+            Interlocked.Increment(ref _requestListEpoch);
         }
 
         void RemoveRequestsFrom(ulong playerId)
@@ -681,6 +776,7 @@ namespace GameMesh.Friends
             }
 
             RequestBadge = Requests.Count;
+            Interlocked.Increment(ref _requestListEpoch);
         }
 
         void ApplyPresence(FriendPresencePush push)
@@ -711,14 +807,73 @@ namespace GameMesh.Friends
             return null;
         }
 
+        static string TargetKey(string kind, ulong id)
+        {
+            return kind + ":" + id.ToString(CultureInfo.InvariantCulture);
+        }
+
+        bool BeginTarget(string kind, ulong id)
+        {
+            var key = TargetKey(kind, id);
+            if (_busyKeys.Contains(key))
+            {
+                LastError = "";
+                LastErrorCode = "";
+                ShowRetryHint = false;
+                LastNotice = "正在处理，请稍候";
+                return false;
+            }
+
+            _busyKeys.Add(key);
+            Interlocked.Increment(ref _inFlight);
+            return true;
+        }
+
+        void EndTarget(string kind, ulong id)
+        {
+            if (!_busyKeys.Remove(TargetKey(kind, id)))
+                return;
+            if (_inFlight > 0)
+                Interlocked.Decrement(ref _inFlight);
+        }
+
+        void NoteSuccess(string notice)
+        {
+            LastError = "";
+            LastErrorCode = "";
+            ShowRetryHint = false;
+            if (string.IsNullOrEmpty(notice))
+                return;
+            if (string.IsNullOrEmpty(LastNotice) || LastNotice == "正在处理，请稍候" || LastNotice == notice)
+                LastNotice = notice;
+            else if (LastNotice.IndexOf(notice, StringComparison.Ordinal) < 0)
+                LastNotice = LastNotice + "\n" + notice;
+        }
+
+        void NoteTransportFailure(Exception ex)
+        {
+            var mesh = ex as GameMeshException;
+            var code = mesh != null && !string.IsNullOrEmpty(mesh.ErrorCode)
+                ? mesh.ErrorCode
+                : GameMeshErrorCode.ClientTimeout;
+            ShowRetryHint = true;
+            LastErrorCode = code;
+            LastError = GameErrorCatalog.FormatUi(code) + "\n稍后重试";
+            GameMeshLog.Warn("friend code=" + code);
+        }
+
         string StableOp(string kind, ulong id)
         {
             var key = kind + ":" + id.ToString(CultureInfo.InvariantCulture);
             if (_ops.TryGetValue(key, out var existing) && !string.IsNullOrEmpty(existing))
+            {
+                LastOperationId = existing;
                 return existing;
+            }
             var op = kind + ":" + _session.PlayerId.ToString(CultureInfo.InvariantCulture) + ":" +
                      id.ToString(CultureInfo.InvariantCulture) + ":" + Guid.NewGuid().ToString("N");
             _ops[key] = op;
+            LastOperationId = op;
             return op;
         }
 
@@ -731,7 +886,9 @@ namespace GameMesh.Friends
         {
             if (UnityEngine.Time.unscaledTime < _cooldownUntil)
             {
-                LastError = GameErrorCatalog.FormatUi("ERR_OPERATION_TOO_FREQUENT");
+                ShowRetryHint = true;
+                LastErrorCode = "ERR_OPERATION_TOO_FREQUENT";
+                LastError = GameErrorCatalog.FormatUi("ERR_OPERATION_TOO_FREQUENT") + "\n稍后重试";
                 return true;
             }
 
@@ -770,6 +927,7 @@ namespace GameMesh.Friends
         async Task RefreshKeepingNoticeAsync(CancellationToken ct, bool requests, bool friends)
         {
             var error = LastError;
+            var errorCode = LastErrorCode;
             var notice = LastNotice;
             var retry = ShowRetryHint;
             if (requests)
@@ -777,6 +935,7 @@ namespace GameMesh.Friends
             if (friends)
                 await RefreshFriendsAsync(ct).ConfigureAwait(false);
             LastError = error;
+            LastErrorCode = errorCode;
             ShowRetryHint = retry;
             if (!string.IsNullOrEmpty(notice))
                 LastNotice = notice;
@@ -786,6 +945,7 @@ namespace GameMesh.Friends
         {
             if (CanRequest)
                 return false;
+            LastErrorCode = GameMeshErrorCode.ClientIllegalState;
             LastError = GameErrorCatalog.FormatUi(GameMeshErrorCode.ClientIllegalState, "当前未登录或连接已断开");
             return true;
         }
@@ -795,15 +955,55 @@ namespace GameMesh.Friends
             return brief == null || string.IsNullOrEmpty(brief.Name);
         }
 
+        public static string ClipText(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length <= MaxNameChars)
+                return value ?? "";
+            return value.Substring(0, MaxNameChars) + "…";
+        }
+
         public static string DisplayName(FriendBrief brief, bool blockedPlaceholder)
         {
             if (brief != null && !string.IsNullOrEmpty(brief.Name))
-                return brief.Name;
+                return ClipText(brief.Name);
             if (blockedPlaceholder)
                 return "加载中";
             if (brief != null && brief.PlayerId != 0)
                 return "#" + brief.PlayerId.ToString(CultureInfo.InvariantCulture);
             return "玩家";
+        }
+
+        public static string FormatFriendLine(FriendBrief row)
+        {
+            if (row == null)
+                return "";
+            var text = (row.Online ? "在线" : "离线") + "  " + DisplayName(row, false) +
+                       "  Lv." + row.Level.ToString(CultureInfo.InvariantCulture);
+            if (row.Profession != 0)
+                text += "  职业 " + row.Profession.ToString(CultureInfo.InvariantCulture);
+            if (!row.Online)
+                text += "  " + FormatLastOnline(row.LastOnlineTime);
+            if (!string.IsNullOrEmpty(row.MapName))
+                text += "  " + ClipText(row.MapName);
+            if (!string.IsNullOrEmpty(row.Remark))
+                text += "  备注 " + ClipText(row.Remark);
+            return text;
+        }
+
+        public string DiagnosticsText()
+        {
+            var op = LastOperationId ?? "";
+            if (op.Length > 8)
+                op = op.Substring(0, 8);
+            return "code=" + (LastErrorCode ?? "") +
+                   " retry=" + (ShowRetryHint ? "1" : "0") +
+                   " hold=" + (PresenceHold ? "1" : "0") +
+                   " load=" + (FriendsLoading ? "1" : "0") + (RequestsLoading ? "1" : "0") +
+                   (BlockedLoading ? "1" : "0") +
+                   " n=" + Friends.Count.ToString(CultureInfo.InvariantCulture) + "/" +
+                   Requests.Count.ToString(CultureInfo.InvariantCulture) + "/" +
+                   Blocked.Count.ToString(CultureInfo.InvariantCulture) +
+                   " op=" + op;
         }
 
         async Task<GameResponse> SendWriteAsync(GameRequest req, int sessionGen, CancellationToken ct)
@@ -840,6 +1040,7 @@ namespace GameMesh.Friends
             if (rsp != null && rsp.Ok && bodyOk)
             {
                 ShowRetryHint = false;
+                LastErrorCode = "";
                 return true;
             }
 
@@ -847,6 +1048,9 @@ namespace GameMesh.Friends
             if (!retryable && !string.IsNullOrEmpty(code))
                 retryable = GameErrorCatalog.Resolve(code).Retryable;
             ShowRetryHint = retryable;
+            LastErrorCode = string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code;
+            if (!string.IsNullOrEmpty(LastErrorCode))
+                GameMeshLog.Warn("friend code=" + LastErrorCode);
             if (code == "ERR_RELATION_CONFLICT" || code == "ERR_DEPENDENCY_UNAVAILABLE" ||
                 code == "ERR_OPERATION_TOO_FREQUENT")
                 LastError = GameErrorCatalog.FormatUi(code, message);

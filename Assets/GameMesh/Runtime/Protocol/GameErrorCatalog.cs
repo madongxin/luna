@@ -164,7 +164,7 @@ namespace GameMesh.Protocol
             ["ERR_RELATION_CONFLICT"] = new GameErrorInfo("ERR_RELATION_CONFLICT", "好友关系冲突，请刷新后再试", true,
                 "关系状态变了。请刷新好友/申请列表后再操作。"),
             ["ERR_WRONG_ROUTE"] = new GameErrorInfo("ERR_WRONG_ROUTE", "服务暂不可用，请稍后重试", true,
-                "好友请求落到了错误的服务。请稍后重试，不要改协议字段。"),
+                "请稍后重试。若反复出现，重新登录后再试。"),
             ["ERR_COMMAND_FORBIDDEN"] = new GameErrorInfo("ERR_COMMAND_FORBIDDEN", "该命令不被允许", false,
                 "这条公网命令被策略拒绝。不要重试同一条非法命令。"),
             ["ERR_INTERNAL"] = new GameErrorInfo("ERR_INTERNAL", "服务器内部错误", true,
