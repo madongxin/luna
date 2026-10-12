@@ -1,6 +1,7 @@
 using GameMesh.Bootstrap;
 using GameMesh.Friends;
 using GameMesh.LoadTest;
+using GameMesh.Mail;
 using GameMesh.Map;
 using GameMesh.Network;
 using GameMesh.Player;
@@ -19,9 +20,8 @@ namespace GameMesh.UI
         bool _showDebug;
         bool _panelOpen = true;
         ConnectionState _lastState = ConnectionState.Disconnected;
-        string _mailTitle = "hello";
-        string _mailBody = "from luna";
-        string _peerId = "";
+        string _mailCategory = "";
+        ulong _mailDeleteId;
         string _friendQuery = "";
         string _friendConfirm = "";
         string _loadCount = "100";
@@ -812,44 +812,81 @@ namespace GameMesh.UI
         {
             GUILayout.Space(12);
             GUILayout.Label("邮箱", _section);
-            _showMail = GUILayout.Toggle(_showMail, _showMail ? "  邮箱面板已打开" : "  点击打开邮箱", _btnStyle, GUILayout.Height(40));
+            var badge = client.Mail.Page.HasBadge ? "  (" + client.Mail.Page.UnreadTotal + ")" : "";
+            _showMail = GUILayout.Toggle(_showMail, _showMail ? "  邮箱面板已打开" : "  点击打开邮箱" + badge, _btnStyle, GUILayout.Height(40));
             client.Mail.PanelOpen = _showMail;
             if (!_showMail)
                 return;
 
             var page = client.Mail.Page;
-            GUILayout.Label("未读  " + page.UnreadTotal + "    列表  " + page.Mails.Count, _label);
-            if (GUILayout.Button("刷新邮箱", _btnStyle, GUILayout.Height(40)))
+            var capacity = page.Summary == null ? "" : "    " + page.Summary.CurrentCount + "/" + page.Summary.MaxCapacity;
+            GUILayout.Label("未读  " + page.UnreadTotal + "    未领取  " + page.Unclaimed + "    列表  " + page.Mails.Count + capacity, _label);
+            GUILayout.BeginHorizontal();
+            if (MailTab("全部", ""))
+                _mailCategory = "";
+            if (MailTab("系统", "SYSTEM"))
+                _mailCategory = "SYSTEM";
+            if (MailTab("活动", "ACTIVITY"))
+                _mailCategory = "ACTIVITY";
+            GUILayout.EndHorizontal();
+            client.Mail.Category = _mailCategory;
+            GUILayout.BeginHorizontal();
+            client.Mail.FilterUnread = GUILayout.Toggle(client.Mail.FilterUnread, "未读", _hint);
+            client.Mail.FilterUnclaimed = GUILayout.Toggle(client.Mail.FilterUnclaimed, "未领取", _hint);
+            client.Mail.FilterExpiring = GUILayout.Toggle(client.Mail.FilterExpiring, "即将过期", _hint);
+            client.Mail.FilterFavorite = GUILayout.Toggle(client.Mail.FilterFavorite, "收藏", _hint);
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            if (GUILayout.Button("刷新", _btnStyle, GUILayout.Height(36)))
                 _ = client.Mail.RefreshAsync(default);
-
-            _peerId = Field("收件人ID", _peerId);
-            _mailTitle = Field("标题", _mailTitle);
-            _mailBody = Field("正文", _mailBody);
-            if (GUILayout.Button("发送普通邮件（无附件）", _loginStyle, GUILayout.Height(40)))
-            {
-                ulong.TryParse(_peerId, out var to);
-                _ = SendMail(client, to);
-            }
+            if (GUILayout.Button("一键领取", _btnStyle, GUILayout.Height(36)))
+                _ = client.Mail.BatchClaimAsync(default);
+            if (GUILayout.Button("批量已读", _btnStyle, GUILayout.Height(36)))
+                _ = client.Mail.BatchReadAsync(default);
+            GUILayout.EndHorizontal();
 
             _mailScroll = GUILayout.BeginScrollView(_mailScroll, GUILayout.Height(180));
             if (page.Mails.Count == 0)
-                GUILayout.Label("还没有邮件。登录后点「刷新邮箱」。", _hint);
+                GUILayout.Label("还没有邮件。", _hint);
+            var now = client.Mail.EstimatedServerUtc();
             foreach (var mail in page.Mails)
             {
-                if (GUILayout.Button(mail.MailId + "  " + mail.Title + "  ← " + mail.SenderName, _btnStyle,
+                var flags = (MailClient.IsUnread(mail) ? "未读 " : "") +
+                            (mail.HasAttachment ? "附件 " : "") +
+                            (mail.IsFavorite ? "收藏 " : "") +
+                            MailClient.ExpireLabel(mail.ExpireAt, now);
+                if (GUILayout.Button((mail.Category ?? "") + "  " + (mail.SenderName ?? "") + "  " + mail.Title + "  " + flags, _btnStyle,
                         GUILayout.Height(36)))
-                    _ = client.Mail.GetAsync(mail.MailId, default);
+                    _ = client.Mail.OpenAsync(mail.MailId, default);
             }
 
             GUILayout.EndScrollView();
-            if (page.Selected != null)
+            var detail = page.Selected;
+            if (detail?.Brief != null)
             {
-                GUILayout.Label("正文  " + page.Selected.Brief?.Title, _section);
-                GUILayout.Label(page.Selected.Body ?? "", _label);
+                GUILayout.Label(detail.Brief.Title ?? "", _section);
+                GUILayout.Label(MailClient.PlainText(detail.Body), _label);
+                for (var i = 0; i < detail.Attachments.Count; i++)
+                    GUILayout.Label(MailClient.AttachmentLine(detail.Attachments[i]), _hint);
+                GUILayout.BeginHorizontal();
+                if (MailClient.Allows(detail, "claim") &&
+                    GUILayout.Button("领取", _btnStyle, GUILayout.Height(36)))
+                    _ = client.Mail.ClaimAsync(detail.Brief.MailId, default);
+                if (MailClient.Allows(detail, "favorite") &&
+                    GUILayout.Button(detail.Brief.IsFavorite ? "取消收藏" : "收藏", _btnStyle, GUILayout.Height(36)))
+                    _ = client.Mail.FavoriteAsync(detail.Brief.MailId, !detail.Brief.IsFavorite, default);
+                if (MailClient.Allows(detail, "delete") &&
+                    ConfirmMailDelete(detail.Brief.MailId))
+                    _ = client.Mail.BatchDeleteAsync(new[] { detail.Brief.MailId }, default);
+                GUILayout.EndHorizontal();
             }
 
+            if (!string.IsNullOrEmpty(page.LastNotice))
+                GUILayout.Label(page.LastNotice, _hint);
             if (!string.IsNullOrEmpty(page.LastError))
                 GUILayout.Label(page.LastError, _statusErr);
+            for (var i = 0; i < page.ClaimFailures.Count; i++)
+                GUILayout.Label(page.ClaimFailures[i], _statusErr);
 
             _showDebug = GUILayout.Toggle(_showDebug, "显示调试信息", _hint);
             if (_showDebug)
@@ -859,11 +896,24 @@ namespace GameMesh.UI
             }
         }
 
-        async System.Threading.Tasks.Task SendMail(GameMeshClient client, ulong to)
+        bool MailTab(string title, string category)
         {
-            var err = await client.Mail.SendAsync(to, _mailTitle, _mailBody, default);
-            if (!string.IsNullOrEmpty(err))
-                client.Mail.Page.LastError = err;
+            return GUILayout.Button(TabLabel(title, _mailCategory == category), _btnStyle, GUILayout.Height(32));
+        }
+
+        bool ConfirmMailDelete(ulong mailId)
+        {
+            var label = _mailDeleteId == mailId ? "确认删除" : "删除";
+            if (!GUILayout.Button(label, _btnStyle, GUILayout.Height(36)))
+                return false;
+            if (_mailDeleteId != mailId)
+            {
+                _mailDeleteId = mailId;
+                return false;
+            }
+
+            _mailDeleteId = 0;
+            return true;
         }
 
         void ApplyCursor()

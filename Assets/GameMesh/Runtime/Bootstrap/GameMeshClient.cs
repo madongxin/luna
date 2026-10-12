@@ -401,6 +401,7 @@ namespace GameMesh.Bootstrap
                 {
                     WriteLiveEnter("LOGIN_SKIP already " + Connection.State + " gen=" + Session.Generation);
                     _ = Safe(Friends.RefreshAfterLoginAsync(_lifetime.Token));
+                    _ = Safe(Mail.RefreshAsync(_lifetime.Token));
                     await TryEnterWorldAfterLoginAsync().ConfigureAwait(true);
                     return;
                 }
@@ -459,6 +460,7 @@ namespace GameMesh.Bootstrap
                     Connection.SetLogicalState(ConnectionState.Authenticated);
                 GameMeshLog.Info($"login ok {Session.DebugSummary()}");
                 _ = Safe(Friends.RefreshAfterLoginAsync(_lifetime.Token));
+                _ = Safe(Mail.RefreshAsync(_lifetime.Token));
                 if (SceneManager.GetActiveScene().name != Config.mainSceneName)
                     SceneManager.LoadScene(Config.mainSceneName);
                 else if (alreadyOnMap)
@@ -2079,6 +2081,8 @@ namespace GameMesh.Bootstrap
                         Reconnect.EndFailure();
                         if (Session.HasIdentity && Friends != null)
                             _ = Safe(Friends.RefreshAfterLoginAsync(_lifetime.Token));
+                        if (Session.HasIdentity && Mail != null)
+                            _ = Safe(Mail.RefreshAsync(_lifetime.Token));
                         return;
                     }
                 }
@@ -2097,7 +2101,11 @@ namespace GameMesh.Bootstrap
                 ReconnectGaveUp = false;
                 ClearReconnectStatus();
                 if (Session.HasIdentity)
+                {
                     _ = Safe(Friends.RefreshAfterLoginAsync(_lifetime.Token));
+                    if (Mail != null)
+                        _ = Safe(Mail.RefreshAsync(_lifetime.Token));
+                }
             }
             catch (Exception ex)
             {
