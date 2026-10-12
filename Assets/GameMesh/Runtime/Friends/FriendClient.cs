@@ -229,7 +229,7 @@ namespace GameMesh.Friends
                             PageSize = FriendPageSize
                         }
                     }, ct).ConfigureAwait(false);
-                    if (DropStaleList(sessionGen, epoch, _friendListEpoch))
+                    if (ct.IsCancellationRequested || DropStaleList(sessionGen, epoch, _friendListEpoch))
                         return;
                     var body = rsp.FriendList;
                     if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
@@ -268,7 +268,7 @@ namespace GameMesh.Friends
                     }
                 }
 
-                if (DropStaleList(sessionGen, epoch, _friendListEpoch))
+                if (ct.IsCancellationRequested || DropStaleList(sessionGen, epoch, _friendListEpoch))
                     return;
                 Friends.Clear();
                 Friends.AddRange(acc);
@@ -354,7 +354,7 @@ namespace GameMesh.Friends
                             PageSize = RequestPageSize
                         }
                     }, ct).ConfigureAwait(false);
-                    if (DropStaleList(sessionGen, epoch, _requestListEpoch))
+                    if (ct.IsCancellationRequested || DropStaleList(sessionGen, epoch, _requestListEpoch))
                         return;
                     var body = rsp.FriendRequestList;
                     if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
@@ -389,7 +389,7 @@ namespace GameMesh.Friends
                     }
                 }
 
-                if (DropStaleList(sessionGen, epoch, _requestListEpoch))
+                if (ct.IsCancellationRequested || DropStaleList(sessionGen, epoch, _requestListEpoch))
                     return;
                 Requests.Clear();
                 Requests.AddRange(acc);
@@ -471,7 +471,7 @@ namespace GameMesh.Friends
                             PageSize = FriendPageSize
                         }
                     }, ct).ConfigureAwait(false);
-                    if (DropStaleList(sessionGen, epoch, _blockListEpoch))
+                    if (ct.IsCancellationRequested || DropStaleList(sessionGen, epoch, _blockListEpoch))
                         return;
                     var body = rsp.FriendBlockList;
                     if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
@@ -506,7 +506,7 @@ namespace GameMesh.Friends
                     }
                 }
 
-                if (DropStaleList(sessionGen, epoch, _blockListEpoch))
+                if (ct.IsCancellationRequested || DropStaleList(sessionGen, epoch, _blockListEpoch))
                     return;
                 Blocked.Clear();
                 Blocked.AddRange(acc);
@@ -541,11 +541,26 @@ namespace GameMesh.Friends
 
             var req = new FriendSearchReq { PlayerId = _session.PlayerId };
             if (ulong.TryParse(query, NumberStyles.Integer, CultureInfo.InvariantCulture, out var id) && id != 0)
+            {
+                if (_session != null && id == _session.PlayerId)
+                {
+                    SearchHit = null;
+                    SearchRelation = FriendRelationState.FriendRelationNone;
+                    LastErrorCode = "ERR_CANNOT_ADD_SELF";
+                    LastError = GameErrorCatalog.FormatUi("ERR_CANNOT_ADD_SELF");
+                    ShowRetryHint = false;
+                    return;
+                }
+
                 req.TargetPlayerId = id;
+            }
             else
                 req.ExactName = query;
 
+            var sessionGen = _sessionGeneration;
             var rsp = await _request(new GameRequest { FriendSearch = req }, ct).ConfigureAwait(false);
+            if (sessionGen != _sessionGeneration)
+                return;
             var body = rsp.FriendSearch;
             if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
             {
@@ -564,6 +579,14 @@ namespace GameMesh.Friends
 
         public async Task ApplyAsync(ulong targetPlayerId, string exactName, CancellationToken ct)
         {
+            if (_session != null && targetPlayerId == _session.PlayerId)
+            {
+                LastErrorCode = "ERR_CANNOT_ADD_SELF";
+                LastError = GameErrorCatalog.FormatUi("ERR_CANNOT_ADD_SELF");
+                ShowRetryHint = false;
+                return;
+            }
+
             if (RejectIfClosed() || !BeginTarget("apply", targetPlayerId))
                 return;
             var sessionGen = _sessionGeneration;

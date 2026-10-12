@@ -627,6 +627,63 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void Search_LateResponseAfterClear_DoesNotWriteHit()
+        {
+            FriendClient friends = null;
+            friends = Client((req, ct) =>
+            {
+                friends.Clear();
+                return Task.FromResult(new GameResponse
+                {
+                    Ok = true,
+                    FriendSearch = new FriendSearchRsp
+                    {
+                        Ok = true,
+                        Player = new FriendBrief { PlayerId = 6, Name = "late" },
+                        Relation = FriendRelationState.FriendRelationFriend
+                    }
+                });
+            });
+            friends.SearchAsync("Ann", CancellationToken.None).GetAwaiter().GetResult();
+            Assert.IsNull(friends.SearchHit);
+            Assert.AreEqual(FriendRelationState.FriendRelationNone, friends.SearchRelation);
+        }
+
+        [Test]
+        public void ApplyAndSearch_SelfDoesNotSend()
+        {
+            var sends = 0;
+            var friends = Client((req, ct) =>
+            {
+                sends++;
+                return Task.FromResult(new GameResponse { Ok = true });
+            });
+            friends.ApplyAsync(8, "me", CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(0, sends);
+            StringAssert.Contains("不能添加自己", friends.LastError);
+            friends.SearchAsync("8", CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(0, sends);
+            StringAssert.Contains("不能添加自己", friends.LastError);
+        }
+
+        [Test]
+        public void CancelledFriendRefresh_KeepsPreviousList()
+        {
+            var cts = new CancellationTokenSource();
+            var friends = Client((req, ct) =>
+            {
+                cts.Cancel();
+                var body = new FriendListRsp { Ok = true };
+                body.Friends.Add(new FriendBrief { PlayerId = 2, Name = "new" });
+                return Task.FromResult(new GameResponse { Ok = true, FriendList = body });
+            });
+            friends.Friends.Add(new FriendBrief { PlayerId = 9, Name = "kept" });
+            friends.RefreshFriendsAsync(cts.Token).GetAwaiter().GetResult();
+            Assert.AreEqual(1, friends.Friends.Count);
+            Assert.AreEqual(9UL, friends.Friends[0].PlayerId);
+        }
+
+        [Test]
         public void Search_DebouncesAndAcceptsOddCharacters()
         {
             var sends = 0;
