@@ -1185,6 +1185,80 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void Apply_ShowsSendingUntilTheResponseArrives()
+        {
+            FriendClient friends = null;
+            friends = Client((req, ct) =>
+            {
+                Assert.AreEqual("发送中", friends.LastNotice);
+                Assert.AreEqual("", friends.LastError);
+                return Task.FromResult(new GameResponse
+                {
+                    Ok = true,
+                    FriendApply = new FriendApplyRsp { Ok = true, RequestId = 0 }
+                });
+            });
+            friends.ApplyAsync(3, "Ann", CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual("已提交", friends.LastNotice);
+        }
+
+        [Test]
+        public void StalePresence_DoesNotRollBackLastOnline()
+        {
+            var friends = Client((req, ct) => Task.FromResult(new GameResponse { Ok = true }));
+            friends.Friends.Add(new FriendBrief
+            {
+                PlayerId = 3,
+                Name = "Ann",
+                Online = true,
+                LastOnlineTime = 200
+            });
+            friends.ApplyPush(new GameResponse
+            {
+                FriendPresencePush = new FriendPresencePush
+                {
+                    FriendPlayerId = 3,
+                    Online = false,
+                    LastOnlineTime = 100
+                }
+            });
+            Assert.IsTrue(friends.Friends[0].Online);
+            Assert.AreEqual(200UL, friends.Friends[0].LastOnlineTime);
+            friends.ApplyPush(new GameResponse
+            {
+                FriendPresencePush = new FriendPresencePush
+                {
+                    FriendPlayerId = 3,
+                    Online = false,
+                    LastOnlineTime = 0
+                }
+            });
+            Assert.IsTrue(friends.Friends[0].Online);
+            Assert.AreEqual(200UL, friends.Friends[0].LastOnlineTime);
+            friends.ApplyPush(new GameResponse
+            {
+                FriendPresencePush = new FriendPresencePush
+                {
+                    FriendPlayerId = 3,
+                    Online = false,
+                    LastOnlineTime = 240
+                }
+            });
+            Assert.IsFalse(friends.Friends[0].Online);
+            Assert.AreEqual(240UL, friends.Friends[0].LastOnlineTime);
+        }
+
+        [Test]
+        public void UnblockConfirm_UsesDistinctCopy()
+        {
+            var friends = Client((req, ct) => Task.FromResult(new GameResponse { Ok = true }));
+            friends.Tab = FriendPanelTab.Blocked;
+            var labels = FriendScreen.CollectLabels(friends, 8, false, true);
+            StringAssert.Contains("确认解除拉黑 #8", string.Join("\n", labels.ToArray()));
+            StringAssert.DoesNotContain("确认删除好友", string.Join("\n", labels.ToArray()));
+        }
+
+        [Test]
         public void RemovedFriend_LatePresenceDoesNotComeBack()
         {
             var friends = Client((req, ct) => Task.FromResult(new GameResponse { Ok = true }));

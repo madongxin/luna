@@ -582,6 +582,10 @@ namespace GameMesh.Friends
                 return;
             }
 
+            LastError = "";
+            LastErrorCode = "";
+            ShowRetryHint = false;
+            LastNotice = "发送中";
             var sessionGen = _sessionGeneration;
             var rsp = await SendWriteAsync(new GameRequest
             {
@@ -1158,9 +1162,16 @@ namespace GameMesh.Friends
             {
                 if (Friends[i].PlayerId != push.FriendPlayerId)
                     continue;
+                var current = Friends[i].LastOnlineTime;
+                var next = push.LastOnlineTime;
+                if (current > 0 && (next == 0 || next < current))
+                    return;
+                if (Friends[i].Online == push.Online && current == next)
+                    return;
                 var copy = Friends[i].Clone();
                 copy.Online = push.Online;
-                copy.LastOnlineTime = push.LastOnlineTime;
+                if (next > 0)
+                    copy.LastOnlineTime = next;
                 Friends[i] = copy;
                 SortFriends();
                 return;
@@ -1215,7 +1226,8 @@ namespace GameMesh.Friends
             ShowRetryHint = false;
             if (string.IsNullOrEmpty(notice))
                 return;
-            if (string.IsNullOrEmpty(LastNotice) || LastNotice == "正在处理，请稍候" || LastNotice == notice)
+            if (string.IsNullOrEmpty(LastNotice) || LastNotice == "正在处理，请稍候" ||
+                LastNotice == "发送中" || LastNotice == notice)
                 LastNotice = notice;
             else if (LastNotice.IndexOf(notice, StringComparison.Ordinal) < 0)
                 LastNotice = LastNotice + "\n" + notice;

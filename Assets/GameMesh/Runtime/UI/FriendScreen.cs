@@ -32,6 +32,7 @@ namespace GameMesh.UI
         string _rowShape = "";
         ulong _confirmId;
         bool _confirmBlock;
+        bool _confirmUnblock;
         bool _open;
         Text _diag;
         bool _diagOpen;
@@ -310,7 +311,8 @@ namespace GameMesh.UI
             return text;
         }
 
-        public static List<string> CollectLabels(FriendClient friends, ulong confirmId, bool confirmBlock)
+        public static List<string> CollectLabels(FriendClient friends, ulong confirmId, bool confirmBlock,
+            bool confirmUnblock = false)
         {
             var labels = new List<string>();
             if (friends == null)
@@ -318,7 +320,12 @@ namespace GameMesh.UI
             if (friends.SearchHit != null)
                 labels.Add(SearchLine(friends.SearchHit, friends.SearchRelation));
             if (confirmId != 0)
-                labels.Add(confirmBlock ? "确认拉黑 #" + confirmId + "？" : "确认删除好友 #" + confirmId + "？");
+            {
+                var ask = confirmUnblock
+                    ? "确认解除拉黑 #" + confirmId + "？"
+                    : (confirmBlock ? "确认拉黑 #" + confirmId + "？" : "确认删除好友 #" + confirmId + "？");
+                labels.Add(ask);
+            }
             if (friends.Tab == FriendPanelTab.Friends)
             {
                 if (friends.Friends.Count == 0)
@@ -360,7 +367,7 @@ namespace GameMesh.UI
 
         bool TryRefreshLabels(FriendClient friends)
         {
-            var labels = CollectLabels(friends, _confirmId, _confirmBlock);
+            var labels = CollectLabels(friends, _confirmId, _confirmBlock, _confirmUnblock);
 
             var seen = 0;
             for (var i = 0; i < _rows.childCount; i++)
@@ -447,11 +454,7 @@ namespace GameMesh.UI
                     AddLine(name + "  #" + row.PlayerId);
                     var id = row.PlayerId;
                     var actions = AddRow();
-                    AddSmall(actions, "解除拉黑", () =>
-                    {
-                        if (friends.CanRequest)
-                            _ = friends.UnblockAsync(id, default);
-                    });
+                    AddSmall(actions, "解除拉黑", () => BeginConfirm(id, false, true));
                 }
             }
 
@@ -501,25 +504,32 @@ namespace GameMesh.UI
             }
         }
 
-        void BeginConfirm(ulong playerId, bool block)
+        void BeginConfirm(ulong playerId, bool block, bool unblock = false)
         {
             _confirmId = playerId;
-            _confirmBlock = block;
+            _confirmBlock = block && !unblock;
+            _confirmUnblock = unblock;
             _signature = 0;
         }
 
         void AddConfirmRow(FriendClient friends)
         {
-            AddLine(_confirmBlock ? "确认拉黑 #" + _confirmId + "？" : "确认删除好友 #" + _confirmId + "？");
+            AddLine(_confirmUnblock
+                ? "确认解除拉黑 #" + _confirmId + "？"
+                : (_confirmBlock ? "确认拉黑 #" + _confirmId + "？" : "确认删除好友 #" + _confirmId + "？"));
             var id = _confirmId;
             var block = _confirmBlock;
+            var unblock = _confirmUnblock;
             var actions = AddRow();
             AddSmall(actions, "确认", () =>
             {
                 _confirmId = 0;
+                _confirmUnblock = false;
                 if (!friends.CanRequest)
                     return;
-                if (block)
+                if (unblock)
+                    _ = friends.UnblockAsync(id, default);
+                else if (block)
                     _ = friends.BlockAsync(id, default);
                 else
                     _ = friends.DeleteAsync(id, default);
@@ -527,6 +537,7 @@ namespace GameMesh.UI
             AddSmall(actions, "取消", () =>
             {
                 _confirmId = 0;
+                _confirmUnblock = false;
                 _signature = 0;
             });
         }
@@ -579,7 +590,7 @@ namespace GameMesh.UI
                         friends.Blocked.Count + friends.RequestBadge + (friends.Busy ? 7 : 0) +
                         (friends.FriendHasMore ? 11 : 0) + (friends.RequestHasMore ? 13 : 0) +
                         (friends.BlockHasMore ? 17 : 0) + (friends.DataStale ? 19 : 0) +
-                        (int)_confirmId + (_confirmBlock ? 3 : 0);
+                        (int)_confirmId + (_confirmBlock ? 3 : 0) + (_confirmUnblock ? 5 : 0);
                 h = h * 31 + (friends.FriendListError ?? "").GetHashCode();
                 h = h * 31 + (friends.RequestListError ?? "").GetHashCode();
                 h = h * 31 + (friends.BlockListError ?? "").GetHashCode();

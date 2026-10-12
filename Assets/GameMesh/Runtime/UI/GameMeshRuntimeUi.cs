@@ -23,6 +23,7 @@ namespace GameMesh.UI
         string _mailBody = "from luna";
         string _peerId = "";
         string _friendQuery = "";
+        string _friendConfirm = "";
         string _loadCount = "100";
         string _loadMinutes = "5";
         string _loadStaggerMs = "40";
@@ -732,9 +733,9 @@ namespace GameMesh.UI
                     map + remark,
                     _label);
                 GUI.enabled = loggedIn;
-                if (GUILayout.Button("删除", _btnStyle, GUILayout.Width(72), GUILayout.Height(32)))
+                if (ConfirmButton("删除", "delete", f.PlayerId, _btnStyle))
                     _ = friends.DeleteAsync(f.PlayerId, default);
-                if (GUILayout.Button("拉黑", _logoutStyle, GUILayout.Width(72), GUILayout.Height(32)))
+                if (ConfirmButton("拉黑", "block", f.PlayerId, _logoutStyle))
                     _ = friends.BlockAsync(f.PlayerId, default);
                 GUI.enabled = true;
                 GUILayout.EndHorizontal();
@@ -778,11 +779,28 @@ namespace GameMesh.UI
                 GUILayout.BeginHorizontal();
                 GUILayout.Label(FriendClient.DisplayName(b, true) + "  #" + b.PlayerId, _label);
                 GUI.enabled = loggedIn;
-                if (GUILayout.Button("解除", _loginStyle, GUILayout.Width(88), GUILayout.Height(32)))
+                if (ConfirmButton("解除", "unblock", b.PlayerId, _loginStyle))
                     _ = friends.UnblockAsync(b.PlayerId, default);
                 GUI.enabled = true;
                 GUILayout.EndHorizontal();
             }
+        }
+
+        bool ConfirmButton(string title, string kind, ulong playerId, GUIStyle style)
+        {
+            var key = kind + ":" + playerId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var label = _friendConfirm == key ? "确认" : title;
+            var width = title.Length > 2 ? 88f : 72f;
+            if (!GUILayout.Button(label, style, GUILayout.Width(width), GUILayout.Height(32)))
+                return false;
+            if (_friendConfirm != key)
+            {
+                _friendConfirm = key;
+                return false;
+            }
+
+            _friendConfirm = "";
+            return true;
         }
 
         static string TabLabel(string text, bool on)
