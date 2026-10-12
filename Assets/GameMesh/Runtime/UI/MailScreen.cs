@@ -1,6 +1,7 @@
 using System.Globalization;
 using GameMesh.Bootstrap;
 using GameMesh.Mail;
+using GameMesh.Network;
 using GameMesh.Protocol;
 using UnityEngine;
 using UnityEngine.EventSystems;
@@ -292,13 +293,15 @@ namespace GameMesh.UI
             var status = !string.IsNullOrEmpty(page.LastError) ? page.LastError : page.LastNotice ?? "";
             if (page.ClaimFailures.Count > 0 && string.IsNullOrEmpty(status))
                 status = page.ClaimFailures[0];
+            if (_client.Connection != null && _client.Connection.State == ConnectionState.Disconnected)
+                status = string.IsNullOrEmpty(status) ? "网络断开" : "网络断开\n" + status;
             _status.text = status;
 
             for (var i = _rows.childCount - 1; i >= 0; i--)
                 Destroy(_rows.GetChild(i).gameObject);
             if (page.Mails.Count == 0)
             {
-                AddLine(_rows, "还没有邮件。");
+                AddLine(_rows, mail.Loading ? "加载中" : "还没有邮件。");
             }
             else
             {
@@ -309,7 +312,9 @@ namespace GameMesh.UI
                     if (brief == null)
                         continue;
                     var id = brief.MailId;
-                    var flags = (MailClient.IsUnread(brief) ? "未读 " : "") +
+                    var sent = MailClient.SentLabel(brief.SentAt);
+                    var flags = (sent.Length > 0 ? sent + " " : "") +
+                                (MailClient.IsUnread(brief) ? "未读 " : "") +
                                 (brief.HasAttachment ? "附件 " : "") +
                                 (brief.IsFavorite ? "收藏 " : "") +
                                 MailClient.ExpireLabel(brief.ExpireAt, now);
@@ -385,7 +390,8 @@ namespace GameMesh.UI
             var page = mail.Page;
             unchecked
             {
-                var h = page.Mails.Count * 17 + page.UnreadTotal * 13 + page.Unclaimed + page.ClaimFailures.Count;
+                var h = page.Mails.Count * 17 + page.UnreadTotal * 13 + page.Unclaimed + page.ClaimFailures.Count +
+                        (mail.Loading ? 23 : 0);
                 h = h * 31 + (int)page.MailboxVersion;
                 h = h * 31 + (mail.Category ?? "").GetHashCode();
                 h = h * 31 + (mail.FilterUnread ? 1 : 0) + (mail.FilterUnclaimed ? 2 : 0) +

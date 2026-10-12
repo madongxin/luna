@@ -54,6 +54,7 @@ namespace GameMesh.Mail
         public float PollIntervalSeconds = 10f;
         public float DebounceSeconds = 0.4f;
         public bool PanelOpen;
+        public bool Loading { get; private set; }
 
         public MailClient(GameSession session, Func<GameRequest, CancellationToken, Task<GameResponse>> request)
         {
@@ -83,6 +84,7 @@ namespace GameMesh.Mail
             _busy.Clear();
             _debounceUntil = 0f;
             _serverMarkUnscaled = 0f;
+            Loading = false;
         }
 
         public void NotifyMailboxChanged(float now)
@@ -106,11 +108,14 @@ namespace GameMesh.Mail
         public async Task RefreshAsync(CancellationToken ct)
         {
             var gen = Interlocked.Increment(ref _generation);
+            Loading = true;
             var category = Category ?? "";
             var unread = FilterUnread;
             var unclaimed = FilterUnclaimed;
             var favorite = FilterFavorite;
             var expiring = FilterExpiring;
+            try
+            {
             var summary = await _request(new GameRequest
             {
                 MailboxSummary = new MailboxSummaryReq { PlayerId = _session.PlayerId }
@@ -165,8 +170,6 @@ namespace GameMesh.Mail
                     return;
                 }
 
-                if (body.MailboxVersion > 0 && Page.MailboxVersion > 0 && body.MailboxVersion < Page.MailboxVersion)
-                    return;
                 NoteVersion(body.MailboxVersion, body.ServerTimeUtc);
                 var next = body.NextCursor ?? "";
                 if (body.Mails.Count == 0 && next.Length > 0)
@@ -204,6 +207,12 @@ namespace GameMesh.Mail
             Page.Mails.AddRange(acc);
             Page.NextCursor = cursor;
             Page.LastError = "";
+            }
+            finally
+            {
+                if (gen == _generation)
+                    Loading = false;
+            }
         }
 
         public async Task<MailDetail> GetAsync(ulong mailId, CancellationToken ct)
@@ -222,8 +231,6 @@ namespace GameMesh.Mail
                 return null;
             }
 
-            if (body.MailboxVersion > 0 && Page.MailboxVersion > 0 && body.MailboxVersion < Page.MailboxVersion)
-                return Page.Selected;
             NoteVersion(body.MailboxVersion, body.ServerTimeUtc);
             Page.Selected = body.Mail;
             Page.LastError = "";
@@ -335,6 +342,9 @@ namespace GameMesh.Mail
                     ApplyClaimed(mailId, result?.AttachmentState);
                     Page.LastNotice = "已领取";
                     Page.LastError = "";
+                    await RefreshAsync(ct).ConfigureAwait(false);
+                    if (gen == _generation || Page.LastNotice.Length == 0)
+                        Page.LastNotice = "已领取";
                     return;
                 }
 
@@ -365,34 +375,36 @@ namespace GameMesh.Mail
             var gen = _generation;
             try
             {
-                var req = new MailBatchClaimReq
-                {
-                    PlayerId = _session.PlayerId,
-                    IdempotencyKeyPrefix = Stable("batch-claim", 0)
-                };
-                for (var i = 0; i < ids.Count; i++)
-                    req.MailIds.Add(ids[i]);
-                var rsp = await _request(new GameRequest { MailBatchClaim = req }, ct).ConfigureAwait(false);
-                if (gen != _generation)
-                    return;
-                var body = rsp.MailBatchClaim;
-                if (body == null || !rsp.Ok || !body.Ok)
-                {
-                    if (!IsSyncRequired(body?.ErrorCode))
-                    {
-                        Forget("batch-claim", 0);
-                        Page.LastError = GameErrorCatalog.FormatUi(body?.ErrorCode, body?.Message ?? rsp.Message);
-                        return;
-                    }
-                }
-
-                Forget("batch-claim", 0);
-                if (body != null)
-                    NoteVersion(body.MailboxVersion, body.ServerTimeUtc);
                 Page.ClaimFailures.Clear();
                 var ok = 0;
-                if (body != null)
+                for (var offset = 0; offset < ids.Count; offset += BatchLimit)
                 {
+                    var count = Math.Min(BatchLimit, ids.Count - offset);
+                    var req = new MailBatchClaimReq
+                    {
+                        PlayerId = _session.PlayerId,
+                        IdempotencyKeyPrefix = Stable("batch-claim", ids[offset])
+                    };
+                    for (var i = 0; i < count; i++)
+                        req.MailIds.Add(ids[offset + i]);
+                    var rsp = await _request(new GameRequest { MailBatchClaim = req }, ct).ConfigureAwait(false);
+                    if (gen != _generation)
+                        return;
+                    var body = rsp.MailBatchClaim;
+                    if (body == null || !rsp.Ok || !body.Ok)
+                    {
+                        if (!IsSyncRequired(body?.ErrorCode))
+                        {
+                            Forget("batch-claim", ids[offset]);
+                            Page.LastError = GameErrorCatalog.FormatUi(body?.ErrorCode, body?.Message ?? rsp.Message);
+                            continue;
+                        }
+                    }
+
+                    Forget("batch-claim", ids[offset]);
+                    if (body == null)
+                        continue;
+                    NoteVersion(body.MailboxVersion, body.ServerTimeUtc);
                     for (var i = 0; i < body.Results.Count; i++)
                     {
                         var row = body.Results[i];
@@ -413,6 +425,16 @@ namespace GameMesh.Mail
 
                 Page.LastNotice = "领取成功 " + ok + "，失败 " + Page.ClaimFailures.Count;
                 Page.LastError = Page.ClaimFailures.Count > 0 ? Page.ClaimFailures[0] : "";
+                var notice = Page.LastNotice;
+                var failures = new List<string>(Page.ClaimFailures);
+                await RefreshAsync(ct).ConfigureAwait(false);
+                if (Page.LastNotice.Length == 0)
+                    Page.LastNotice = notice;
+                if (Page.ClaimFailures.Count == 0 && failures.Count > 0)
+                {
+                    Page.ClaimFailures.AddRange(failures);
+                    Page.LastError = failures[0];
+                }
             }
             catch (Exception ex) when (IsTimeout(ex))
             {
@@ -573,6 +595,21 @@ namespace GameMesh.Mail
             return brief != null && string.Equals(brief.ReadState, "UNREAD", StringComparison.OrdinalIgnoreCase);
         }
 
+        public static string SentLabel(long sentAt)
+        {
+            if (sentAt <= 0)
+                return "";
+            try
+            {
+                return DateTimeOffset.FromUnixTimeSeconds(sentAt).UtcDateTime.ToString("MM-dd HH:mm",
+                    System.Globalization.CultureInfo.InvariantCulture);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                return "";
+            }
+        }
+
         public static string ExpireLabel(long expireAt, long serverUtc)
         {
             if (expireAt <= 0 || serverUtc <= 0)
@@ -665,9 +702,7 @@ namespace GameMesh.Mail
 
         bool NoteVersion(long version, long serverUtc)
         {
-            if (version > 0 && Page.MailboxVersion > 0 && version < Page.MailboxVersion)
-                return false;
-            if (version > Page.MailboxVersion)
+            if (version > 0)
                 Page.MailboxVersion = version;
             if (serverUtc > 0)
             {
@@ -708,7 +743,8 @@ namespace GameMesh.Mail
 
         string Stable(string kind, ulong mailId)
         {
-            var key = kind + ":" + mailId.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            var key = _session.PlayerId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" +
+                      kind + ":" + mailId.ToString(System.Globalization.CultureInfo.InvariantCulture);
             if (!_keys.TryGetValue(key, out var id))
             {
                 id = Guid.NewGuid().ToString("N");
@@ -720,7 +756,8 @@ namespace GameMesh.Mail
 
         void Forget(string kind, ulong mailId)
         {
-            _keys.Remove(kind + ":" + mailId.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            _keys.Remove(_session.PlayerId.ToString(System.Globalization.CultureInfo.InvariantCulture) + ":" +
+                         kind + ":" + mailId.ToString(System.Globalization.CultureInfo.InvariantCulture));
         }
 
         void MarkRead(ulong mailId)
@@ -785,7 +822,7 @@ namespace GameMesh.Mail
         List<ulong> CollectClaimIds()
         {
             var ids = new List<ulong>();
-            for (var i = 0; i < Page.Mails.Count && ids.Count < BatchLimit; i++)
+            for (var i = 0; i < Page.Mails.Count; i++)
             {
                 var brief = Page.Mails[i];
                 if (brief == null || !brief.HasAttachment || !IsOpenAttachment(brief.AttachmentState))

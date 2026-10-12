@@ -64,7 +64,7 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
-        public void OlderSnapshotAndFilterChange_DoNotReplace()
+        public void LowerVersionStillReconciles_FilterChangeDoesNotReplace()
         {
             var mail = Client(Script(
                 Summary(1, 0, 0, 0, 0, 8, 50),
@@ -75,9 +75,9 @@ namespace GameMesh.Tests.EditMode
                 List(9, 60, "", Brief(3, "ACTIVITY", "UNREAD", false))));
             mail.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
             mail.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
-            Assert.AreEqual(1ul, mail.Page.Mails[0].MailId);
-            Assert.AreEqual(8, mail.Page.MailboxVersion);
-            Assert.AreEqual(1, mail.Page.UnreadTotal);
+            Assert.AreEqual(2ul, mail.Page.Mails[0].MailId);
+            Assert.AreEqual(7, mail.Page.MailboxVersion);
+            Assert.AreEqual(0, mail.Page.UnreadTotal);
 
             var gate = new TaskCompletionSource<GameResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
             var switched = Client((req, ct) =>
@@ -228,6 +228,16 @@ namespace GameMesh.Tests.EditMode
             var mail = Client((req, ct) =>
             {
                 Assert.IsNull(req.MailDeliver);
+                if (req.MailBatchClaim == null)
+                {
+                    if (req.MailboxSummary != null)
+                        return Task.FromResult(Summary(0, 0, 0, 0, 1, 4, 10));
+                    return Task.FromResult(List(4, 10, "",
+                        Brief(1, "SYSTEM", "READ", true, "CLAIMED"),
+                        Brief(2, "ACTIVITY", "READ", true, "PARTIAL"),
+                        Brief(3, "SYSTEM", "READ", true, "CLAIMING")));
+                }
+
                 Assert.AreEqual(2, req.MailBatchClaim.MailIds.Count);
                 Assert.IsFalse(string.IsNullOrEmpty(req.MailBatchClaim.IdempotencyKeyPrefix));
                 return Task.FromResult(new GameResponse
@@ -359,6 +369,72 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void VersionReset_ReplacesInbox_AndClaimKeyFollowsPlayer()
+        {
+            var mail = Client(Script(
+                Summary(1, 0, 0, 0, 0, 50, 10),
+                List(50, 10, "", Brief(1, "SYSTEM", "UNREAD", false)),
+                Summary(1, 0, 0, 0, 0, 2, 11),
+                List(2, 11, "", Brief(8, "ACTIVITY", "UNREAD", false))));
+            mail.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+            mail.RefreshAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(8ul, mail.Page.Mails[0].MailId);
+            Assert.AreEqual(2, mail.Page.MailboxVersion);
+
+            var keys = new List<string>();
+            var session = new GameSession { PlayerId = 42 };
+            var scoped = new MailClient(session, (req, ct) =>
+            {
+                if (req.MailClaim != null)
+                    keys.Add(req.MailClaim.IdempotencyKey);
+                if (req.MailboxSummary != null)
+                    return Task.FromResult(Summary(0, 0, 0, 0, 0, 1, 10));
+                if (req.MailList != null)
+                    return Task.FromResult(List(1, 10, ""));
+                return Task.FromResult(ClaimOk(9, "CLAIMED"));
+            });
+            scoped.Page.Selected = Detail(9, "UNCLAIMED", "claim");
+            scoped.ClaimAsync(9, CancellationToken.None).GetAwaiter().GetResult();
+            session.PlayerId = 43;
+            scoped.Page.Selected = Detail(9, "UNCLAIMED", "claim");
+            scoped.ClaimAsync(9, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(2, keys.Count);
+            Assert.AreNotEqual(keys[0], keys[1]);
+        }
+
+        [Test]
+        public void BatchClaim_SplitsAfterTwenty()
+        {
+            var sizes = new List<int>();
+            var mail = Client((req, ct) =>
+            {
+                if (req.MailBatchClaim != null)
+                {
+                    sizes.Add(req.MailBatchClaim.MailIds.Count);
+                    var body = new MailBatchClaimRsp { Ok = true };
+                    for (var i = 0; i < req.MailBatchClaim.MailIds.Count; i++)
+                        body.Results.Add(new MailClaimResult
+                        {
+                            MailId = req.MailBatchClaim.MailIds[i],
+                            Ok = true,
+                            AttachmentState = "CLAIMED"
+                        });
+                    return Task.FromResult(new GameResponse { Ok = true, MailBatchClaim = body });
+                }
+
+                if (req.MailboxSummary != null)
+                    return Task.FromResult(Summary(0, 0, 0, 0, 0, 3, 10));
+                return Task.FromResult(List(3, 10, ""));
+            });
+            for (var i = 1; i <= 21; i++)
+                mail.Page.Mails.Add(Brief((ulong)i, "SYSTEM", "READ", true, "UNCLAIMED"));
+            mail.BatchClaimAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(2, sizes.Count);
+            Assert.AreEqual(20, sizes[0]);
+            Assert.AreEqual(1, sizes[1]);
+        }
+
+        [Test]
         public void Clear_DropsALateList()
         {
             var gate = new TaskCompletionSource<GameResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -379,6 +455,8 @@ namespace GameMesh.Tests.EditMode
             Assert.AreEqual("已过期", MailClient.ExpireLabel(100, 100));
             Assert.AreEqual("即将过期", MailClient.ExpireLabel(100 + 3600, 100));
             Assert.AreEqual("", MailClient.ExpireLabel(100 + 80L * 3600L, 100));
+            Assert.AreEqual("01-02 00:00", MailClient.SentLabel(86400));
+            Assert.AreEqual("", MailClient.SentLabel(0));
             Assert.AreEqual("未知物品 x2", MailClient.AttachmentLine(new MailAttachmentDto { AssetId = 0, Count = 2 }));
             Assert.AreEqual("物品 #15 x1", MailClient.AttachmentLine(new MailAttachmentDto { AssetId = 15, Count = 1 }));
             StringAssert.DoesNotContain("<", MailClient.PlainText("<color=red>hi</color>"));

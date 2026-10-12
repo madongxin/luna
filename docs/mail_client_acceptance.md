@@ -1,21 +1,21 @@
 # 邮件系统客户端验收
 
-本地 `main` 与 `origin/main` 都是 `41669653d4355d5941f3d6b62c50c751e52b7079`。`git fetch --prune origin` 成功，远端没有新提交。工作区在这个提交之上有未提交的邮件改动。Unity `2022.3.62f3c1`。协议以本地 `Assets/GameMesh/Protocol/Schema/game.proto` 为准，导出摘要 `47e6fbf688af61b31ad4d5e2ecf88a17e9891521ad9950bb79076456a87a8d1a`。本工作区没有 webserver，也没有读到服务端 `docs/mail_protocol_contract.md`。
+本地 `main` 是 `7163aa6d2119b05bcfa6dd28f918bc673e52ad8e`。`git fetch --prune origin` 没连上 `github.com:443`（curl 28），所以远端 HEAD 未重新核对，沿用上次推送后的 `7163aa6`。Unity `2022.3.62f3c1`。协议以本地 `Assets/GameMesh/Protocol/Schema/game.proto` 为准，导出摘要 `47e6fbf688af61b31ad4d5e2ecf88a17e9891521ad9950bb79076456a87a8d1a`。本工作区没有 webserver，也没有读到服务端 `docs/mail_protocol_contract.md`。
 
-结论：**部分通过**。EditMode 126/126 通过。没有双账号实机，不能写成端到端已通过。
+结论：**部分通过**。EditMode 128/128 通过。没有双账号实机，不能写成端到端已通过。
 
 ## 功能映射
 
-邮箱沿用运行时 IMGUI，入口在 `GameMeshRuntimeUi.DrawMail`。没有邮件 Prefab，也没有新场景。没有另做一套 MailManager。
+入口是右上角 `MailScreen`，点「邮箱」展开，再点「收起」或改开好友时收起。没有邮件 Prefab，也没有新场景。没有另做一套 MailManager。
 
 | 功能 | 位置 | 协议 | 这次 |
 | --- | --- | --- | --- |
-| 入口和红点 | `DrawMail` 开关。红点看 `HasBadge` | `MailboxSummary` | 未读只加 `unread_system + unread_activity`。另有未领取附件时也亮。社交、交易未读不进红点 |
-| 列表 | `MailClient.RefreshAsync` | `MailList` | 每页 20，最多 20 页。空页带游标、游标重复、更旧的 `mailbox_version`、筛选已变，都不替换当前列表。相同 `mail_id` 只留一条 |
+| 入口和红点 | `MailScreen` 右上角按钮。红点看 `HasBadge` | `MailboxSummary` | 未读只加 `unread_system + unread_activity`。另有未领取附件时按钮显示「附件」。社交、交易未读不进红点。`BuildOnce` 只建一次，反复开关不重复注册 |
+| 列表 | `MailClient.RefreshAsync`，行上有发件人、标题、发送时间、未读、附件、收藏、到期 | `MailList` | 每页 20，最多 20 页。空页带游标、游标重复、筛选已变，都不替换当前列表。`mailbox_version` 变小仍用这次完整快照对账，因为服务端版本不一定跨进程递增。相同 `mail_id` 只留一条。加载中显示「加载中」 |
 | 筛选 | 全部 / 系统 / 活动，以及未读、未领取、即将过期、收藏 | `category`、`unread`、`unclaimed`、`expiring_soon`、`favorite` | 不显示 SOCIAL / TRADE 页。分类字符串用策划案里的 `SYSTEM`、`ACTIVITY` |
 | 详情 | 点列表走 `OpenAsync` | `MailGet`，需要时再 `MailRead` | 正文去掉尖括号后再画。附件没有本地图鉴时显示「未知物品」或「物品 #id」 |
 | 已读 / 收藏 / 删除 | `ReadAsync`、`FavoriteAsync`、`BatchReadAsync`、`BatchDeleteAsync` | 对应 Req，带幂等键 | 按钮只认 `allowed_actions` 里大小写不敏感的 `read`、`claim`、`favorite`、`delete`。协议没有列出合法取值，别的词不显示按钮 |
-| 领取 | `ClaimAsync`、`BatchClaimAsync` | `MailClaim`、`MailBatchClaim` | 同一次点击复用键。超时不换键。`STATE_SYNC` 只提示同步，不发 `GrantItem`。一键领取按每封结果显示 |
+| 领取 | `ClaimAsync`、`BatchClaimAsync` | `MailClaim`、`MailBatchClaim` | 键带角色 id、操作和邮件 id。超时不换键。成功后再拉摘要和列表。`STATE_SYNC` 只提示同步，不发 `GrantItem`。超过 20 封按 20 一组分批，每组自己的前缀。失败项留在 `ClaimFailures` |
 | 登录 / 重连 | `GameMeshClient` 登录成功、已登录跳过、重连成功 | 摘要加列表 | 和好友刷新并列。世界快照失败时仍然拉邮箱 |
 | 换角 / 登出 | 已有 `Mail.Clear` | 代次加一 | 旧列表回包丢掉 |
 | 推送 | `NotifyMailboxChanged` | `MailboxChanged` | 只触发一次防抖刷新，不在本地把红点加一 |
@@ -28,11 +28,11 @@
 | 调用 | 失败时 |
 | --- | --- |
 | 摘要 | 保留原列表，只写错误 |
-| 列表 | 中途失败、空页带游标、游标重复、版本更旧：不替换 |
+| 列表 | 中途失败、空页带游标、游标重复、筛选已变：不替换。版本倒退的完整快照会替换 |
 | 详情 | 不改未读数 |
 | 已读 | 服务器失败不减未读。批量已读只有全部成功才在本地标已读 |
 | 单领 | 无 `claim` 或状态已是 `CLAIMING` 时不发新请求。超时保留原键并刷新。错误码包含 `STATE_SYNC` 时提示「奖励已处理，正在同步背包」 |
-| 一键领取 | 最多 20 封，状态为未填、`UNCLAIMED`、`PARTIAL`。跳过 `CLAIMING`。失败项留在 `ClaimFailures` |
+| 一键领取 | 每批最多 20 封，多出来的下一批再发。状态为未填、`UNCLAIMED`、`PARTIAL`。跳过 `CLAIMING`。失败项留在 `ClaimFailures` |
 | 收藏 | 以回包 `is_favorite` 为准 |
 | 删除 | 未领取附件且详情不允许 `delete` 时不发请求，提示「未领取附件不能删除」。`failed_mail_ids` 留在列表里 |
 
@@ -49,9 +49,9 @@
 
 命令：
 
-`Unity.exe -batchmode -nographics -projectPath C:\Users\dongx\FirstFPS -runTests -testPlatform EditMode -testResults Logs/editmode-mail2.xml -logFile Logs/editmode-mail2.log`
+`Unity.exe -batchmode -nographics -projectPath C:\Users\dongx\FirstFPS -runTests -testPlatform EditMode -testResults Logs/editmode-mail3.xml -logFile Logs/editmode-mail3.log`
 
-结果：`total=126`，`passed=126`，`failed=0`。时间 `2026-10-12 04:55:21Z`。
+结果：`total=128`，`passed=128`，`failed=0`。时间 `2026-10-12 05:14:52Z`。
 
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
@@ -62,15 +62,17 @@
 | MAIL-05 | 未实机 | 超时会刷新并保留原键。断线后的背包没有实机 |
 | MAIL-06 | 未实机 | 未知错误走 `GameErrorCatalog`。没有故障注入 |
 | MAIL-07 | 通过 | 未知物品显示「未知物品」。不本地删附件。背包满只展示服务端错误文案 |
-| MAIL-08 | 通过 | `BatchClaim_KeepsFailuresSeparate` |
+| MAIL-08 | 通过 | `BatchClaim_KeepsFailuresSeparate`、`BatchClaim_SplitsAfterTwenty` |
 | MAIL-09 | 通过 | `DeleteWithoutDeleteAction_DoesNotRemoveOrSend` |
 | MAIL-10 | 部分 | 界面显示摘要里的 `current_count/max_capacity`。邮箱满的实机未跑 |
 | MAIL-11 | 通过 | `ExpiryAndUnknownItem_UseServerTimeAndDoNotInventNames`。过期扫描后的实刷新未跑 |
-| MAIL-12 | 通过 | `Clear_DropsALateList`、`OlderSnapshotAndFilterChange_DoNotReplace` |
-| MAIL-13 | 通过 | 空页、重复游标、筛选变化。推送只防抖，不把红点加一（原有 `MailboxChanged_DebouncesThenPolls`） |
+| MAIL-12 | 通过 | `Clear_DropsALateList`、`VersionReset_ReplacesInbox_AndClaimKeyFollowsPlayer`、`LowerVersionStillReconciles_FilterChangeDoesNotReplace` |
+| MAIL-13 | 通过 | 空页、重复游标、筛选变化、版本倒退仍对账。推送只防抖，不把红点加一（原有 `MailboxChanged_DebouncesThenPolls`） |
 | MAIL-14 | 部分 | 会话失效仍走原有 `RequestAsync` / `HandleSessionReplaced`，并 `Mail.Clear`。没有单独的未登录点击用例 |
 | MAIL-15 | 通过 | `BatchReadAndFavorite_FollowTheServerResult`、`Delete_FailedIdStays_ReadFailureDoesNotDropUnread` |
 | MAIL-16 | 通过 | 收件操作的测试请求里没有 `MailDeliver`，也没有 `GrantItem`。运行时代码不构造这两类请求 |
+| MAIL-17 | 通过 | 幂等键包含角色 id。换角色后再领同一封邮件会用新键。服务端拒绝冲突键没有实机 |
+| MAIL-18 | 部分 | `VersionReset_ReplacesInbox_AndClaimKeyFollowsPlayer`：版本从 50 回到 2 仍换成新列表。多实例重启没有实机 |
 
 PlayMode **NOT RUN**。双账号 **BLOCKED**：没有邮件实机脚本，`GAMEMESH_E2E_GATEWAY` 未设置。
 
@@ -78,16 +80,15 @@ PlayMode **NOT RUN**。双账号 **BLOCKED**：没有邮件实机脚本，`GAMEM
 
 ## 本次修改
 
-- `Assets/GameMesh/Runtime/Mail/MailClient.cs`：分页、筛选、版本、已读、领取、收藏、删除。
-- `Assets/GameMesh/Runtime/UI/GameMeshRuntimeUi.cs`：收件箱。去掉写信输入框。
-- `Assets/GameMesh/Runtime/Bootstrap/GameMeshClient.cs`：登录和重连后刷新邮箱。
-- `Assets/GameMesh/Tests/EditMode/MailClientTests.cs` 及 `.meta`。
+- `MailClient.cs`：版本倒退仍接受完整快照。领取成功后再刷新。一键领取按 20 封分批。幂等键带上角色 id。列表发送时间用 UTC。
+- `MailScreen.cs`：行上显示发送时间。空列表在刷新中显示「加载中」。断线时状态行写「网络断开」。
+- `MailClientTests.cs`：补版本倒退、分批领取、换角色换键。
 - 没有改 `game.proto`、`Game.cs`、场景或 Prefab。
 
 ## 仍缺
 
 - 服务端协议合同不在本仓库，`allowed_actions` 的正式词表未在 proto 里列出。客户端只匹配 `read` / `claim` / `favorite` / `delete`。
 - 没有物品图鉴。附件只有编号和数量。
-- 领取成功后的背包对账靠随后的邮箱刷新。客户端不发奖。
+- 客户端运行时没有背包快照接口。领取成功只再拉邮箱，不本地加道具。背包是否入账要等服务端现有背包同步，不能在这里伪造。
 - `SendAsync` 仍能发 `PlayerMailSend`，只是 V1 界面不再调用。这是 V2 写信，不是 `MailDeliver`。
 - 没有双账号日志，上线前需要真实 Gateway 走一遍：系统投递、登录、已读、单领、一键领取、收藏、删除、离线重登、换角。
