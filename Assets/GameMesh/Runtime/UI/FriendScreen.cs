@@ -86,7 +86,7 @@ namespace GameMesh.UI
             scaler.referenceResolution = new Vector2(1920, 1080);
 
             var open = MakeButton(canvasGo.transform, "好友", new Vector2(1, 1), new Vector2(1, 1),
-                new Vector2(-24, -24), new Vector2(180, 56), ToggleOpen);
+                new Vector2(-208, -20), new Vector2(168, 48), ToggleOpen);
             _badge = open.GetComponentInChildren<Text>();
 
             _panel = new GameObject("Panel", typeof(Image));
@@ -95,16 +95,18 @@ namespace GameMesh.UI
             panelRect.anchorMin = new Vector2(1, 1);
             panelRect.anchorMax = new Vector2(1, 1);
             panelRect.pivot = new Vector2(1, 1);
-            panelRect.anchoredPosition = new Vector2(-24, -96);
-            panelRect.sizeDelta = new Vector2(460, 720);
+            panelRect.anchoredPosition = new Vector2(-24, -80);
+            panelRect.sizeDelta = new Vector2(440, 680);
             _panel.GetComponent<Image>().color = new Color(0.08f, 0.09f, 0.12f, 0.94f);
 
             _count = MakeLabel(_panel.transform, "0/0", 18, TextAnchor.MiddleLeft);
             Place(_count.rectTransform, 16, -8, 200, 32);
+            MakeButton(_panel.transform, "收起", new Vector2(1, 1), new Vector2(1, 1),
+                new Vector2(-12, -8), new Vector2(88, 32), ToggleOpen);
             var tabs = new GameObject("Tabs", typeof(HorizontalLayoutGroup));
             tabs.transform.SetParent(_panel.transform, false);
             var tabsRect = tabs.GetComponent<RectTransform>();
-            Place(tabsRect, 12, -44, 436, 40);
+            Place(tabsRect, 12, -48, 416, 40);
             tabs.GetComponent<HorizontalLayoutGroup>().spacing = 8;
             MakeButton(tabs.transform, "好友", TabFriends);
             MakeButton(tabs.transform, "申请", TabRequests);
@@ -112,19 +114,19 @@ namespace GameMesh.UI
 
             var searchRow = new GameObject("Search", typeof(HorizontalLayoutGroup));
             searchRow.transform.SetParent(_panel.transform, false);
-            Place(searchRow.GetComponent<RectTransform>(), 12, -92, 436, 40);
+            Place(searchRow.GetComponent<RectTransform>(), 12, -96, 416, 40);
             searchRow.GetComponent<HorizontalLayoutGroup>().spacing = 8;
             _query = MakeField(searchRow.transform, "角色名或 PlayerID");
             MakeButton(searchRow.transform, "搜索", DoSearch);
 
             _status = MakeLabel(_panel.transform, "", 16, TextAnchor.UpperLeft);
-            Place(_status.rectTransform, 16, -140, 428, 48);
+            Place(_status.rectTransform, 16, -144, 408, 48);
             _status.color = new Color(1f, 0.85f, 0.45f);
 
             var scrollGo = new GameObject("Scroll", typeof(Image), typeof(ScrollRect));
             scrollGo.transform.SetParent(_panel.transform, false);
             var scrollRect = scrollGo.GetComponent<RectTransform>();
-            Place(scrollRect, 12, -196, 436, 460);
+            Place(scrollRect, 12, -200, 416, 460);
             scrollGo.GetComponent<Image>().color = new Color(0, 0, 0, 0.25f);
             var viewport = new GameObject("Viewport", typeof(Image), typeof(Mask));
             viewport.transform.SetParent(scrollGo.transform, false);
@@ -203,9 +205,23 @@ namespace GameMesh.UI
             Rebuild(friends);
         }
 
+        public static void Collapse()
+        {
+            if (_instance == null || !_instance._open)
+                return;
+            _instance._open = false;
+            if (_instance._panel != null)
+                _instance._panel.SetActive(false);
+            if (_instance._client != null && _instance._client.Friends != null)
+                _instance._client.Friends.PanelOpen = false;
+            _instance._signature = 0;
+        }
+
         void ToggleOpen()
         {
             _open = !_open;
+            if (_open)
+                MailScreen.Collapse();
             _panel.SetActive(_open);
             if (_client != null && _client.Friends != null)
                 _client.Friends.PanelOpen = _open;
