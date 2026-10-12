@@ -380,8 +380,14 @@ namespace GameMesh.UI
                 "。密码至少 6 位；空着会自动填默认密码。关窗口 ≠ 登出。",
                 _hint);
             var playerText = Field("玩家ID", client.Session.PlayerId == 0 ? "" : client.Session.PlayerId.ToString());
-            if (ulong.TryParse(playerText, out var pid))
+            if (ulong.TryParse(playerText, out var pid) && pid != client.Session.PlayerId)
+            {
                 client.Session.PlayerId = pid;
+                if (client.Mail != null)
+                    client.Mail.Clear();
+                if (client.Friends != null)
+                    client.Friends.Clear();
+            }
 
             GUILayout.Space(8);
             GUILayout.BeginHorizontal();

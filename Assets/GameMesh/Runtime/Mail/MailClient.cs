@@ -38,6 +38,8 @@ namespace GameMesh.Mail
         float _serverMarkUnscaled;
         readonly Dictionary<string, string> _keys = new Dictionary<string, string>();
         readonly HashSet<ulong> _busy = new HashSet<ulong>();
+        int _refreshDepth;
+        int _refreshAgain;
 
         public const int PageLimit = 20;
         public const int MaxPages = 20;
@@ -55,6 +57,8 @@ namespace GameMesh.Mail
         public float DebounceSeconds = 0.4f;
         public bool PanelOpen;
         public bool Loading { get; private set; }
+        public int BusyCount => _busy.Count;
+        public bool IsBusy(ulong mailId) => _busy.Contains(mailId);
 
         public MailClient(GameSession session, Func<GameRequest, CancellationToken, Task<GameResponse>> request)
         {
@@ -85,6 +89,7 @@ namespace GameMesh.Mail
             _debounceUntil = 0f;
             _serverMarkUnscaled = 0f;
             Loading = false;
+            Interlocked.Exchange(ref _refreshAgain, 0);
         }
 
         public void NotifyMailboxChanged(float now)
@@ -107,7 +112,30 @@ namespace GameMesh.Mail
 
         public async Task RefreshAsync(CancellationToken ct)
         {
+            Interlocked.Exchange(ref _refreshAgain, 1);
+            if (Interlocked.Increment(ref _refreshDepth) > 1)
+            {
+                Interlocked.Decrement(ref _refreshDepth);
+                return;
+            }
+
+            try
+            {
+                while (Interlocked.Exchange(ref _refreshAgain, 0) == 1 && !ct.IsCancellationRequested)
+                    await RefreshOnceAsync(ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                Interlocked.Decrement(ref _refreshDepth);
+                if (Interlocked.CompareExchange(ref _refreshAgain, 0, 1) == 1 && !ct.IsCancellationRequested)
+                    _ = RefreshAsync(ct);
+            }
+        }
+
+        async Task RefreshOnceAsync(CancellationToken ct)
+        {
             var gen = Interlocked.Increment(ref _generation);
+            var playerId = _session.PlayerId;
             Loading = true;
             var category = Category ?? "";
             var unread = FilterUnread;
@@ -120,7 +148,7 @@ namespace GameMesh.Mail
             {
                 MailboxSummary = new MailboxSummaryReq { PlayerId = _session.PlayerId }
             }, ct).ConfigureAwait(false);
-            if (ct.IsCancellationRequested || gen != _generation)
+            if (ct.IsCancellationRequested || !StillCurrent(playerId, gen))
                 return;
             if (summary.MailboxSummary != null && NoteVersion(summary.MailboxSummary.MailboxVersion, summary.MailboxSummary.ServerTimeUtc))
             {
@@ -161,7 +189,7 @@ namespace GameMesh.Mail
                         Limit = PageLimit
                     }
                 }, ct).ConfigureAwait(false);
-                if (ct.IsCancellationRequested || gen != _generation)
+                if (ct.IsCancellationRequested || !StillCurrent(playerId, gen))
                     return;
                 var body = list.MailList;
                 if (body == null || !list.Ok || !body.Ok)
@@ -195,7 +223,7 @@ namespace GameMesh.Mail
                 cursor = next;
             }
 
-            if (gen != _generation ||
+            if (!StillCurrent(playerId, gen) ||
                 category != (Category ?? "") ||
                 unread != FilterUnread ||
                 unclaimed != FilterUnclaimed ||
@@ -218,11 +246,12 @@ namespace GameMesh.Mail
         public async Task<MailDetail> GetAsync(ulong mailId, CancellationToken ct)
         {
             var gen = _generation;
+            var playerId = _session.PlayerId;
             var rsp = await _request(new GameRequest
             {
                 MailGet = new MailGetReq { PlayerId = _session.PlayerId, MailId = mailId }
             }, ct).ConfigureAwait(false);
-            if (gen != _generation || ct.IsCancellationRequested)
+            if (!StillCurrent(playerId, gen) || ct.IsCancellationRequested)
                 return null;
             var body = rsp.MailGet;
             if (body == null || !rsp.Ok || !body.Ok || body.Mail == null)
@@ -250,6 +279,7 @@ namespace GameMesh.Mail
             if (mailId == 0 || !Begin(mailId))
                 return;
             var gen = _generation;
+            var playerId = _session.PlayerId;
             try
             {
                 var rsp = await _request(new GameRequest
@@ -261,7 +291,7 @@ namespace GameMesh.Mail
                         IdempotencyKey = Stable("read", mailId)
                     }
                 }, ct).ConfigureAwait(false);
-                if (gen != _generation)
+                if (!StillCurrent(playerId, gen))
                     return;
                 var body = rsp.MailRead;
                 if (body != null && rsp.Ok && body.Ok)
@@ -293,6 +323,7 @@ namespace GameMesh.Mail
             if (mailId == 0 || !Begin(mailId))
                 return;
             var gen = _generation;
+            var playerId = _session.PlayerId;
             try
             {
                 if (Page.Selected?.Brief != null && Page.Selected.Brief.MailId == mailId)
@@ -321,7 +352,7 @@ namespace GameMesh.Mail
                         IdempotencyKey = Stable("claim", mailId)
                     }
                 }, ct).ConfigureAwait(false);
-                if (gen != _generation)
+                if (!StillCurrent(playerId, gen))
                     return;
                 var body = rsp.MailClaim;
                 var result = body?.Result;
@@ -354,7 +385,7 @@ namespace GameMesh.Mail
             }
             catch (Exception ex) when (IsTimeout(ex))
             {
-                if (gen == _generation)
+                if (StillCurrent(playerId, gen))
                 {
                     Page.LastNotice = "领取结果未确认，正在同步";
                     Page.LastError = "";
@@ -373,6 +404,7 @@ namespace GameMesh.Mail
             if (ids.Count == 0 || !Begin(0))
                 return;
             var gen = _generation;
+            var playerId = _session.PlayerId;
             try
             {
                 Page.ClaimFailures.Clear();
@@ -388,7 +420,7 @@ namespace GameMesh.Mail
                     for (var i = 0; i < count; i++)
                         req.MailIds.Add(ids[offset + i]);
                     var rsp = await _request(new GameRequest { MailBatchClaim = req }, ct).ConfigureAwait(false);
-                    if (gen != _generation)
+                    if (!StillCurrent(playerId, gen))
                         return;
                     var body = rsp.MailBatchClaim;
                     if (body == null || !rsp.Ok || !body.Ok)
@@ -438,7 +470,7 @@ namespace GameMesh.Mail
             }
             catch (Exception ex) when (IsTimeout(ex))
             {
-                if (gen == _generation)
+                if (StillCurrent(playerId, gen))
                     Page.LastNotice = "领取结果未确认，正在同步";
             }
             finally
@@ -452,6 +484,7 @@ namespace GameMesh.Mail
             if (mailId == 0 || !Begin(mailId))
                 return;
             var gen = _generation;
+            var playerId = _session.PlayerId;
             try
             {
                 if (Page.Selected?.Brief != null && Page.Selected.Brief.MailId == mailId &&
@@ -471,7 +504,7 @@ namespace GameMesh.Mail
                         IdempotencyKey = Stable("favorite", mailId)
                     }
                 }, ct).ConfigureAwait(false);
-                if (gen != _generation)
+                if (!StillCurrent(playerId, gen))
                     return;
                 var body = rsp.MailFavorite;
                 if (body != null && rsp.Ok && body.Ok)
@@ -498,6 +531,7 @@ namespace GameMesh.Mail
             var ids = CollectUnreadIds();
             if (ids.Count == 0)
                 return;
+            var playerId = _session.PlayerId;
             var req = new MailBatchReadReq
             {
                 PlayerId = _session.PlayerId,
@@ -507,7 +541,7 @@ namespace GameMesh.Mail
                 req.MailIds.Add(ids[i]);
             var gen = _generation;
             var rsp = await _request(new GameRequest { MailBatchRead = req }, ct).ConfigureAwait(false);
-            if (gen != _generation)
+            if (!StillCurrent(playerId, gen))
                 return;
             var body = rsp.MailBatchRead;
             if (body == null || !rsp.Ok || !body.Ok)
@@ -554,8 +588,9 @@ namespace GameMesh.Mail
             }
 
             var gen = _generation;
+            var playerId = _session.PlayerId;
             var rsp = await _request(new GameRequest { MailBatchDelete = req }, ct).ConfigureAwait(false);
-            if (gen != _generation)
+            if (!StillCurrent(playerId, gen))
                 return;
             var body = rsp.MailBatchDelete;
             if (body == null || !rsp.Ok || !body.Ok)
@@ -698,6 +733,11 @@ namespace GameMesh.Mail
             if (elapsed < 0f)
                 elapsed = 0f;
             return Page.ServerTimeUtc + (long)elapsed;
+        }
+
+        bool StillCurrent(ulong playerId, int gen)
+        {
+            return gen == _generation && playerId == _session.PlayerId;
         }
 
         bool NoteVersion(long version, long serverUtc)

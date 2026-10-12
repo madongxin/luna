@@ -1,3 +1,4 @@
+using System;
 using System.Globalization;
 using GameMesh.Bootstrap;
 using GameMesh.Mail;
@@ -293,8 +294,10 @@ namespace GameMesh.UI
             var status = !string.IsNullOrEmpty(page.LastError) ? page.LastError : page.LastNotice ?? "";
             if (page.ClaimFailures.Count > 0 && string.IsNullOrEmpty(status))
                 status = page.ClaimFailures[0];
+            if (mail.Loading && page.Mails.Count > 0)
+                status = string.IsNullOrEmpty(status) ? "分页中" : "分页中\n" + status;
             if (_client.Connection != null && _client.Connection.State == ConnectionState.Disconnected)
-                status = string.IsNullOrEmpty(status) ? "网络断开" : "网络断开\n" + status;
+                status = string.IsNullOrEmpty(status) ? "网络断开，显示待同步" : "网络断开，显示待同步\n" + status;
             _status.text = status;
 
             for (var i = _rows.childCount - 1; i >= 0; i--)
@@ -315,7 +318,7 @@ namespace GameMesh.UI
                     var sent = MailClient.SentLabel(brief.SentAt);
                     var flags = (sent.Length > 0 ? sent + " " : "") +
                                 (MailClient.IsUnread(brief) ? "未读 " : "") +
-                                (brief.HasAttachment ? "附件 " : "") +
+                                AttachmentFlag(brief) +
                                 (brief.IsFavorite ? "收藏 " : "") +
                                 MailClient.ExpireLabel(brief.ExpireAt, now);
                     AddMailButton((brief.SenderName ?? "") + "  " + (brief.Title ?? "") + "  " + flags,
@@ -333,7 +336,11 @@ namespace GameMesh.UI
                 return;
             }
 
-            var head = MakeLabel(_detail, detail.Brief.Title ?? "", 18, TextAnchor.UpperLeft);
+            var when = MailClient.SentLabel(detail.Brief.SentAt);
+            var expire = MailClient.ExpireLabel(detail.Brief.ExpireAt, mail.EstimatedServerUtc());
+            var head = MakeLabel(_detail, (detail.Brief.SenderName ?? "") + "  " + (detail.Brief.Title ?? "") +
+                                          (when.Length > 0 ? "  " + when : "") +
+                                          (expire.Length > 0 ? "  " + expire : ""), 16, TextAnchor.UpperLeft);
             Place(head.rectTransform, 8, -6, 400, 24);
             var body = MakeLabel(_detail, MailClient.PlainText(detail.Body), 15, TextAnchor.UpperLeft);
             Place(body.rectTransform, 8, -32, 400, 52);
@@ -360,7 +367,14 @@ namespace GameMesh.UI
             var bar = Row(_detail, 8, -126, 400, 34);
             var mailId = detail.Brief.MailId;
             if (MailClient.Allows(detail, "claim"))
-                Action(bar, "领取", () => _ = mail.ClaimAsync(mailId, default));
+            {
+                var busy = mail.IsBusy(mailId);
+                Action(bar, busy ? "领取中" : "领取", () =>
+                {
+                    if (!mail.IsBusy(mailId))
+                        _ = mail.ClaimAsync(mailId, default);
+                });
+            }
             if (MailClient.Allows(detail, "favorite"))
             {
                 var favorite = detail.Brief.IsFavorite;
@@ -391,7 +405,7 @@ namespace GameMesh.UI
             unchecked
             {
                 var h = page.Mails.Count * 17 + page.UnreadTotal * 13 + page.Unclaimed + page.ClaimFailures.Count +
-                        (mail.Loading ? 23 : 0);
+                        (mail.Loading ? 23 : 0) + mail.BusyCount;
                 h = h * 31 + (int)page.MailboxVersion;
                 h = h * 31 + (mail.Category ?? "").GetHashCode();
                 h = h * 31 + (mail.FilterUnread ? 1 : 0) + (mail.FilterUnclaimed ? 2 : 0) +
@@ -413,6 +427,17 @@ namespace GameMesh.UI
 
                 return h;
             }
+        }
+
+        static string AttachmentFlag(MailBrief brief)
+        {
+            if (brief == null || !brief.HasAttachment)
+                return "";
+            if (string.Equals(brief.AttachmentState, "CLAIMED", StringComparison.OrdinalIgnoreCase))
+                return "已领取 ";
+            if (string.Equals(brief.AttachmentState, "CLAIMING", StringComparison.OrdinalIgnoreCase))
+                return "同步中 ";
+            return "附件 ";
         }
 
         void AddMailButton(string title, UnityEngine.Events.UnityAction click)

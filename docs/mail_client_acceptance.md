@@ -1,8 +1,8 @@
 # 邮件系统客户端验收
 
-本地 `main` 是 `7163aa6d2119b05bcfa6dd28f918bc673e52ad8e`。`git fetch --prune origin` 没连上 `github.com:443`（curl 28），所以远端 HEAD 未重新核对，沿用上次推送后的 `7163aa6`。Unity `2022.3.62f3c1`。协议以本地 `Assets/GameMesh/Protocol/Schema/game.proto` 为准，导出摘要 `47e6fbf688af61b31ad4d5e2ecf88a17e9891521ad9950bb79076456a87a8d1a`。本工作区没有 webserver，也没有读到服务端 `docs/mail_protocol_contract.md`。
+本地 `main` 与 `origin/main` 都是 `41bde448e9ec275af9c507c8aadc9f911ec93cb8`。`git fetch --prune origin` 成功，没有新提交。Unity `2022.3.62f3c1`。协议以本地 `Assets/GameMesh/Protocol/Schema/game.proto` 为准，导出摘要 `47e6fbf688af61b31ad4d5e2ecf88a17e9891521ad9950bb79076456a87a8d1a`。本工作区没有 webserver，也没有读到服务端 `docs/mail_protocol_contract.md`。
 
-结论：**部分通过**。EditMode 128/128 通过。没有双账号实机，不能写成端到端已通过。
+结论：**部分通过**。EditMode 131/131 通过。没有双账号实机，不能写成端到端已通过。
 
 ## 功能映射
 
@@ -17,7 +17,7 @@
 | 已读 / 收藏 / 删除 | `ReadAsync`、`FavoriteAsync`、`BatchReadAsync`、`BatchDeleteAsync` | 对应 Req，带幂等键 | 按钮只认 `allowed_actions` 里大小写不敏感的 `read`、`claim`、`favorite`、`delete`。协议没有列出合法取值，别的词不显示按钮 |
 | 领取 | `ClaimAsync`、`BatchClaimAsync` | `MailClaim`、`MailBatchClaim` | 键带角色 id、操作和邮件 id。超时不换键。成功后再拉摘要和列表。`STATE_SYNC` 只提示同步，不发 `GrantItem`。超过 20 封按 20 一组分批，每组自己的前缀。失败项留在 `ClaimFailures` |
 | 登录 / 重连 | `GameMeshClient` 登录成功、已登录跳过、重连成功 | 摘要加列表 | 和好友刷新并列。世界快照失败时仍然拉邮箱 |
-| 换角 / 登出 | 已有 `Mail.Clear` | 代次加一 | 旧列表回包丢掉 |
+| 换角 / 登出 | `Mail.Clear`，联调面板改玩家 ID 时同时清好友和邮箱 | 代次加一，刷新再对一下当时的角色 id | 旧角色回包不写入新角色。进行中的刷新只再补一轮，不并行开多轮 |
 | 推送 | `NotifyMailboxChanged` | `MailboxChanged` | 只触发一次防抖刷新，不在本地把红点加一 |
 | 写信 / 内网投递 | 界面上没有写信框 | `PlayerMailSend` 仍留在 `SendAsync`；`MailDeliver` 客户端不发 | V1 界面不调用写信。`SendAsync` 留给原有自动场景和 `MailSend_KeepsOperationIdUntilTerminal` |
 
@@ -49,9 +49,9 @@
 
 命令：
 
-`Unity.exe -batchmode -nographics -projectPath C:\Users\dongx\FirstFPS -runTests -testPlatform EditMode -testResults Logs/editmode-mail3.xml -logFile Logs/editmode-mail3.log`
+`Unity.exe -batchmode -nographics -projectPath C:\Users\dongx\FirstFPS -runTests -testPlatform EditMode -testResults Logs/editmode-mail4.xml -logFile Logs/editmode-mail4.log`
 
-结果：`total=128`，`passed=128`，`failed=0`。时间 `2026-10-12 05:14:52Z`。
+结果：`total=131`，`passed=131`，`failed=0`。时间 `2026-10-12 05:44:37Z`。
 
 | 编号 | 结果 | 证据 |
 | --- | --- | --- |
@@ -66,8 +66,8 @@
 | MAIL-09 | 通过 | `DeleteWithoutDeleteAction_DoesNotRemoveOrSend` |
 | MAIL-10 | 部分 | 界面显示摘要里的 `current_count/max_capacity`。邮箱满的实机未跑 |
 | MAIL-11 | 通过 | `ExpiryAndUnknownItem_UseServerTimeAndDoNotInventNames`。过期扫描后的实刷新未跑 |
-| MAIL-12 | 通过 | `Clear_DropsALateList`、`VersionReset_ReplacesInbox_AndClaimKeyFollowsPlayer`、`LowerVersionStillReconciles_FilterChangeDoesNotReplace` |
-| MAIL-13 | 通过 | 空页、重复游标、筛选变化、版本倒退仍对账。推送只防抖，不把红点加一（原有 `MailboxChanged_DebouncesThenPolls`） |
+| MAIL-12 | 通过 | `Clear_DropsALateList`、`PlayerChangedDuringRefresh_KeepsPreviousList`、`VersionReset_ReplacesInbox_AndClaimKeyFollowsPlayer` |
+| MAIL-13 | 通过 | 空页、重复游标、筛选变化、版本倒退、`OverlappingRefresh_RunsOneExtraPass`、`LargeMailId_RoundTripsAsUlong`。推送只防抖，不把红点加一 |
 | MAIL-14 | 部分 | 会话失效仍走原有 `RequestAsync` / `HandleSessionReplaced`，并 `Mail.Clear`。没有单独的未登录点击用例 |
 | MAIL-15 | 通过 | `BatchReadAndFavorite_FollowTheServerResult`、`Delete_FailedIdStays_ReadFailureDoesNotDropUnread` |
 | MAIL-16 | 通过 | 收件操作的测试请求里没有 `MailDeliver`，也没有 `GrantItem`。运行时代码不构造这两类请求 |
@@ -80,9 +80,10 @@ PlayMode **NOT RUN**。双账号 **BLOCKED**：没有邮件实机脚本，`GAMEM
 
 ## 本次修改
 
-- `MailClient.cs`：版本倒退仍接受完整快照。领取成功后再刷新。一键领取按 20 封分批。幂等键带上角色 id。列表发送时间用 UTC。
-- `MailScreen.cs`：行上显示发送时间。空列表在刷新中显示「加载中」。断线时状态行写「网络断开」。
-- `MailClientTests.cs`：补版本倒退、分批领取、换角色换键。
+- `MailClient.cs`：刷新进行中再开一轮只补一次。回包如果角色已经换了，不写入。版本倒退仍接受完整快照。领取成功后再刷新。一键领取按 20 封分批。幂等键带上角色 id。
+- `MailScreen.cs`：分页中、领取中、已领取、同步中、断线时标明待同步。
+- `GameMeshRuntimeUi.cs`：手改玩家 ID 时清掉邮箱和好友。
+- `MailClientTests.cs`：补角色切换、大整数邮件 id、重叠刷新。
 - 没有改 `game.proto`、`Game.cs`、场景或 Prefab。
 
 ## 仍缺

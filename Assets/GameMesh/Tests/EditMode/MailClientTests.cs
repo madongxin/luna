@@ -435,6 +435,67 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void PlayerChangedDuringRefresh_KeepsPreviousList()
+        {
+            var gate = new TaskCompletionSource<GameResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var session = new GameSession { PlayerId = 42 };
+            var mail = new MailClient(session, (req, ct) => req.MailboxSummary != null
+                ? gate.Task
+                : Task.FromResult(List(1, 10, "", Brief(9, "SYSTEM", "UNREAD", false))));
+            mail.Page.Mails.Add(Brief(1, "SYSTEM", "READ", false));
+            var pending = mail.RefreshAsync(CancellationToken.None);
+            session.PlayerId = 99;
+            gate.SetResult(Summary(1, 0, 0, 0, 0, 1, 10));
+            pending.GetAwaiter().GetResult();
+            Assert.AreEqual(1ul, mail.Page.Mails[0].MailId);
+            Assert.AreEqual(0, mail.Page.UnreadTotal);
+        }
+
+        [Test]
+        public void LargeMailId_RoundTripsAsUlong()
+        {
+            const ulong id = 9007199254740993UL;
+            ulong seen = 0;
+            var mail = Client((req, ct) =>
+            {
+                seen = req.MailGet.MailId;
+                return Task.FromResult(new GameResponse
+                {
+                    Ok = true,
+                    MailGet = new MailGetRsp { Ok = true, Mail = Detail(id, "NONE", "read") }
+                });
+            });
+            var detail = mail.GetAsync(id, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(id, seen);
+            Assert.AreEqual(id, detail.Brief.MailId);
+        }
+
+        [Test]
+        public void OverlappingRefresh_RunsOneExtraPass()
+        {
+            var summaries = 0;
+            var gate = new TaskCompletionSource<GameResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var mail = Client((req, ct) =>
+            {
+                if (req.MailboxSummary != null)
+                {
+                    summaries++;
+                    if (summaries == 1)
+                        return gate.Task;
+                    return Task.FromResult(Summary(0, 0, 0, 0, 0, 2, 10));
+                }
+
+                return Task.FromResult(List(2, 10, ""));
+            });
+            var first = mail.RefreshAsync(CancellationToken.None);
+            var second = mail.RefreshAsync(CancellationToken.None);
+            gate.SetResult(Summary(0, 0, 0, 0, 0, 1, 10));
+            first.GetAwaiter().GetResult();
+            second.GetAwaiter().GetResult();
+            Assert.AreEqual(2, summaries);
+        }
+
+        [Test]
         public void Clear_DropsALateList()
         {
             var gate = new TaskCompletionSource<GameResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
