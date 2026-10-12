@@ -2077,6 +2077,8 @@ namespace GameMesh.Bootstrap
                         Session.AutoReconnect = false;
                         Connection.SetLogicalState(ConnectionState.Authenticated);
                         Reconnect.EndFailure();
+                        if (Session.HasIdentity && Friends != null)
+                            _ = Safe(Friends.RefreshAfterLoginAsync(_lifetime.Token));
                         return;
                     }
                 }

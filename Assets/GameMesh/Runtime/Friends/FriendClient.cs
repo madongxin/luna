@@ -64,6 +64,7 @@ namespace GameMesh.Friends
         int _friendRefreshAgain;
         int _requestRefreshAgain;
         int _blockRefreshAgain;
+        readonly List<FriendPresencePush> _presenceDuringLoad = new List<FriendPresencePush>();
         public string LastErrorCode { get; private set; } = "";
         public string LastOperationId { get; private set; } = "";
         public string FriendNextCursor { get; private set; } = "";
@@ -123,6 +124,7 @@ namespace GameMesh.Friends
             _busyKeys.Clear();
             _inFlight = 0;
             _nextSearchAt = 0f;
+            _presenceDuringLoad.Clear();
             ShowRetryHint = false;
             PresenceHold = false;
             LastErrorCode = "";
@@ -169,12 +171,14 @@ namespace GameMesh.Friends
 
         async Task RunFriendRefresh(CancellationToken ct)
         {
+            var passes = 0;
             do
             {
                 Interlocked.Exchange(ref _friendRefreshAgain, 0);
                 await ReadFriendsAsync(ct, true, true).ConfigureAwait(false);
+                passes++;
             }
-            while (Interlocked.Exchange(ref _friendRefreshAgain, 0) == 1);
+            while (passes < 3 && Interlocked.Exchange(ref _friendRefreshAgain, 0) == 1);
         }
 
         public Task OpenFriendPageAsync(CancellationToken ct)
@@ -225,7 +229,7 @@ namespace GameMesh.Friends
                             PageSize = FriendPageSize
                         }
                     }, ct).ConfigureAwait(false);
-                    if (sessionGen != _sessionGeneration || epoch != _friendListEpoch)
+                    if (DropStaleList(sessionGen, epoch, _friendListEpoch))
                         return;
                     var body = rsp.FriendList;
                     if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
@@ -264,7 +268,7 @@ namespace GameMesh.Friends
                     }
                 }
 
-                if (sessionGen != _sessionGeneration || epoch != _friendListEpoch)
+                if (DropStaleList(sessionGen, epoch, _friendListEpoch))
                     return;
                 Friends.Clear();
                 Friends.AddRange(acc);
@@ -273,6 +277,7 @@ namespace GameMesh.Friends
                 FriendNextCursor = cursor ?? "";
                 FriendListError = "";
                 SortFriends();
+                ReplayPresenceAfterSnapshot();
                 LastError = "";
                 ShowRetryHint = false;
                 PresenceHold = false;
@@ -298,12 +303,14 @@ namespace GameMesh.Friends
 
         async Task RunRequestRefresh(CancellationToken ct)
         {
+            var passes = 0;
             do
             {
                 Interlocked.Exchange(ref _requestRefreshAgain, 0);
                 await ReadRequestsAsync(ct, true, true).ConfigureAwait(false);
+                passes++;
             }
-            while (Interlocked.Exchange(ref _requestRefreshAgain, 0) == 1);
+            while (passes < 3 && Interlocked.Exchange(ref _requestRefreshAgain, 0) == 1);
         }
 
         public Task LoadMoreRequestsAsync(CancellationToken ct)
@@ -347,7 +354,7 @@ namespace GameMesh.Friends
                             PageSize = RequestPageSize
                         }
                     }, ct).ConfigureAwait(false);
-                    if (sessionGen != _sessionGeneration || epoch != _requestListEpoch)
+                    if (DropStaleList(sessionGen, epoch, _requestListEpoch))
                         return;
                     var body = rsp.FriendRequestList;
                     if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
@@ -382,7 +389,7 @@ namespace GameMesh.Friends
                     }
                 }
 
-                if (sessionGen != _sessionGeneration || epoch != _requestListEpoch)
+                if (DropStaleList(sessionGen, epoch, _requestListEpoch))
                     return;
                 Requests.Clear();
                 Requests.AddRange(acc);
@@ -413,12 +420,14 @@ namespace GameMesh.Friends
 
         async Task RunBlockRefresh(CancellationToken ct)
         {
+            var passes = 0;
             do
             {
                 Interlocked.Exchange(ref _blockRefreshAgain, 0);
                 await ReadBlockedAsync(ct, true, true).ConfigureAwait(false);
+                passes++;
             }
-            while (Interlocked.Exchange(ref _blockRefreshAgain, 0) == 1);
+            while (passes < 3 && Interlocked.Exchange(ref _blockRefreshAgain, 0) == 1);
         }
 
         public Task LoadMoreBlockedAsync(CancellationToken ct)
@@ -462,7 +471,7 @@ namespace GameMesh.Friends
                             PageSize = FriendPageSize
                         }
                     }, ct).ConfigureAwait(false);
-                    if (sessionGen != _sessionGeneration || epoch != _blockListEpoch)
+                    if (DropStaleList(sessionGen, epoch, _blockListEpoch))
                         return;
                     var body = rsp.FriendBlockList;
                     if (!Ok(rsp, body?.Ok ?? false, body?.ErrorCode, rsp.Message))
@@ -497,7 +506,7 @@ namespace GameMesh.Friends
                     }
                 }
 
-                if (sessionGen != _sessionGeneration || epoch != _blockListEpoch)
+                if (DropStaleList(sessionGen, epoch, _blockListEpoch))
                     return;
                 Blocked.Clear();
                 Blocked.AddRange(acc);
@@ -831,6 +840,7 @@ namespace GameMesh.Friends
                     : new FriendBrief { PlayerId = targetPlayerId };
                 Blocked.Add(brief);
                 Interlocked.Increment(ref _blockListEpoch);
+                NoteBlockRefreshAgain();
             }
 
             SearchRelation = FriendRelationState.FriendRelationBlockedBySelf;
@@ -895,7 +905,10 @@ namespace GameMesh.Friends
             }
 
             if (removedBlock)
+            {
                 Interlocked.Increment(ref _blockListEpoch);
+                NoteBlockRefreshAgain();
+            }
             if (SearchHit != null && SearchHit.PlayerId == targetPlayerId)
                 SearchRelation = FriendRelationState.FriendRelationNone;
             NoteSuccess("已解除拉黑");
@@ -939,7 +952,17 @@ namespace GameMesh.Friends
             if (inner.FriendPresencePush != null)
             {
                 if (!PresenceHold)
+                {
+                    if (_friendLoads > 0)
+                    {
+                        if (_presenceDuringLoad.Count >= 32)
+                            _presenceDuringLoad.RemoveAt(0);
+                        _presenceDuringLoad.Add(inner.FriendPresencePush);
+                    }
+
                     ApplyPresence(inner.FriendPresencePush);
+                }
+
                 return true;
             }
 
@@ -1078,6 +1101,7 @@ namespace GameMesh.Friends
                     Friends[i] = peer;
                     SortFriends();
                     Interlocked.Increment(ref _friendListEpoch);
+                    NoteFriendRefreshAgain();
                     return;
                 }
             }
@@ -1086,6 +1110,7 @@ namespace GameMesh.Friends
             SortFriends();
             FriendCount = (uint)Friends.Count;
             Interlocked.Increment(ref _friendListEpoch);
+            NoteFriendRefreshAgain();
         }
 
         void RemoveFriend(ulong playerId)
@@ -1098,6 +1123,7 @@ namespace GameMesh.Friends
 
             FriendCount = (uint)Friends.Count;
             Interlocked.Increment(ref _friendListEpoch);
+            NoteFriendRefreshAgain();
         }
 
         void UpsertRequest(FriendRequestPush push)
@@ -1116,6 +1142,7 @@ namespace GameMesh.Friends
                         ExpireAt = push.ExpireAt
                     };
                     Interlocked.Increment(ref _requestListEpoch);
+                    NoteRequestRefreshAgain();
                     return;
                 }
             }
@@ -1128,6 +1155,7 @@ namespace GameMesh.Friends
                 ExpireAt = push.ExpireAt
             });
             Interlocked.Increment(ref _requestListEpoch);
+            NoteRequestRefreshAgain();
         }
 
         void RemoveRequest(ulong requestId)
@@ -1140,6 +1168,7 @@ namespace GameMesh.Friends
 
             RequestBadge = Requests.Count;
             Interlocked.Increment(ref _requestListEpoch);
+            NoteRequestRefreshAgain();
         }
 
         void RemoveRequestsFrom(ulong playerId)
@@ -1152,6 +1181,46 @@ namespace GameMesh.Friends
 
             RequestBadge = Requests.Count;
             Interlocked.Increment(ref _requestListEpoch);
+            NoteRequestRefreshAgain();
+        }
+
+        void NoteFriendRefreshAgain()
+        {
+            if (_friendLoads > 0)
+                Interlocked.Exchange(ref _friendRefreshAgain, 1);
+        }
+
+        void NoteRequestRefreshAgain()
+        {
+            if (_requestLoads > 0)
+                Interlocked.Exchange(ref _requestRefreshAgain, 1);
+        }
+
+        void NoteBlockRefreshAgain()
+        {
+            if (_blockLoads > 0)
+                Interlocked.Exchange(ref _blockRefreshAgain, 1);
+        }
+
+        bool DropStaleList(int sessionGen, int epoch, int listEpoch)
+        {
+            if (sessionGen != _sessionGeneration)
+            {
+                _presenceDuringLoad.Clear();
+                return true;
+            }
+
+            return epoch != listEpoch;
+        }
+
+        void ReplayPresenceAfterSnapshot()
+        {
+            if (_presenceDuringLoad.Count == 0)
+                return;
+            var batch = _presenceDuringLoad.ToArray();
+            _presenceDuringLoad.Clear();
+            for (var i = 0; i < batch.Length; i++)
+                ApplyPresence(batch[i]);
         }
 
         void ApplyPresence(FriendPresencePush push)

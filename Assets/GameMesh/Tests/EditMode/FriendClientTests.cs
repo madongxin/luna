@@ -1259,6 +1259,72 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void PushDuringFriendRefresh_RerunsAndKeepsServerMembership()
+        {
+            FriendClient friends = null;
+            var pass = 0;
+            friends = Client((req, ct) =>
+            {
+                if (req.FriendList == null)
+                    return Task.FromResult(new GameResponse { Ok = true });
+                pass++;
+                if (pass == 1)
+                {
+                    friends.ApplyPush(new GameResponse
+                    {
+                        FriendRemovedPush = new FriendRemovedPush { FriendPlayerId = 9 }
+                    });
+                    var stale = new FriendListRsp { Ok = true };
+                    stale.Friends.Add(new FriendBrief { PlayerId = 9, Name = "stale" });
+                    stale.Friends.Add(new FriendBrief { PlayerId = 1, Name = "old" });
+                    return Task.FromResult(new GameResponse { Ok = true, FriendList = stale });
+                }
+
+                var fresh = new FriendListRsp { Ok = true };
+                fresh.Friends.Add(new FriendBrief { PlayerId = 2, Name = "server" });
+                return Task.FromResult(new GameResponse { Ok = true, FriendList = fresh });
+            });
+            friends.Friends.Add(new FriendBrief { PlayerId = 9, Name = "local" });
+            friends.RefreshFriendsAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(2, pass);
+            Assert.AreEqual(1, friends.Friends.Count);
+            Assert.AreEqual(2UL, friends.Friends[0].PlayerId);
+        }
+
+        [Test]
+        public void PresenceDuringSnapshot_KeepsNewerOnlineState()
+        {
+            FriendClient friends = null;
+            friends = Client((req, ct) =>
+            {
+                if (req.FriendList == null)
+                    return Task.FromResult(new GameResponse { Ok = true });
+                friends.ApplyPush(new GameResponse
+                {
+                    FriendPresencePush = new FriendPresencePush
+                    {
+                        FriendPlayerId = 4,
+                        Online = true,
+                        LastOnlineTime = 50
+                    }
+                });
+                var body = new FriendListRsp { Ok = true };
+                body.Friends.Add(new FriendBrief
+                {
+                    PlayerId = 4,
+                    Name = "Ann",
+                    Online = false,
+                    LastOnlineTime = 10
+                });
+                return Task.FromResult(new GameResponse { Ok = true, FriendList = body });
+            });
+            friends.RefreshFriendsAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(1, friends.Friends.Count);
+            Assert.IsTrue(friends.Friends[0].Online);
+            Assert.AreEqual(50UL, friends.Friends[0].LastOnlineTime);
+        }
+
+        [Test]
         public void RemovedFriend_LatePresenceDoesNotComeBack()
         {
             var friends = Client((req, ct) => Task.FromResult(new GameResponse { Ok = true }));
