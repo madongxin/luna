@@ -384,7 +384,9 @@ namespace GameMesh.UI
                 });
             }
 
-            if (reward == MailClient.ClaimedNotice || reward == MailClient.UnknownNotice || reward == MailClient.BagFullNotice)
+            if (reward == MailClient.ClaimedNotice || reward == MailClient.UnknownNotice ||
+                reward == MailClient.BagFullNotice || reward == MailClient.UnverifiableNotice ||
+                reward == MailClient.AwaitingCreditNotice)
             {
                 Action(bar, "刷新背包", () =>
                 {

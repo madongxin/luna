@@ -1,49 +1,46 @@
 # 邮件奖励协议对齐（客户端）
 
-基线 `017771551b590ead1c0a8bd515795c5227128137`。本仓库没有服务端 `docs/mail_reward_integration_contract.md`，也没有 `docs/mail_protocol_contract.md`。协议只认 `Assets/GameMesh/Protocol/Schema/game.proto`。没有改 proto，没有手改 `Game.cs`。
+基线 `eff72d02a678ec0e7970f72b78fe2f1ad42712ad`。本仓库没有服务端 `docs/mail_reward_integration_contract.md`。协议只认 `Assets/GameMesh/Protocol/Schema/game.proto`。这次没有改 proto，也没有手改 `Game.cs`，没有给领取回执分配字段号。
 
-## 已接入的现有消息
+## 现有消息继续使用
 
-| 用途 | 消息 | 字段号 | 客户端用法 |
-| --- | --- | --- | --- |
-| 请求权威快照 | `GameRequest.world_snapshot` | 72 | `WorldSnapshotReq.player_id = 1`。领取后、打开邮箱、以及原有登录/重连路径都会走到它 |
-| 权威快照回包 | `GameResponse.full_snapshot` | 54 | `FullStateSnapshotRsp` |
-| 资产版本 | `asset_version` | 4 | 只有比本角色上一份快照更大时，才把待确认领取标成「已到账」 |
-| 道具清单 | `item_ids` / `item_counts` | 5 / 6 | 整表替换。长度不一致则丢弃这份快照。重复 id 以后一条为准，不累加 |
-| 角色 | `player_id` | 3 | 与当前会话角色不一致则整份丢弃 |
-| 单领 | `MailClaimReq` | `mail_claim = 34` | `idempotency_key` 与 `trace_id` 都用同一把角色内稳定键 |
-| 批领 | `MailBatchClaimReq` | `mail_batch_claim = 35` | 前缀按排序后的邮件 id 集合。`MailBatchClaimRsp.ok == false` 时仍然逐封读 `results` |
+| 用途 | 消息 | 字段号 |
+| --- | --- | --- |
+| 权威背包快照 | `GameRequest.world_snapshot` | 72，回包 `GameResponse.full_snapshot` = 54 |
+| 资产版本和清单 | `asset_version` / `item_ids` / `item_counts` | 4 / 5 / 6 |
+| 单领 | `mail_claim` | 34 |
+| 批领 | `mail_batch_claim` | 35 |
+| 附件数量 | `MailAttachmentDto.count` | 4，类型 `uint32` |
 
-`FlushBagReq` 只表示断线刷队列，回包没有道具数量。`GrantItemReq` 会由客户端自己发奖，邮件领取不发送它，也不发送 `MailDeliver`。
+`asset_id` 是 `uint64`，`count` 是 `uint32`。预览按附件逐行用十进制原文显示，不把多行数量加进 `int`，也不合并成一次发奖。
 
-## 版本策略
+世界快照只替换整包显示。版本变大、重复、回退都不会把某一封邮件标成「已到账」。
 
-1. 第一次看到某角色的快照只建立基线，不显示「已到账」。
-2. 之后 `asset_version` 变大：替换背包，并把本会话里已是 `CLAIMED` 且仍在「同步中 / 结果未确认」的邮件标成「已到账」。
-3. 版本相同：再替换一次，数量不变，不重复加道具，也不当成新到账。
-4. 版本变小或跳号：仍用这份完整清单替换，不把差额累加到旧数量上，也不当成这次领取已到账。
-5. 登出、`Mail.Clear`、换角色后旧快照作废。
+## 到账判据
 
-`mailbox_version` 仍只用于邮箱列表，不作为资产权威。
+一封邮件要同时满足下面三条才显示「已到账」：
 
-## 领取状态
+1. 回执的 `player_id` 就是当前会话角色。
+2. 回执的 `mail_id` 就是这一封，且带有非空 `claim_tx_id`、大于 0 的 `asset_version_at_claim`，以及至少一条 grant。
+3. 当前角色已经看过一份权威快照，其 `asset_version` 不早于该回执里的版本。
 
-| 状态 | 何时 | 幂等键 | 界面 |
-| --- | --- | --- | --- |
-| 领取中 | 请求尚未返回 | 保留 | 「领取中」 |
-| 结果未确认 | 超时、`STATE_SYNC_REQUIRED`、`CLAIM_IN_PROGRESS`、批领没有 `results` | 保留 | 「领取结果未确认，正在同步背包」 |
-| 邮件已领、背包未确认 | 邮件结果已是 `CLAIMED`，但资产版本没有前进 | 单领成功会释放邮件键；资产仍等下一份快照 | 「邮件已领取，背包同步中」 |
-| 已到账 | 邮件已是 `CLAIMED`，且之后的快照版本变大 | 已释放 | 「已到账」 |
-| 背包已满 | `INVENTORY_FULL` 或错误码里带 `BAG_FULL` | 单领释放；批领保留该组键以便原样重试 | 「背包已满」 |
-| 可重试失败 | 其它明确业务失败 | 单领释放 | 「领取失败，可重试」 |
-| 已领过 | `ALREADY_CLAIMED` | 释放，不本地加道具 | 版本没前进时仍是同步中 |
+同一封邮件后来再来的事务号或更新的版本不会覆盖第一次回执。另一封邮件的回执不能确认这一封。没有回执时，即使邮件已是 `CLAIMED`、背包版本也变大，文案仍是「领取状态已确认，到账凭证暂不可验证」。有回执但快照还没到那一版，文案是「已领取，到账确认中」。
 
-没有邮件领取流水或 `operation_id` 对应的资产回执。版本变大只说明权威背包更新了，不能单独证明这封邮件是唯一来源。
+回执不会往本地背包加数量。不确定结果仍保留原幂等键。`INVENTORY_FULL` 与 `INVALID_ATTACHMENT` 只显示服务端错误，不把邮件标成已领。
 
-## 还缺的服务端字段
+## 服务端还要冻结的回执
 
-不新增消息号。需要服务端在现有合同里写明，或沿用现有快照：
+客户端入口是 `MailClient.AcceptReceipt`。它只接受已经对过账的语义，不是新的网络消息。服务端给出字段号之前，客户端不会发查询 RPC。
 
-- `WorldSnapshotReq` 的回包在领奖后是否带上当前 `asset_version`、`item_ids`、`item_counts`。
-- 若领奖不提升 `asset_version`，需要一份已有的、能按角色 + `mail_id` + `idempotency_key` 查询的最终结果。客户端不会猜新的 RPC。
-- `MailBatchClaimRsp.ok` 的定义：客户端已按「只要 `results` 非空就逐封处理」实现。
+建议沿用下面的语义，由服务端选定未占用的字段号：
+
+| 语义 | 要求 |
+| --- | --- |
+| `player_id` | 只承认已认证会话里的本人 |
+| `mail_id` | 只确认这一封 |
+| `claim_tx_id` | 首次成功提交的资产事务号，重试和 `ALREADY_CLAIMED` 都返回这一次 |
+| `asset_version_at_claim` | 那一次入账时的版本，不用后来任务或商城把版本抬高后的当前值 |
+| `grants` | 首次入账的物品 id 和 `uint32` 数量，同物品多附件不要在客户端合并 |
+| `claim_state` | 只有明确的成功提交才能进入到账确认 |
+
+`FlushBag` 和 `GrantItem` 仍不用于邮件领奖。
