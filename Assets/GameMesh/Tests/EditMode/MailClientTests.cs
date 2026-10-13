@@ -587,7 +587,7 @@ namespace GameMesh.Tests.EditMode
             mail.ClaimAsync(4, CancellationToken.None).GetAwaiter().GetResult();
             Assert.AreEqual(2, keys.Count);
             Assert.AreEqual(keys[0], keys[1]);
-            StringAssert.Contains("到账凭证暂不可验证", mail.Page.LastNotice);
+            StringAssert.Contains("邮件已领取，到账确认中", mail.Page.LastNotice);
             Assert.AreNotEqual(MailClient.ConfirmedNotice, mail.Page.LastNotice);
         }
 
@@ -704,7 +704,7 @@ namespace GameMesh.Tests.EditMode
             mail.Page.Selected = Detail(4, "UNCLAIMED", "CLAIM");
             mail.Page.Mails.Add(mail.Page.Selected.Brief);
             mail.ClaimAsync(4, CancellationToken.None).GetAwaiter().GetResult();
-            Assert.AreEqual(MailClient.UnverifiableNotice, mail.Page.LastNotice);
+            Assert.AreEqual(MailClient.AwaitingCreditNotice, mail.Page.LastNotice);
             Assert.AreEqual(3u, mail.Bag.Counts[1001]);
             Assert.AreEqual(1, versions.Count);
             Assert.IsNull(mail.Receipt(4));
@@ -723,7 +723,7 @@ namespace GameMesh.Tests.EditMode
             held.Page.Selected = Detail(4, "UNCLAIMED", "CLAIM");
             held.Page.Mails.Add(held.Page.Selected.Brief);
             held.ClaimAsync(4, CancellationToken.None).GetAwaiter().GetResult();
-            Assert.AreEqual(MailClient.UnverifiableNotice, held.Page.LastNotice);
+            Assert.AreEqual(MailClient.AwaitingCreditNotice, held.Page.LastNotice);
             Assert.AreEqual(1u, held.Bag.Counts[1001]);
         }
 
@@ -827,6 +827,186 @@ namespace GameMesh.Tests.EditMode
             Assert.IsNull(mail.Receipt(3));
             Assert.IsFalse(mail.AcceptReceipt(99, 3, "tx-3", 8, grants));
             Assert.IsNull(mail.Receipt(3));
+        }
+
+        [Test]
+        public void WireReceipt_RoundTripsAndKeepsTheOriginalClaim()
+        {
+            var original = new MailClaimResult
+            {
+                MailId = 9007199254740993ul,
+                Ok = true,
+                AttachmentState = "CLAIMED",
+                Receipt = new MailClaimReceipt
+                {
+                    ClaimTxId = "tx-first",
+                    AssetVersionAtClaim = 6,
+                    ClaimState = "CLAIMED",
+                    Verifiable = true,
+                    Grants = { new MailClaimGrant { AssetId = 1001, Count = uint.MaxValue } }
+                }
+            };
+            var parsed = MailClaimResult.Parser.ParseFrom(original.ToByteArray());
+            Assert.AreEqual("tx-first", parsed.Receipt.ClaimTxId);
+            Assert.AreEqual(6ul, parsed.Receipt.AssetVersionAtClaim);
+            Assert.AreEqual(uint.MaxValue, parsed.Receipt.Grants[0].Count);
+            var detail = MailDetail.Parser.ParseFrom(new MailDetail
+            {
+                Brief = new MailBrief { MailId = parsed.MailId },
+                Receipt = original.Receipt
+            }.ToByteArray());
+            Assert.AreEqual("tx-first", detail.Receipt.ClaimTxId);
+
+            var calls = 0;
+            var mail = Client((req, ct) =>
+            {
+                if (req.MailClaim != null)
+                {
+                    calls++;
+                    if (calls == 1)
+                    {
+                        return Task.FromResult(new GameResponse
+                        {
+                            Ok = true,
+                            MailClaim = new MailClaimRsp { Ok = true, Result = parsed }
+                        });
+                    }
+
+                    return Task.FromResult(new GameResponse
+                    {
+                        Ok = false,
+                        MailClaim = new MailClaimRsp
+                        {
+                            Ok = false,
+                            ErrorCode = "ALREADY_CLAIMED",
+                            Result = new MailClaimResult
+                            {
+                                MailId = parsed.MailId,
+                                AttachmentState = "CLAIMED",
+                                ErrorCode = "ALREADY_CLAIMED",
+                                Receipt = new MailClaimReceipt
+                                {
+                                    ClaimTxId = "tx-later",
+                                    AssetVersionAtClaim = 99,
+                                    ClaimState = "CLAIMED",
+                                    Verifiable = true,
+                                    Grants = { new MailClaimGrant { AssetId = 1001, Count = 1 } }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                if (req.WorldSnapshot != null)
+                    return Task.FromResult(BagSnap(42, 6, 1001, 3));
+                if (req.MailboxSummary != null)
+                    return Task.FromResult(Summary(0, 0, 0, 0, 0, 2, 10));
+                return Task.FromResult(List(2, 10, "", Brief(parsed.MailId, "SYSTEM", "READ", true, "CLAIMED")));
+            });
+            mail.ObserveBag(BagSnap(42, 5, 1001, 1).FullSnapshot);
+            mail.Page.Selected = Detail(parsed.MailId, "UNCLAIMED", "CLAIM");
+            mail.Page.Mails.Add(mail.Page.Selected.Brief);
+            mail.ClaimAsync(parsed.MailId, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual("tx-first", mail.Receipt(parsed.MailId).ClaimTxId);
+            Assert.AreEqual(6ul, mail.Receipt(parsed.MailId).AssetVersionAtClaim);
+            Assert.AreEqual(MailClient.ConfirmedNotice, mail.RewardLabel(parsed.MailId));
+            Assert.AreEqual(3u, mail.Bag.Counts[1001]);
+            mail.ClaimAsync(parsed.MailId, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(2, calls);
+            Assert.AreEqual("tx-first", mail.Receipt(parsed.MailId).ClaimTxId);
+            Assert.AreEqual(6ul, mail.Receipt(parsed.MailId).AssetVersionAtClaim);
+        }
+
+        [Test]
+        public void DetailReceipt_FillsAClaimThatOmittedIt_AndUnverifiableDoesNotConfirm()
+        {
+            var mail = Client((req, ct) =>
+            {
+                if (req.MailClaim != null)
+                    return Task.FromResult(ClaimOk(4, "CLAIMED"));
+                if (req.MailGet != null)
+                {
+                    return Task.FromResult(new GameResponse
+                    {
+                        Ok = true,
+                        MailGet = new MailGetRsp
+                        {
+                            Ok = true,
+                            Mail = new MailDetail
+                            {
+                                Brief = Brief(4, "SYSTEM", "READ", true, "CLAIMED"),
+                                Receipt = new MailClaimReceipt
+                                {
+                                    ClaimTxId = "tx-detail",
+                                    AssetVersionAtClaim = 8,
+                                    ClaimState = "CLAIMED",
+                                    Verifiable = true,
+                                    Grants = { new MailClaimGrant { AssetId = 1001, Count = 2 } }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                if (req.WorldSnapshot != null)
+                    return Task.FromResult(BagSnap(42, 4, 1001, 1));
+                if (req.MailboxSummary != null)
+                    return Task.FromResult(Summary(0, 0, 0, 0, 0, 2, 10));
+                return Task.FromResult(List(2, 10, "", Brief(4, "SYSTEM", "READ", true, "CLAIMED")));
+            });
+            mail.ObserveBag(BagSnap(42, 4, 1001, 1).FullSnapshot);
+            mail.Page.Selected = Detail(4, "UNCLAIMED", "CLAIM");
+            mail.Page.Mails.Add(mail.Page.Selected.Brief);
+            mail.ClaimAsync(4, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual("tx-detail", mail.Receipt(4).ClaimTxId);
+            Assert.AreEqual(MailClient.AwaitingCreditNotice, mail.RewardLabel(4));
+            mail.ObserveBag(BagSnap(42, 8, 1001, 1).FullSnapshot);
+            Assert.AreEqual(MailClient.ConfirmedNotice, mail.RewardLabel(4));
+            Assert.AreEqual(1u, mail.Bag.Counts[1001]);
+
+            var hidden = Client((req, ct) =>
+            {
+                if (req.MailClaim != null)
+                {
+                    return Task.FromResult(new GameResponse
+                    {
+                        Ok = true,
+                        MailClaim = new MailClaimRsp
+                        {
+                            Ok = true,
+                            Result = new MailClaimResult
+                            {
+                                MailId = 4,
+                                Ok = true,
+                                AttachmentState = "CLAIMED",
+                                Receipt = new MailClaimReceipt
+                                {
+                                    ClaimTxId = "tx-old",
+                                    AssetVersionAtClaim = 3,
+                                    ClaimState = "UNKNOWN",
+                                    Verifiable = false,
+                                    Grants = { new MailClaimGrant { AssetId = 1001, Count = 1 } }
+                                }
+                            }
+                        }
+                    });
+                }
+
+                if (req.WorldSnapshot != null)
+                    return Task.FromResult(BagSnap(42, 9, 1001, 5));
+                if (req.MailGet != null)
+                    return Task.FromResult(new GameResponse { Ok = true });
+                if (req.MailboxSummary != null)
+                    return Task.FromResult(Summary(0, 0, 0, 0, 0, 2, 10));
+                return Task.FromResult(List(2, 10, "", Brief(4, "SYSTEM", "READ", true, "CLAIMED")));
+            });
+            hidden.ObserveBag(BagSnap(42, 9, 1001, 5).FullSnapshot);
+            hidden.Page.Selected = Detail(4, "UNCLAIMED", "CLAIM");
+            hidden.Page.Mails.Add(hidden.Page.Selected.Brief);
+            hidden.ClaimAsync(4, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.IsNull(hidden.Receipt(4));
+            Assert.AreEqual(MailClient.UnverifiableNotice, hidden.RewardLabel(4));
+            Assert.AreEqual(5u, hidden.Bag.Counts[1001]);
         }
 
         [Test]

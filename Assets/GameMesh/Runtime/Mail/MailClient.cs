@@ -268,6 +268,8 @@ namespace GameMesh.Mail
 
             NoteVersion(body.MailboxVersion, body.ServerTimeUtc);
             Page.Selected = body.Mail;
+            if (body.Mail.Brief != null)
+                TryConsumeReceipt(playerId, body.Mail.Brief.MailId, body.Mail.Receipt);
             Page.LastError = "";
             return body.Mail;
         }
@@ -403,10 +405,14 @@ namespace GameMesh.Mail
                     if (string.Equals(result?.AttachmentState, "CLAIMED", StringComparison.OrdinalIgnoreCase))
                         ApplyClaimed(mailId, result.AttachmentState);
                     NoteVersion(body?.MailboxVersion ?? 0, body?.ServerTimeUtc ?? 0);
+                    var claimedId = result != null && result.MailId != 0 ? result.MailId : mailId;
+                    TryConsumeReceipt(playerId, claimedId, result?.Receipt);
                     await RefreshAsync(ct).ConfigureAwait(false);
                     if (_session.PlayerId != playerId)
                         return;
                     await PullBagAsync(playerId, ct).ConfigureAwait(false);
+                    if (Receipt(mailId) == null)
+                        await FetchReceiptAsync(mailId, playerId, ct).ConfigureAwait(false);
                     NoteMailWithoutReceipt(mailId);
                     return;
                 }
@@ -415,10 +421,14 @@ namespace GameMesh.Mail
                 {
                     NoteVersion(body.MailboxVersion, body.ServerTimeUtc);
                     ApplyClaimed(mailId, result?.AttachmentState);
+                    var claimedId = result != null && result.MailId != 0 ? result.MailId : mailId;
+                    TryConsumeReceipt(playerId, claimedId, result?.Receipt);
                     await RefreshAsync(ct).ConfigureAwait(false);
                     if (_session.PlayerId != playerId)
                         return;
                     await PullBagAsync(playerId, ct).ConfigureAwait(false);
+                    if (Receipt(mailId) == null)
+                        await FetchReceiptAsync(mailId, playerId, ct).ConfigureAwait(false);
                     NoteMailWithoutReceipt(mailId);
                     return;
                 }
@@ -497,10 +507,14 @@ namespace GameMesh.Mail
                         {
                             ok++;
                             ApplyClaimed(row.MailId, row.AttachmentState);
-                            MarkReward(row.MailId, UnverifiableNotice);
+                            if (!TryConsumeReceipt(playerId, row.MailId, row.Receipt))
+                                MarkReward(row.MailId, AwaitingCreditNotice);
                             rowUncertain = true;
                             continue;
                         }
+
+                        if (row.Receipt != null)
+                            TryConsumeReceipt(playerId, row.MailId, row.Receipt);
 
                         if (IsUncertain(row.ErrorCode))
                         {
@@ -535,8 +549,9 @@ namespace GameMesh.Mail
                 RefreshReceiptLabels();
                 if (ok > 0 && Page.ClaimFailures.Count > 0)
                     Page.LastNotice = "邮件领取 " + ok + "，失败 " + Page.ClaimFailures.Count;
-                else if (ok > 0 && Page.LastNotice != ConfirmedNotice)
-                    Page.LastNotice = UnverifiableNotice;
+                else if (ok > 0 && Page.LastNotice != ConfirmedNotice &&
+                         Page.LastNotice != AwaitingCreditNotice && Page.LastNotice != UnverifiableNotice)
+                    Page.LastNotice = AwaitingCreditNotice;
                 else if (keepKey)
                     Page.LastNotice = UnknownNotice;
                 else
@@ -701,7 +716,7 @@ namespace GameMesh.Mail
 
         public const string ClaimedNotice = "邮件已领取，背包同步中";
         public const string ConfirmedNotice = "已到账";
-        public const string AwaitingCreditNotice = "已领取，到账确认中";
+        public const string AwaitingCreditNotice = "邮件已领取，到账确认中";
         public const string UnverifiableNotice = "领取状态已确认，到账凭证暂不可验证";
         public const string UnknownNotice = "领取结果未确认，正在同步背包";
         public const string BagFullNotice = "背包已满";
@@ -1153,6 +1168,8 @@ namespace GameMesh.Mail
             await PullBagAsync(playerId, ct).ConfigureAwait(false);
             if (_session.PlayerId != playerId)
                 return;
+            if (Receipt(mailId) == null)
+                await FetchReceiptAsync(mailId, playerId, ct).ConfigureAwait(false);
             if (Receipt(mailId) != null)
                 ApplyReceiptLabel(mailId);
             else if (MailLooksClaimed(mailId))
@@ -1167,6 +1184,9 @@ namespace GameMesh.Mail
                 return;
             }
 
+            if (RewardLabel(mailId) == UnverifiableNotice)
+                return;
+
             if (!MailLooksClaimed(mailId))
             {
                 MarkReward(mailId, UnknownNotice);
@@ -1175,9 +1195,59 @@ namespace GameMesh.Mail
                 return;
             }
 
-            MarkReward(mailId, UnverifiableNotice);
-            Page.LastNotice = UnverifiableNotice;
+            MarkReward(mailId, AwaitingCreditNotice);
+            Page.LastNotice = AwaitingCreditNotice;
             Page.LastError = "";
+        }
+
+        bool TryConsumeReceipt(ulong playerId, ulong mailId, MailClaimReceipt receipt)
+        {
+            if (playerId != _session.PlayerId || mailId == 0 || receipt == null)
+                return false;
+            if (!receipt.Verifiable || !string.Equals(receipt.ClaimState, "CLAIMED", StringComparison.OrdinalIgnoreCase))
+            {
+                if (Receipt(mailId) == null)
+                {
+                    MarkReward(mailId, UnverifiableNotice);
+                    Page.LastNotice = UnverifiableNotice;
+                }
+
+                return false;
+            }
+
+            var grants = new List<MailItemGrant>();
+            for (var i = 0; i < receipt.Grants.Count; i++)
+            {
+                var grant = receipt.Grants[i];
+                if (grant == null || grant.Count == 0)
+                    continue;
+                grants.Add(new MailItemGrant { AssetId = grant.AssetId, Count = grant.Count });
+            }
+
+            return AcceptReceipt(playerId, mailId, receipt.ClaimTxId, receipt.AssetVersionAtClaim, grants);
+        }
+
+        async Task FetchReceiptAsync(ulong mailId, ulong playerId, CancellationToken ct)
+        {
+            var gen = _generation;
+            GameResponse rsp;
+            try
+            {
+                rsp = await _request(new GameRequest
+                {
+                    MailGet = new MailGetReq { PlayerId = playerId, MailId = mailId }
+                }, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsTimeout(ex))
+            {
+                return;
+            }
+
+            if (!StillCurrent(playerId, gen) || rsp?.MailGet?.Mail == null)
+                return;
+            var detail = rsp.MailGet.Mail;
+            var id = detail.Brief != null && detail.Brief.MailId != 0 ? detail.Brief.MailId : mailId;
+            TryConsumeReceipt(playerId, id, detail.Receipt);
         }
 
         void RefreshReceiptLabels()
