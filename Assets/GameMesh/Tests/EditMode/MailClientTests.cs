@@ -362,8 +362,8 @@ namespace GameMesh.Tests.EditMode
             Assert.AreEqual("UNREAD", mail.Page.Mails[0].ReadState);
             Assert.AreEqual(2, mail.Page.UnreadTotal);
 
-            mail.Page.Selected = new MailDetail { Brief = mail.Page.Mails[0], AllowedActions = { "favorite" } };
-            mail.Page.Mails[0].IsFavorite = true;
+            mail.Page.Mails[0].IsFavorite = false;
+            mail.Page.Selected = new MailDetail { Brief = mail.Page.Mails[0], AllowedActions = { "FAVORITE" } };
             mail.FavoriteAsync(1, true, CancellationToken.None).GetAwaiter().GetResult();
             Assert.IsFalse(mail.Page.Mails[0].IsFavorite);
         }
@@ -493,6 +493,139 @@ namespace GameMesh.Tests.EditMode
             first.GetAwaiter().GetResult();
             second.GetAwaiter().GetResult();
             Assert.AreEqual(2, summaries);
+        }
+
+        [Test]
+        public void Favorite_UsesFavoriteOrUnfavorite_AndKeepsKeyOnTimeout()
+        {
+            var on = new MailDetail
+            {
+                Brief = new MailBrief { MailId = 1, IsFavorite = false },
+                AllowedActions = { "FAVORITE" }
+            };
+            var off = new MailDetail
+            {
+                Brief = new MailBrief { MailId = 1, IsFavorite = true },
+                AllowedActions = { "UNFAVORITE" }
+            };
+            Assert.AreEqual("FAVORITE", MailClient.FavoriteAction(on));
+            Assert.AreEqual("UNFAVORITE", MailClient.FavoriteAction(off));
+            Assert.IsNull(MailClient.FavoriteAction(new MailDetail
+            {
+                Brief = new MailBrief { MailId = 1, IsFavorite = true },
+                AllowedActions = { "FAVORITE" }
+            }));
+
+            var sends = 0;
+            string key = null;
+            var mail = Client((req, ct) =>
+            {
+                if (req.MailFavorite == null)
+                    return Task.FromResult(new GameResponse { Ok = true });
+                sends++;
+                if (key == null)
+                {
+                    key = req.MailFavorite.IdempotencyKey;
+                    throw new TimeoutException("fav");
+                }
+
+                Assert.AreEqual(key, req.MailFavorite.IdempotencyKey);
+                Assert.IsFalse(req.MailFavorite.Favorite);
+                return Task.FromResult(new GameResponse
+                {
+                    Ok = true,
+                    MailFavorite = new MailFavoriteRsp { Ok = true, IsFavorite = false }
+                });
+            });
+            mail.Page.Selected = off;
+            mail.Page.Mails.Add(off.Brief);
+            try
+            {
+                mail.FavoriteAsync(1, false, CancellationToken.None).GetAwaiter().GetResult();
+            }
+            catch (TimeoutException)
+            {
+            }
+
+            mail.FavoriteAsync(1, false, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(2, sends);
+            mail.Page.Mails[0].IsFavorite = true;
+            mail.Page.Selected = new MailDetail { Brief = mail.Page.Mails[0], AllowedActions = { "FAVORITE" } };
+            var before = sends;
+            mail.FavoriteAsync(1, false, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(before, sends);
+        }
+
+        [Test]
+        public void ClaimSync_KeepsTheSameKey()
+        {
+            var keys = new List<string>();
+            var mail = Client((req, ct) =>
+            {
+                if (req.MailClaim != null)
+                {
+                    keys.Add(req.MailClaim.IdempotencyKey);
+                    if (keys.Count == 1)
+                    {
+                        return Task.FromResult(new GameResponse
+                        {
+                            Ok = false,
+                            MailClaim = new MailClaimRsp { Ok = false, ErrorCode = "STATE_SYNC_REQUIRED" }
+                        });
+                    }
+
+                    return Task.FromResult(ClaimOk(4, "CLAIMED"));
+                }
+
+                if (req.MailboxSummary != null)
+                    return Task.FromResult(Summary(0, 0, 0, 0, 1, 2, 10));
+                return Task.FromResult(List(2, 10, "", Brief(4, "SYSTEM", "READ", true, "UNCLAIMED")));
+            });
+            mail.Page.Selected = Detail(4, "UNCLAIMED", "CLAIM");
+            mail.ClaimAsync(4, CancellationToken.None).GetAwaiter().GetResult();
+            mail.Page.Selected = Detail(4, "UNCLAIMED", "CLAIM");
+            mail.ClaimAsync(4, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(2, keys.Count);
+            Assert.AreEqual(keys[0], keys[1]);
+            StringAssert.Contains("背包尚未确认到账", mail.Page.LastNotice);
+        }
+
+        [Test]
+        public void BatchDelete_KeyFollowsTheIdSet()
+        {
+            var keys = new List<string>();
+            var calls = 0;
+            var mail = Client((req, ct) =>
+            {
+                calls++;
+                keys.Add(req.MailBatchDelete.IdempotencyKey);
+                if (calls == 1)
+                    throw new TimeoutException("del");
+                return Task.FromResult(new GameResponse
+                {
+                    Ok = true,
+                    MailBatchDelete = new MailBatchDeleteRsp { Ok = true, SuccessCount = 1 }
+                });
+            });
+            var first = Brief(1, "SYSTEM", "READ", false);
+            var second = Brief(2, "SYSTEM", "READ", false);
+            mail.Page.Mails.Add(first);
+            mail.Page.Mails.Add(second);
+            mail.Page.Selected = new MailDetail { Brief = first, AllowedActions = { "DELETE" } };
+            try
+            {
+                mail.BatchDeleteAsync(new[] { 1ul }, CancellationToken.None).GetAwaiter().GetResult();
+            }
+            catch (TimeoutException)
+            {
+            }
+
+            mail.BatchDeleteAsync(new[] { 1ul }, CancellationToken.None).GetAwaiter().GetResult();
+            mail.Page.Selected = new MailDetail { Brief = second, AllowedActions = { "DELETE" } };
+            mail.BatchDeleteAsync(new[] { 2ul }, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(3, keys.Count);
+            Assert.AreEqual(keys[0], keys[1]);
+            Assert.AreNotEqual(keys[0], keys[2]);
         }
 
         [Test]

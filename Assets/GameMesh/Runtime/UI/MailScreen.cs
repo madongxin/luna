@@ -375,11 +375,15 @@ namespace GameMesh.UI
                         _ = mail.ClaimAsync(mailId, default);
                 });
             }
-            if (MailClient.Allows(detail, "favorite"))
+            var favoriteAction = MailClient.FavoriteAction(detail);
+            if (favoriteAction != null)
             {
-                var favorite = detail.Brief.IsFavorite;
-                Action(bar, favorite ? "取消收藏" : "收藏",
-                    () => _ = mail.FavoriteAsync(mailId, !favorite, default));
+                var turnOn = favoriteAction == "FAVORITE";
+                Action(bar, turnOn ? "收藏" : "取消收藏", () =>
+                {
+                    if (!mail.IsBusy(mailId))
+                        _ = mail.FavoriteAsync(mailId, turnOn, default);
+                });
             }
 
             if (MailClient.Allows(detail, "delete"))

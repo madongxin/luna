@@ -359,7 +359,6 @@ namespace GameMesh.Mail
                 var code = FirstCode(result?.ErrorCode, body?.ErrorCode, ProtocolMapper.ExtractErrorCode(rsp));
                 if (IsSyncRequired(code))
                 {
-                    Forget("claim", mailId);
                     Page.LastNotice = "奖励已处理，正在同步背包";
                     Page.LastError = "";
                     await RefreshAsync(ct).ConfigureAwait(false);
@@ -371,11 +370,11 @@ namespace GameMesh.Mail
                     Forget("claim", mailId);
                     NoteVersion(body.MailboxVersion, body.ServerTimeUtc);
                     ApplyClaimed(mailId, result?.AttachmentState);
-                    Page.LastNotice = "已领取";
+                    Page.LastNotice = ClaimedNotice;
                     Page.LastError = "";
                     await RefreshAsync(ct).ConfigureAwait(false);
-                    if (gen == _generation || Page.LastNotice.Length == 0)
-                        Page.LastNotice = "已领取";
+                    if (Page.LastNotice.Length == 0)
+                        Page.LastNotice = ClaimedNotice;
                     return;
                 }
 
@@ -412,28 +411,35 @@ namespace GameMesh.Mail
                 for (var offset = 0; offset < ids.Count; offset += BatchLimit)
                 {
                     var count = Math.Min(BatchLimit, ids.Count - offset);
+                    var chunk = new List<ulong>(count);
+                    for (var i = 0; i < count; i++)
+                        chunk.Add(ids[offset + i]);
                     var req = new MailBatchClaimReq
                     {
                         PlayerId = _session.PlayerId,
-                        IdempotencyKeyPrefix = Stable("batch-claim", ids[offset])
+                        IdempotencyKeyPrefix = StableSet("batch-claim", chunk)
                     };
-                    for (var i = 0; i < count; i++)
-                        req.MailIds.Add(ids[offset + i]);
+                    for (var i = 0; i < chunk.Count; i++)
+                        req.MailIds.Add(chunk[i]);
                     var rsp = await _request(new GameRequest { MailBatchClaim = req }, ct).ConfigureAwait(false);
                     if (!StillCurrent(playerId, gen))
                         return;
                     var body = rsp.MailBatchClaim;
-                    if (body == null || !rsp.Ok || !body.Ok)
+                    if (IsSyncRequired(body?.ErrorCode))
                     {
-                        if (!IsSyncRequired(body?.ErrorCode))
-                        {
-                            Forget("batch-claim", ids[offset]);
-                            Page.LastError = GameErrorCatalog.FormatUi(body?.ErrorCode, body?.Message ?? rsp.Message);
-                            continue;
-                        }
+                        Page.LastNotice = "奖励已处理，正在同步背包";
+                        Page.LastError = "";
+                        continue;
                     }
 
-                    Forget("batch-claim", ids[offset]);
+                    if (body == null || !rsp.Ok || !body.Ok)
+                    {
+                        ForgetSet("batch-claim", chunk);
+                        Page.LastError = GameErrorCatalog.FormatUi(body?.ErrorCode, body?.Message ?? rsp.Message);
+                        continue;
+                    }
+
+                    ForgetSet("batch-claim", chunk);
                     if (body == null)
                         continue;
                     NoteVersion(body.MailboxVersion, body.ServerTimeUtc);
@@ -455,7 +461,8 @@ namespace GameMesh.Mail
                     }
                 }
 
-                Page.LastNotice = "领取成功 " + ok + "，失败 " + Page.ClaimFailures.Count;
+                Page.LastNotice = "邮件领取 " + ok + "，失败 " + Page.ClaimFailures.Count +
+                    (ok > 0 ? "，背包尚未确认到账" : "");
                 Page.LastError = Page.ClaimFailures.Count > 0 ? Page.ClaimFailures[0] : "";
                 var notice = Page.LastNotice;
                 var failures = new List<string>(Page.ClaimFailures);
@@ -487,8 +494,9 @@ namespace GameMesh.Mail
             var playerId = _session.PlayerId;
             try
             {
-                if (Page.Selected?.Brief != null && Page.Selected.Brief.MailId == mailId &&
-                    !Allows(Page.Selected, "favorite"))
+                var action = FavoriteAction(Page.Selected);
+                if (Page.Selected?.Brief == null || Page.Selected.Brief.MailId != mailId || action == null ||
+                    (action == "FAVORITE") != favorite)
                 {
                     Page.LastError = "当前不能收藏";
                     return;
@@ -535,7 +543,7 @@ namespace GameMesh.Mail
             var req = new MailBatchReadReq
             {
                 PlayerId = _session.PlayerId,
-                IdempotencyKey = Stable("batch-read", 0)
+                IdempotencyKey = StableSet("batch-read", ids)
             };
             for (var i = 0; i < ids.Count; i++)
                 req.MailIds.Add(ids[i]);
@@ -546,12 +554,12 @@ namespace GameMesh.Mail
             var body = rsp.MailBatchRead;
             if (body == null || !rsp.Ok || !body.Ok)
             {
-                Forget("batch-read", 0);
+                ForgetSet("batch-read", ids);
                 Page.LastError = GameErrorCatalog.FormatUi(body?.ErrorCode, body?.Message ?? rsp.Message);
                 return;
             }
 
-            Forget("batch-read", 0);
+            ForgetSet("batch-read", ids);
             NoteVersion(body.MailboxVersion, body.ServerTimeUtc);
             if (body.SuccessCount == (uint)ids.Count)
             {
@@ -567,11 +575,7 @@ namespace GameMesh.Mail
         {
             if (mailIds == null || mailIds.Count == 0)
                 return;
-            var req = new MailBatchDeleteReq
-            {
-                PlayerId = _session.PlayerId,
-                IdempotencyKey = Stable("batch-delete", 0)
-            };
+            var req = new MailBatchDeleteReq { PlayerId = _session.PlayerId };
             var n = 0;
             for (var i = 0; i < mailIds.Count && n < BatchLimit; i++)
             {
@@ -587,6 +591,8 @@ namespace GameMesh.Mail
                 return;
             }
 
+            req.IdempotencyKey = StableSet("batch-delete", req.MailIds);
+
             var gen = _generation;
             var playerId = _session.PlayerId;
             var rsp = await _request(new GameRequest { MailBatchDelete = req }, ct).ConfigureAwait(false);
@@ -595,12 +601,12 @@ namespace GameMesh.Mail
             var body = rsp.MailBatchDelete;
             if (body == null || !rsp.Ok || !body.Ok)
             {
-                Forget("batch-delete", 0);
+                ForgetSet("batch-delete", req.MailIds);
                 Page.LastError = GameErrorCatalog.FormatUi(body?.ErrorCode, body?.Message ?? rsp.Message);
                 return;
             }
 
-            Forget("batch-delete", 0);
+            ForgetSet("batch-delete", req.MailIds);
             NoteVersion(body.MailboxVersion, body.ServerTimeUtc);
             for (var i = 0; i < req.MailIds.Count; i++)
             {
@@ -610,6 +616,17 @@ namespace GameMesh.Mail
 
             Page.LastNotice = "已删除 " + body.SuccessCount;
             Page.LastError = body.FailedMailIds.Count > 0 ? "有邮件未能删除" : "";
+        }
+
+        public const string ClaimedNotice = "邮件已领取，背包尚未确认到账";
+
+        public static string FavoriteAction(MailDetail detail)
+        {
+            if (detail?.Brief == null)
+                return null;
+            if (detail.Brief.IsFavorite)
+                return Allows(detail, "UNFAVORITE") ? "UNFAVORITE" : null;
+            return Allows(detail, "FAVORITE") ? "FAVORITE" : null;
         }
 
         public static bool Allows(MailDetail detail, string action)
@@ -780,6 +797,35 @@ namespace GameMesh.Mail
         bool Begin(ulong mailId) => _busy.Add(mailId);
 
         void End(ulong mailId) => _busy.Remove(mailId);
+
+        string StableSet(string kind, IList<ulong> ids)
+        {
+            return Stable(SetKind(kind, ids), 0);
+        }
+
+        void ForgetSet(string kind, IList<ulong> ids)
+        {
+            Forget(SetKind(kind, ids), 0);
+        }
+
+        static string SetKind(string kind, IList<ulong> ids)
+        {
+            var copy = new List<ulong>();
+            if (ids != null)
+            {
+                for (var i = 0; i < ids.Count; i++)
+                {
+                    if (ids[i] != 0)
+                        copy.Add(ids[i]);
+                }
+            }
+
+            copy.Sort();
+            var text = kind ?? "";
+            for (var i = 0; i < copy.Count; i++)
+                text += ":" + copy[i].ToString(System.Globalization.CultureInfo.InvariantCulture);
+            return text;
+        }
 
         string Stable(string kind, ulong mailId)
         {
