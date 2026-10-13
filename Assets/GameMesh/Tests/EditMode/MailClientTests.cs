@@ -587,7 +587,7 @@ namespace GameMesh.Tests.EditMode
             mail.ClaimAsync(4, CancellationToken.None).GetAwaiter().GetResult();
             Assert.AreEqual(2, keys.Count);
             Assert.AreEqual(keys[0], keys[1]);
-            StringAssert.Contains("背包尚未确认到账", mail.Page.LastNotice);
+            StringAssert.Contains("背包同步中", mail.Page.LastNotice);
         }
 
         [Test]
@@ -656,6 +656,180 @@ namespace GameMesh.Tests.EditMode
             StringAssert.DoesNotContain("<", MailClient.PlainText("<color=red>hi</color>"));
             Assert.IsFalse(MailClient.Allows(new MailDetail(), "claim"));
             Assert.IsTrue(MailClient.Allows(Detail(1, "NONE", "CLAIM"), "claim"));
+        }
+
+        [Test]
+        public void BagSnapshot_ReplacesCounts_AndIgnoresTheWrongPlayer()
+        {
+            var mail = Client((req, ct) => Task.FromResult(new GameResponse { Ok = true }));
+            Assert.IsTrue(mail.ObserveBag(BagSnap(42, 5, 1001, 2).FullSnapshot));
+            Assert.AreEqual(2u, mail.Bag.Counts[1001]);
+            Assert.IsTrue(mail.ObserveBag(BagSnap(42, 5, 1001, 2).FullSnapshot));
+            Assert.AreEqual(2u, mail.Bag.Counts[1001]);
+            Assert.IsTrue(mail.ObserveBag(BagSnap(42, 4, 1001, 9).FullSnapshot));
+            Assert.AreEqual(9u, mail.Bag.Counts[1001]);
+            Assert.AreEqual(4ul, mail.Bag.AssetVersion);
+            Assert.IsFalse(mail.ObserveBag(BagSnap(7, 8, 1001, 1).FullSnapshot));
+            Assert.AreEqual(9u, mail.Bag.Counts[1001]);
+            var broken = BagSnap(42, 9, 1001, 1);
+            broken.FullSnapshot.ItemCounts.Clear();
+            Assert.IsFalse(mail.ObserveBag(broken.FullSnapshot));
+            Assert.AreEqual(9u, mail.Bag.Counts[1001]);
+        }
+
+        [Test]
+        public void Claim_ShowsArrivedOnlyAfterAssetVersionAdvances()
+        {
+            var versions = new List<ulong>();
+            var mail = Client((req, ct) =>
+            {
+                if (req.MailClaim != null)
+                {
+                    Assert.IsNull(req.GrantItem);
+                    return Task.FromResult(ClaimOk(4, "CLAIMED"));
+                }
+
+                if (req.WorldSnapshot != null)
+                {
+                    versions.Add(6);
+                    return Task.FromResult(BagSnap(42, 6, 1001, 3));
+                }
+
+                if (req.MailboxSummary != null)
+                    return Task.FromResult(Summary(0, 0, 0, 0, 0, 2, 10));
+                return Task.FromResult(List(2, 10, "", Brief(4, "SYSTEM", "READ", true, "CLAIMED")));
+            });
+            mail.ObserveBag(BagSnap(42, 5, 1001, 1).FullSnapshot);
+            mail.Page.Selected = Detail(4, "UNCLAIMED", "CLAIM");
+            mail.Page.Mails.Add(mail.Page.Selected.Brief);
+            mail.ClaimAsync(4, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(MailClient.ConfirmedNotice, mail.Page.LastNotice);
+            Assert.AreEqual(3u, mail.Bag.Counts[1001]);
+            Assert.AreEqual(1, versions.Count);
+
+            var held = Client((req, ct) =>
+            {
+                if (req.MailClaim != null)
+                    return Task.FromResult(ClaimOk(4, "CLAIMED"));
+                if (req.WorldSnapshot != null)
+                    return Task.FromResult(BagSnap(42, 5, 1001, 1));
+                if (req.MailboxSummary != null)
+                    return Task.FromResult(Summary(0, 0, 0, 0, 0, 2, 10));
+                return Task.FromResult(List(2, 10, "", Brief(4, "SYSTEM", "READ", true, "CLAIMED")));
+            });
+            held.ObserveBag(BagSnap(42, 5, 1001, 1).FullSnapshot);
+            held.Page.Selected = Detail(4, "UNCLAIMED", "CLAIM");
+            held.Page.Mails.Add(held.Page.Selected.Brief);
+            held.ClaimAsync(4, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(MailClient.ClaimedNotice, held.Page.LastNotice);
+            Assert.AreEqual(1u, held.Bag.Counts[1001]);
+        }
+
+        [Test]
+        public void BatchClaim_AllFailedRowsStayVisible_AndRetryReusesTheKey()
+        {
+            var keys = new List<string>();
+            var mail = Client((req, ct) =>
+            {
+                if (req.MailBatchClaim != null)
+                {
+                    keys.Add(req.MailBatchClaim.IdempotencyKeyPrefix);
+                    return Task.FromResult(new GameResponse
+                    {
+                        Ok = false,
+                        MailBatchClaim = new MailBatchClaimRsp
+                        {
+                            Ok = false,
+                            Results =
+                            {
+                                new MailClaimResult { MailId = 1, Ok = false, ErrorCode = "INVENTORY_FULL", Message = "full" },
+                                new MailClaimResult { MailId = 2, Ok = false, ErrorCode = "INVALID_ATTACHMENT", Message = "bad" }
+                            }
+                        }
+                    });
+                }
+
+                if (req.WorldSnapshot != null)
+                    return Task.FromResult(new GameResponse { Ok = true });
+                if (req.MailboxSummary != null)
+                    return Task.FromResult(Summary(0, 0, 0, 0, 2, 1, 10));
+                return Task.FromResult(List(1, 10, "",
+                    Brief(1, "SYSTEM", "READ", true, "UNCLAIMED"),
+                    Brief(2, "SYSTEM", "READ", true, "UNCLAIMED")));
+            });
+            mail.Page.Mails.Add(Brief(1, "SYSTEM", "READ", true, "UNCLAIMED"));
+            mail.Page.Mails.Add(Brief(2, "SYSTEM", "READ", true, "UNCLAIMED"));
+            mail.BatchClaimAsync(CancellationToken.None).GetAwaiter().GetResult();
+            mail.BatchClaimAsync(CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(2, keys.Count);
+            Assert.AreEqual(keys[0], keys[1]);
+            Assert.AreEqual(2, mail.Page.ClaimFailures.Count);
+            StringAssert.Contains("背包已满", mail.Page.ClaimFailures[0]);
+            StringAssert.DoesNotContain("全部", mail.Page.LastNotice);
+            StringAssert.DoesNotContain("已到账", mail.Page.LastNotice);
+            Assert.AreEqual("UNCLAIMED", mail.Page.Mails[0].AttachmentState);
+        }
+
+        [Test]
+        public void AlreadyClaimed_DoesNotAddItems()
+        {
+            var mail = Client((req, ct) =>
+            {
+                if (req.MailClaim != null)
+                {
+                    return Task.FromResult(new GameResponse
+                    {
+                        Ok = false,
+                        MailClaim = new MailClaimRsp
+                        {
+                            Ok = false,
+                            ErrorCode = "ALREADY_CLAIMED",
+                            Result = new MailClaimResult { Ok = false, MailId = 4, ErrorCode = "ALREADY_CLAIMED", AttachmentState = "CLAIMED" }
+                        }
+                    });
+                }
+
+                if (req.WorldSnapshot != null)
+                    return Task.FromResult(BagSnap(42, 5, 1001, 1));
+                if (req.MailboxSummary != null)
+                    return Task.FromResult(Summary(0, 0, 0, 0, 0, 2, 10));
+                return Task.FromResult(List(2, 10, "", Brief(4, "SYSTEM", "READ", true, "CLAIMED")));
+            });
+            mail.ObserveBag(BagSnap(42, 5, 1001, 1).FullSnapshot);
+            mail.Page.Selected = Detail(4, "UNCLAIMED", "CLAIM");
+            mail.Page.Mails.Add(mail.Page.Selected.Brief);
+            mail.ClaimAsync(4, CancellationToken.None).GetAwaiter().GetResult();
+            Assert.AreEqual(1u, mail.Bag.Counts[1001]);
+            Assert.AreNotEqual(MailClient.ConfirmedNotice, mail.Page.LastNotice);
+        }
+
+        [Test]
+        public void Clear_DropsTheBagForTheNextCharacter()
+        {
+            var session = new GameSession { PlayerId = 42 };
+            var mail = new MailClient(session, (req, ct) => Task.FromResult(new GameResponse { Ok = true }));
+            mail.ObserveBag(BagSnap(42, 3, 1001, 4).FullSnapshot);
+            session.PlayerId = 99;
+            mail.Clear();
+            mail.ObserveBag(BagSnap(42, 4, 1001, 8).FullSnapshot);
+            Assert.IsFalse(mail.Bag.HasSnapshot);
+            Assert.AreEqual(0, mail.Bag.Counts.Count);
+        }
+
+        static GameResponse BagSnap(ulong playerId, ulong version, uint itemId, uint count)
+        {
+            return new GameResponse
+            {
+                Ok = true,
+                FullSnapshot = new FullStateSnapshotRsp
+                {
+                    Ok = true,
+                    PlayerId = playerId,
+                    AssetVersion = version,
+                    ItemIds = { itemId },
+                    ItemCounts = { count }
+                }
+            };
         }
 
         static MailClient Client(Func<GameRequest, CancellationToken, Task<GameResponse>> request)

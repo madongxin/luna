@@ -95,6 +95,6 @@ PlayMode **NOT RUN**。双账号 **BLOCKED**：没有邮件实机脚本，`GAMEM
 
 - 服务端协议合同不在本仓库。客户端按 `READ` / `CLAIM` / `FAVORITE` / `UNFAVORITE` / `DELETE` 精确匹配，未知词不开放按钮。
 - 没有物品图鉴。附件只有编号和数量。
-- P0：客户端运行时没有背包快照或资产版本接口。领取成功只再拉邮箱，文案明确背包尚未确认。不能把这一步写成道具已到账。
+- 权威背包只认已有的 `WorldSnapshotReq` / `FullStateSnapshotRsp.asset_version`。没有版本前进时不显示「已到账」。真实双端对账见 `docs/mail_reward_client_e2e_report.md`。
 - `SendAsync` 仍能发 `PlayerMailSend`，只是 V1 界面不再调用。这是 V2 写信，不是 `MailDeliver`。
 - 没有双账号日志，上线前需要真实 Gateway 走一遍：系统投递、登录、已读、单领、一键领取、收藏、删除、离线重登、换角。

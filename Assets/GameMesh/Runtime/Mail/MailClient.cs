@@ -37,6 +37,7 @@ namespace GameMesh.Mail
         string _pendingSendOpId;
         float _serverMarkUnscaled;
         readonly Dictionary<string, string> _keys = new Dictionary<string, string>();
+        readonly Dictionary<ulong, string> _reward = new Dictionary<ulong, string>();
         readonly HashSet<ulong> _busy = new HashSet<ulong>();
         int _refreshDepth;
         int _refreshAgain;
@@ -53,6 +54,7 @@ namespace GameMesh.Mail
         public bool FilterExpiring;
 
         public MailListPage Page { get; } = new MailListPage();
+        public AuthoritativeBag Bag { get; } = new AuthoritativeBag();
         public float PollIntervalSeconds = 10f;
         public float DebounceSeconds = 0.4f;
         public bool PanelOpen;
@@ -85,7 +87,9 @@ namespace GameMesh.Mail
             Page.LastIdempotentHit = false;
             _pendingSendOpId = null;
             _keys.Clear();
+            _reward.Clear();
             _busy.Clear();
+            Bag.Clear();
             _debounceUntil = 0f;
             _serverMarkUnscaled = 0f;
             Loading = false;
@@ -336,20 +340,25 @@ namespace GameMesh.Mail
 
                     if (string.Equals(Page.Selected.Brief.AttachmentState, "CLAIMING", StringComparison.OrdinalIgnoreCase))
                     {
-                        Page.LastNotice = "奖励已处理，正在同步背包";
+                        MarkReward(mailId, UnknownNotice);
+                        Page.LastNotice = UnknownNotice;
                         Page.LastError = "";
                         await RefreshAsync(ct).ConfigureAwait(false);
+                        if (_session.PlayerId == playerId)
+                            await FinishClaimRecoveryAsync(mailId, playerId, ct).ConfigureAwait(false);
                         return;
                     }
                 }
 
+                var key = Stable("claim", mailId);
                 var rsp = await _request(new GameRequest
                 {
                     MailClaim = new MailClaimReq
                     {
                         PlayerId = _session.PlayerId,
                         MailId = mailId,
-                        IdempotencyKey = Stable("claim", mailId)
+                        IdempotencyKey = key,
+                        TraceId = key
                     }
                 }, ct).ConfigureAwait(false);
                 if (!StillCurrent(playerId, gen))
@@ -357,11 +366,41 @@ namespace GameMesh.Mail
                 var body = rsp.MailClaim;
                 var result = body?.Result;
                 var code = FirstCode(result?.ErrorCode, body?.ErrorCode, ProtocolMapper.ExtractErrorCode(rsp));
-                if (IsSyncRequired(code))
+                if (IsUncertain(code))
                 {
-                    Page.LastNotice = "奖励已处理，正在同步背包";
+                    MarkReward(mailId, UnknownNotice);
+                    Page.LastNotice = UnknownNotice;
                     Page.LastError = "";
                     await RefreshAsync(ct).ConfigureAwait(false);
+                    if (_session.PlayerId == playerId)
+                        await FinishClaimRecoveryAsync(mailId, playerId, ct).ConfigureAwait(false);
+                    return;
+                }
+
+                if (IsBagFull(code))
+                {
+                    Forget("claim", mailId);
+                    MarkReward(mailId, BagFullNotice);
+                    Page.LastNotice = BagFullNotice;
+                    Page.LastError = BagFullNotice;
+                    return;
+                }
+
+                if (IsAlreadyClaimed(code))
+                {
+                    Forget("claim", mailId);
+                    if (string.Equals(result?.AttachmentState, "CLAIMED", StringComparison.OrdinalIgnoreCase))
+                        ApplyClaimed(mailId, result.AttachmentState);
+                    NoteVersion(body?.MailboxVersion ?? 0, body?.ServerTimeUtc ?? 0);
+                    await RefreshAsync(ct).ConfigureAwait(false);
+                    if (_session.PlayerId != playerId)
+                        return;
+                    var alreadyAdvanced = await PullBagAsync(playerId, ct).ConfigureAwait(false);
+                    Page.LastNotice = MailLooksClaimed(mailId)
+                        ? (alreadyAdvanced ? ConfirmedNotice : ClaimedNotice)
+                        : UnknownNotice;
+                    MarkReward(mailId, Page.LastNotice);
+                    Page.LastError = "";
                     return;
                 }
 
@@ -370,15 +409,20 @@ namespace GameMesh.Mail
                     Forget("claim", mailId);
                     NoteVersion(body.MailboxVersion, body.ServerTimeUtc);
                     ApplyClaimed(mailId, result?.AttachmentState);
-                    Page.LastNotice = ClaimedNotice;
-                    Page.LastError = "";
+                    MarkReward(mailId, ClaimedNotice);
                     await RefreshAsync(ct).ConfigureAwait(false);
-                    if (Page.LastNotice.Length == 0)
-                        Page.LastNotice = ClaimedNotice;
+                    if (_session.PlayerId != playerId)
+                        return;
+                    var advanced = await PullBagAsync(playerId, ct).ConfigureAwait(false);
+                    Page.LastNotice = advanced ? ConfirmedNotice : ClaimedNotice;
+                    MarkReward(mailId, Page.LastNotice);
+                    Page.LastError = "";
                     return;
                 }
 
                 Forget("claim", mailId);
+                MarkReward(mailId, RetryNotice);
+                Page.LastNotice = RetryNotice;
                 Page.LastError = GameErrorCatalog.FormatUi(string.IsNullOrEmpty(code) ? GameMeshErrorCode.ServerError : code,
                     result?.Message ?? body?.Message ?? rsp.Message);
             }
@@ -386,9 +430,12 @@ namespace GameMesh.Mail
             {
                 if (StillCurrent(playerId, gen))
                 {
-                    Page.LastNotice = "领取结果未确认，正在同步";
+                    MarkReward(mailId, UnknownNotice);
+                    Page.LastNotice = UnknownNotice;
                     Page.LastError = "";
                     await RefreshAsync(ct).ConfigureAwait(false);
+                    if (_session.PlayerId == playerId)
+                        await FinishClaimRecoveryAsync(mailId, playerId, ct).ConfigureAwait(false);
                 }
             }
             finally
@@ -408,16 +455,19 @@ namespace GameMesh.Mail
             {
                 Page.ClaimFailures.Clear();
                 var ok = 0;
+                var keepKey = false;
                 for (var offset = 0; offset < ids.Count; offset += BatchLimit)
                 {
                     var count = Math.Min(BatchLimit, ids.Count - offset);
                     var chunk = new List<ulong>(count);
                     for (var i = 0; i < count; i++)
                         chunk.Add(ids[offset + i]);
+                    var prefix = StableSet("batch-claim", chunk);
                     var req = new MailBatchClaimReq
                     {
                         PlayerId = _session.PlayerId,
-                        IdempotencyKeyPrefix = StableSet("batch-claim", chunk)
+                        IdempotencyKeyPrefix = prefix,
+                        TraceId = prefix
                     };
                     for (var i = 0; i < chunk.Count; i++)
                         req.MailIds.Add(chunk[i]);
@@ -425,24 +475,16 @@ namespace GameMesh.Mail
                     if (!StillCurrent(playerId, gen))
                         return;
                     var body = rsp.MailBatchClaim;
-                    if (IsSyncRequired(body?.ErrorCode))
+                    if (body == null || body.Results.Count == 0)
                     {
-                        Page.LastNotice = "奖励已处理，正在同步背包";
-                        Page.LastError = "";
-                        continue;
-                    }
-
-                    if (body == null || !rsp.Ok || !body.Ok)
-                    {
-                        ForgetSet("batch-claim", chunk);
+                        keepKey = true;
                         Page.LastError = GameErrorCatalog.FormatUi(body?.ErrorCode, body?.Message ?? rsp.Message);
                         continue;
                     }
 
-                    ForgetSet("batch-claim", chunk);
-                    if (body == null)
-                        continue;
                     NoteVersion(body.MailboxVersion, body.ServerTimeUtc);
+                    var rowFail = false;
+                    var rowUncertain = IsUncertain(FirstCode(body.ErrorCode, ProtocolMapper.ExtractErrorCode(rsp)));
                     for (var i = 0; i < body.Results.Count; i++)
                     {
                         var row = body.Results[i];
@@ -452,17 +494,49 @@ namespace GameMesh.Mail
                         {
                             ok++;
                             ApplyClaimed(row.MailId, row.AttachmentState);
+                            MarkReward(row.MailId, ClaimedNotice);
+                            continue;
+                        }
+
+                        if (IsUncertain(row.ErrorCode))
+                        {
+                            rowUncertain = true;
+                            MarkReward(row.MailId, UnknownNotice);
+                        }
+                        else if (IsBagFull(row.ErrorCode))
+                        {
+                            rowFail = true;
+                            MarkReward(row.MailId, BagFullNotice);
                         }
                         else
                         {
-                            Page.ClaimFailures.Add("#" + row.MailId + " " +
-                                GameErrorCatalog.FormatUi(row.ErrorCode, row.Message));
+                            rowFail = true;
+                            MarkReward(row.MailId, RetryNotice);
                         }
+
+                        var reason = IsBagFull(row.ErrorCode)
+                            ? BagFullNotice
+                            : GameErrorCatalog.FormatUi(row.ErrorCode, row.Message);
+                        Page.ClaimFailures.Add("#" + row.MailId + " " + reason);
                     }
+
+                    if (rowFail || rowUncertain || !body.Ok)
+                        keepKey = true;
+                    else
+                        ForgetSet("batch-claim", chunk);
                 }
 
-                Page.LastNotice = "邮件领取 " + ok + "，失败 " + Page.ClaimFailures.Count +
-                    (ok > 0 ? "，背包尚未确认到账" : "");
+                var advanced = _session.PlayerId == playerId && await PullBagAsync(playerId, ct).ConfigureAwait(false);
+                if (advanced && ok > 0 && Page.ClaimFailures.Count == 0 && !keepKey)
+                    Page.LastNotice = ConfirmedNotice;
+                else if (ok > 0 && Page.ClaimFailures.Count > 0)
+                    Page.LastNotice = "邮件领取 " + ok + "，失败 " + Page.ClaimFailures.Count;
+                else if (ok > 0)
+                    Page.LastNotice = ClaimedNotice;
+                else if (keepKey)
+                    Page.LastNotice = UnknownNotice;
+                else
+                    Page.LastNotice = "失败 " + Page.ClaimFailures.Count;
                 Page.LastError = Page.ClaimFailures.Count > 0 ? Page.ClaimFailures[0] : "";
                 var notice = Page.LastNotice;
                 var failures = new List<string>(Page.ClaimFailures);
@@ -478,7 +552,10 @@ namespace GameMesh.Mail
             catch (Exception ex) when (IsTimeout(ex))
             {
                 if (StillCurrent(playerId, gen))
-                    Page.LastNotice = "领取结果未确认，正在同步";
+                {
+                    Page.LastNotice = UnknownNotice;
+                    Page.LastError = "";
+                }
             }
             finally
             {
@@ -618,7 +695,37 @@ namespace GameMesh.Mail
             Page.LastError = body.FailedMailIds.Count > 0 ? "有邮件未能删除" : "";
         }
 
-        public const string ClaimedNotice = "邮件已领取，背包尚未确认到账";
+        public const string ClaimedNotice = "邮件已领取，背包同步中";
+        public const string ConfirmedNotice = "已到账";
+        public const string UnknownNotice = "领取结果未确认，正在同步背包";
+        public const string BagFullNotice = "背包已满";
+        public const string RetryNotice = "领取失败，可重试";
+
+        public string RewardLabel(ulong mailId)
+        {
+            string label;
+            return _reward.TryGetValue(mailId, out label) ? label : "";
+        }
+
+        public bool ObserveBag(FullStateSnapshotRsp snap)
+        {
+            var advanced = false;
+            if (!Bag.TryReplace(snap, _session.PlayerId, out advanced))
+                return false;
+            if (advanced)
+                PromoteConfirmed();
+            return true;
+        }
+
+        public async Task ReconcileBagAsync(CancellationToken ct)
+        {
+            var playerId = _session.PlayerId;
+            var advanced = await PullBagAsync(playerId, ct).ConfigureAwait(false);
+            if (_session.PlayerId != playerId)
+                return;
+            if (advanced)
+                PromoteConfirmed();
+        }
 
         public static string FavoriteAction(MailDetail detail)
         {
@@ -985,10 +1092,121 @@ namespace GameMesh.Mail
             return "";
         }
 
+        async Task FinishClaimRecoveryAsync(ulong mailId, ulong playerId, CancellationToken ct)
+        {
+            var advanced = await PullBagAsync(playerId, ct).ConfigureAwait(false);
+            if (_session.PlayerId != playerId)
+                return;
+            if (MailLooksClaimed(mailId) && advanced)
+            {
+                Forget("claim", mailId);
+                MarkReward(mailId, ConfirmedNotice);
+                Page.LastNotice = ConfirmedNotice;
+                Page.LastError = "";
+                return;
+            }
+
+            if (MailLooksClaimed(mailId))
+            {
+                MarkReward(mailId, ClaimedNotice);
+                Page.LastNotice = ClaimedNotice;
+                Page.LastError = "";
+            }
+        }
+
+        async Task<bool> PullBagAsync(ulong playerId, CancellationToken ct)
+        {
+            var gen = _generation;
+            GameResponse rsp;
+            try
+            {
+                rsp = await _request(new GameRequest
+                {
+                    WorldSnapshot = new WorldSnapshotReq { PlayerId = playerId }
+                }, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (IsTimeout(ex))
+            {
+                return false;
+            }
+
+            if (!StillCurrent(playerId, gen) || rsp == null)
+                return false;
+            var advanced = false;
+            Bag.TryReplace(rsp.FullSnapshot, playerId, out advanced);
+            return advanced;
+        }
+
+        void MarkReward(ulong mailId, string label)
+        {
+            if (mailId == 0 || string.IsNullOrEmpty(label))
+                return;
+            _reward[mailId] = label;
+        }
+
+        void PromoteConfirmed()
+        {
+            var ids = new List<ulong>(_reward.Keys);
+            var any = false;
+            for (var i = 0; i < ids.Count; i++)
+            {
+                var label = _reward[ids[i]];
+                if (label != ClaimedNotice && label != UnknownNotice)
+                    continue;
+                if (!MailLooksClaimed(ids[i]))
+                    continue;
+                _reward[ids[i]] = ConfirmedNotice;
+                Forget("claim", ids[i]);
+                any = true;
+            }
+
+            if (any && Page.ClaimFailures.Count == 0)
+            {
+                Page.LastNotice = ConfirmedNotice;
+                Page.LastError = "";
+            }
+        }
+
+        bool MailLooksClaimed(ulong mailId)
+        {
+            if (Page.Selected?.Brief != null && Page.Selected.Brief.MailId == mailId &&
+                string.Equals(Page.Selected.Brief.AttachmentState, "CLAIMED", StringComparison.OrdinalIgnoreCase))
+                return true;
+            for (var i = 0; i < Page.Mails.Count; i++)
+            {
+                var brief = Page.Mails[i];
+                if (brief != null && brief.MailId == mailId &&
+                    string.Equals(brief.AttachmentState, "CLAIMED", StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+
+            return false;
+        }
+
         static bool IsSyncRequired(string code)
         {
             return !string.IsNullOrEmpty(code) &&
                    code.IndexOf("STATE_SYNC", StringComparison.OrdinalIgnoreCase) >= 0;
+        }
+
+        static bool IsUncertain(string code)
+        {
+            return IsSyncRequired(code) ||
+                   (!string.IsNullOrEmpty(code) &&
+                    code.IndexOf("CLAIM_IN_PROGRESS", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        static bool IsBagFull(string code)
+        {
+            return !string.IsNullOrEmpty(code) &&
+                   (code.IndexOf("INVENTORY_FULL", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    code.IndexOf("BAG_FULL", StringComparison.OrdinalIgnoreCase) >= 0);
+        }
+
+        static bool IsAlreadyClaimed(string code)
+        {
+            return !string.IsNullOrEmpty(code) &&
+                   code.IndexOf("ALREADY_CLAIMED", StringComparison.OrdinalIgnoreCase) >= 0;
         }
 
         static bool IsTimeout(Exception ex)

@@ -223,8 +223,10 @@ namespace GameMesh.UI
 
         void Refresh()
         {
-            if (_client != null)
-                _ = _client.Mail.RefreshAsync(default);
+            if (_client == null)
+                return;
+            _ = _client.Mail.RefreshAsync(default);
+            _ = _client.Mail.ReconcileBagAsync(default);
         }
 
         void SetCategory(string category)
@@ -366,13 +368,28 @@ namespace GameMesh.UI
 
             var bar = Row(_detail, 8, -126, 400, 34);
             var mailId = detail.Brief.MailId;
-            if (MailClient.Allows(detail, "claim"))
+            var reward = mail.RewardLabel(mailId);
+            if (reward == MailClient.ConfirmedNotice)
+            {
+                Action(bar, "已到账", () => { });
+            }
+            else if (MailClient.Allows(detail, "claim") || reward == MailClient.UnknownNotice)
             {
                 var busy = mail.IsBusy(mailId);
-                Action(bar, busy ? "领取中" : "领取", () =>
+                var caption = busy ? "领取中" : reward == MailClient.UnknownNotice ? "领取结果未确认" : "领取";
+                Action(bar, caption, () =>
                 {
                     if (!mail.IsBusy(mailId))
                         _ = mail.ClaimAsync(mailId, default);
+                });
+            }
+
+            if (reward == MailClient.ClaimedNotice || reward == MailClient.UnknownNotice || reward == MailClient.BagFullNotice)
+            {
+                Action(bar, "刷新背包", () =>
+                {
+                    if (!mail.IsBusy(mailId))
+                        _ = mail.ReconcileBagAsync(default);
                 });
             }
             var favoriteAction = MailClient.FavoriteAction(detail);
@@ -416,6 +433,8 @@ namespace GameMesh.UI
                     (mail.FilterExpiring ? 4 : 0) + (mail.FilterFavorite ? 8 : 0);
                 h = h * 31 + (page.LastError ?? "").GetHashCode();
                 h = h * 31 + (page.LastNotice ?? "").GetHashCode();
+                h = h * 31 + mail.Bag.AssetVersion.GetHashCode();
+                h = h * 31 + (mail.RewardLabel(page.Selected?.Brief != null ? page.Selected.Brief.MailId : 0) ?? "").GetHashCode();
                 h = h * 31 + (int)_deleteId;
                 if (page.Selected?.Brief != null)
                     h = h * 31 + page.Selected.Brief.GetHashCode();

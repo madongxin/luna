@@ -2558,6 +2558,8 @@ namespace GameMesh.Bootstrap
 
         bool ApplyValidatedSnapshot(FullStateSnapshotRsp snap)
         {
+            if (Mail != null)
+                Mail.ObserveBag(snap);
             if (!WorldSnapshotApplier.TryBuild(snap, Session.PlayerId, Session.MapInstanceId,
                     Session.SnapshotVersion, out var model, out var code, out var message))
             {
