@@ -694,7 +694,7 @@ namespace GameMesh.Bootstrap
                 ",\"duration_ms\":" + duration +
                 ",\"error_code\":\"" + Escape(_client.LastErrorCode) +
                 "\",\"client_commit\":\"" + Escape(ReadClientCommit()) +
-                "\",\"server_commit\":\"" + Escape(ReadManifestField("source_commit")) +
+                "\",\"server_commit\":\"" + Escape(ReadServerCommit()) +
                 "\",\"schema_sha256\":\"" + Escape(_client.ProtocolSchemaSha256) +
                 "\",\"map_manifest_version\":" + _client.Config.dataVersion +
                 ",\"gateway\":\"" + Escape(_client.Config.host + ":" + _client.Config.port) +
@@ -734,6 +734,14 @@ namespace GameMesh.Bootstrap
             while (end < json.Length && (char.IsDigit(json[end]) || json[end] == ' '))
                 end++;
             return ulong.TryParse(json.Substring(colon + 1, end - colon - 1).Trim(), out var v) ? v : 0UL;
+        }
+
+        string ReadServerCommit()
+        {
+            var commit = ReadManifestField("source_commit");
+            if (string.IsNullOrEmpty(commit))
+                commit = ReadManifestField("server_commit");
+            return commit;
         }
 
         string ReadManifestField(string key)

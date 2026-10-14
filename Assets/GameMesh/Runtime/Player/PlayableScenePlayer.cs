@@ -500,6 +500,12 @@ namespace GameMesh.Player
 
         static Pose ResolveSpawn()
         {
+            var client = GameMesh.Bootstrap.GameMeshClient.Instance;
+            if (client != null && client.HasPendingSpawn && client.PendingSpawnFromServer)
+            {
+                return new Pose(client.PendingSpawn, Quaternion.Euler(0f, client.PendingSpawnYaw, 0f));
+            }
+
             var marker = FindObjectOfType<GameMeshSpawnPoint>();
             if (marker != null)
                 return new Pose(marker.transform.position, Quaternion.Euler(0f, marker.yaw, 0f));

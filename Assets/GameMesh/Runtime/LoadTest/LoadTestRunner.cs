@@ -163,11 +163,7 @@ namespace GameMesh.LoadTest
                 }
 
                 TargetLineNo = ResolvePreferredLine(GameMeshClient.Instance);
-                if (client != null && client.Config.port > 0)
-                {
-                    portA = client.Config.port;
-                    portB = client.Config.port;
-                }
+                ResolveLoadTestPorts(ref portA, ref portB);
 
                 _phase = "集体登录 " + count + "  端口 " + portA + "/" + portB;
 
@@ -372,12 +368,22 @@ namespace GameMesh.LoadTest
                 : "本号已进图，正在拉视野");
         }
 
-        static int PickPort(int index, int portA, int portB)
+        static void ResolveLoadTestPorts(ref int portA, ref int portB)
         {
             if (portA <= 0)
                 portA = 8081;
             if (portB <= 0)
                 portB = 8083;
+            if (portA == portB && (portA == 8081 || portA == 8083))
+            {
+                portA = 8081;
+                portB = 8083;
+            }
+        }
+
+        static int PickPort(int index, int portA, int portB)
+        {
+            ResolveLoadTestPorts(ref portA, ref portB);
             if (portA == portB)
                 return portA;
             return (index & 1) == 0 ? portA : portB;
@@ -385,10 +391,7 @@ namespace GameMesh.LoadTest
 
         int PickBalancedPort(int portA, int portB)
         {
-            if (portA <= 0)
-                portA = 8081;
-            if (portB <= 0)
-                portB = 8083;
+            ResolveLoadTestPorts(ref portA, ref portB);
             if (portA == portB)
                 return portA;
             return InWorldOnPort(portA) <= InWorldOnPort(portB) ? portA : portB;

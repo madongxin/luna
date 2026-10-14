@@ -244,7 +244,7 @@ namespace GameMesh.UI
                     near = "    最近 " + botName + " " + dist.ToString("0") + "m";
                 else if (bots > 0 && client.Aoi.Entities.Count == 0)
                     near = "    同线视野空，正在拉快照";
-                text = "已拉回出生点    " +
+                text = "已在地图中    " +
                        (client.Lines.LineNo != 0 ? client.Lines.LineNo + "线 " +
                            client.Lines.Occupancy + "/" + client.Lines.EffectiveSplitAt + "    " : "") +
                        "AOI " + client.Aoi.Entities.Count +
@@ -335,6 +335,7 @@ namespace GameMesh.UI
                     : (client.Session.MapInstanceId != 0 ? "在图" : "-")) +
                 "    地图实例  " + client.Session.MapInstanceId +
                 "    AOI  " + client.Aoi.Entities.Count, _label);
+            GUILayout.Label(LocalCoordText(client), _label);
             if (client.IsDungeon)
                 GUILayout.Label("当前在副本 2102（画面是 1001）。点「返回 1002」离开副本回苏州。", _statusWarn);
             GUILayout.Label(
@@ -358,6 +359,14 @@ namespace GameMesh.UI
                 GUILayout.Label(client.LastErrorUi, _statusErr);
             if (client.MapBlocked)
                 GUILayout.Label("进图被阻止  " + client.MapBlockReason, _statusErr);
+        }
+
+        static string LocalCoordText(GameMeshClient client)
+        {
+            var binder = client != null ? client.GetComponent<GameMeshWorldBinder>() : null;
+            if (binder == null || !binder.TryLocalPosition(out var pos))
+                return "坐标  -";
+            return "坐标  " + pos.x.ToString("0.00") + ",  " + pos.y.ToString("0.00") + ",  " + pos.z.ToString("0.00");
         }
 
         void DrawAuth(GameMeshClient client)

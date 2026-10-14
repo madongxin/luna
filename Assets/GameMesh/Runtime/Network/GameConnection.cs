@@ -79,6 +79,8 @@ namespace GameMesh.Network
             if (current != ConnectionState.Disconnected && current != ConnectionState.Reconnecting)
                 throw new GameMeshException(GameMeshErrorCode.ClientIllegalState, $"ConnectAsync from {current}");
 
+            lock (_stateGate)
+                _generation++;
             SetState(ConnectionState.Connecting);
             TcpClient tcp = null;
             try
@@ -106,10 +108,10 @@ namespace GameMesh.Network
                     _stream = tcp.GetStream();
                     _failClosed = false;
                     _loopCts = new CancellationTokenSource();
-                    _generation++;
                     var loopToken = _loopCts.Token;
-                    _recvTask = Task.Run(() => ReceiveLoopAsync(loopToken), loopToken);
-                    _sendTask = Task.Run(() => SendLoopAsync(loopToken), loopToken);
+                    var loopGeneration = _generation;
+                    _recvTask = Task.Run(() => ReceiveLoopAsync(loopToken, loopGeneration), loopToken);
+                    _sendTask = Task.Run(() => SendLoopAsync(loopToken, loopGeneration), loopToken);
                 }
 
                 SetState(ConnectionState.Handshaking);
@@ -287,7 +289,7 @@ namespace GameMesh.Network
             return request.Seq;
         }
 
-        async Task SendLoopAsync(CancellationToken ct)
+        async Task SendLoopAsync(CancellationToken ct, int generation)
         {
             try
             {
@@ -311,11 +313,11 @@ namespace GameMesh.Network
             }
             catch (Exception ex)
             {
-                FailClosed(ex);
+                FailClosed(ex, generation);
             }
         }
 
-        async Task ReceiveLoopAsync(CancellationToken ct)
+        async Task ReceiveLoopAsync(CancellationToken ct, int generation)
         {
             var buffer = new List<byte>(4096);
             var read = new byte[ReadBufferSize];
@@ -329,7 +331,7 @@ namespace GameMesh.Network
                     var n = await stream.ReadAsync(read, 0, read.Length, ct).ConfigureAwait(false);
                     if (n <= 0)
                     {
-                        FailClosed(new GameMeshException(GameMeshErrorCode.ClientDisconnected, "remote closed"));
+                        FailClosed(new GameMeshException(GameMeshErrorCode.ClientDisconnected, "remote closed"), generation);
                         return;
                     }
 
@@ -343,7 +345,7 @@ namespace GameMesh.Network
                             break;
                         if (status == FrameDecodeStatus.InvalidLength)
                         {
-                            FailClosed(new GameMeshException(GameMeshErrorCode.ClientProtocol, $"bad frame length {length}"));
+                            FailClosed(new GameMeshException(GameMeshErrorCode.ClientProtocol, $"bad frame length {length}"), generation);
                             return;
                         }
 
@@ -354,7 +356,7 @@ namespace GameMesh.Network
                         }
                         catch (Exception ex)
                         {
-                            FailClosed(new GameMeshException(GameMeshErrorCode.ClientProtocol, "bad protobuf", ex));
+                            FailClosed(new GameMeshException(GameMeshErrorCode.ClientProtocol, "bad protobuf", ex), generation);
                             return;
                         }
 
@@ -367,7 +369,7 @@ namespace GameMesh.Network
             }
             catch (Exception ex)
             {
-                FailClosed(ex);
+                FailClosed(ex, generation);
             }
         }
 
@@ -403,11 +405,14 @@ namespace GameMesh.Network
             }
         }
 
-        void FailClosed(Exception ex)
+        void FailClosed(Exception ex, int generation)
         {
-            if (_failClosed)
-                return;
-            _failClosed = true;
+            lock (_stateGate)
+            {
+                if (generation != _generation || _failClosed)
+                    return;
+                _failClosed = true;
+            }
             if (!Quiet)
                 GameMeshLog.Info($"fail-closed {Redact(ex.Message)}");
             FailPending(ex is GameMeshException ge
@@ -418,6 +423,8 @@ namespace GameMesh.Network
             try { _tcp?.Close(); } catch { /* ignore */ }
             _dispatcher.Enqueue(() =>
             {
+                if (generation != _generation)
+                    return;
                 if (State != ConnectionState.Disconnected && State != ConnectionState.Closing)
                     SetState(ConnectionState.Disconnected);
             });

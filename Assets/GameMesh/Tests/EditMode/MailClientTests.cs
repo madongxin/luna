@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using GameMesh.Auth;
+using Google.Protobuf;
 using GameMesh.Mail;
 using GameMesh.Protocol;
 using NUnit.Framework;

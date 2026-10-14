@@ -331,16 +331,35 @@ namespace GameMesh.LoadTest
             }
 
             _mapInstanceId = rsp.EnterMap.MapInstanceId;
-            _pos = rsp.EnterMap.SpawnPosition != null
+            _spawn = rsp.EnterMap.SpawnPosition != null
                 ? ProtocolMapper.ToUnity(rsp.EnterMap.SpawnPosition)
                 : new Vector3(-26f, -0.2f, -5f);
-            _spawn = _pos;
-            // Stay inside map 1002's 32m AOI cell so the local player at spawn can see them.
             var angle = _index * 2.39996323f;
-            var ring = 2f + Mathf.Sqrt((_index % 48) / 47f) * 6f;
+            var ring = 20f + Mathf.Sqrt(_index) * 16f;
             _home = _spawn + new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle)) * ring;
+            _pos = _home;
             _yaw = rsp.EnterMap.SpawnYaw;
             _conn.SetLogicalState(ConnectionState.InWorld);
+            try
+            {
+                var moved = await SendAsync(new GameRequest
+                {
+                    Move = new MoveReq
+                    {
+                        PlayerId = _playerId,
+                        MapInstanceId = _mapInstanceId,
+                        Position = ProtocolMapper.ToVec3(_pos),
+                        Yaw = _yaw,
+                        ClientTimeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                    }
+                }, TimeSpan.FromSeconds(4), ct).ConfigureAwait(true);
+                if (moved.Move != null && moved.Move.Position != null)
+                    _pos = ProtocolMapper.ToUnity(moved.Move.Position);
+            }
+            catch
+            {
+                /* the wander loop keeps walking from the spread point */
+            }
         }
 
         async Task<GameResponse> SendEnterMapAsync(GameMeshClient client, uint lineNo, CancellationToken ct)
@@ -449,17 +468,17 @@ namespace GameMesh.LoadTest
                     return;
                 var toHome = _home - _pos;
                 toHome.y = 0f;
-                var far = toHome.magnitude > 5f;
+                var far = toHome.magnitude > 24f;
                 if (far && rnd.NextDouble() < 0.78)
                     dir = toHome.normalized;
                 else if (rnd.NextDouble() < 0.16)
                     dir = RandomDir(rnd);
                 var step = far
-                    ? 0.65f + (float)rnd.NextDouble() * 0.35f
-                    : 0.38f + (float)rnd.NextDouble() * 0.22f;
+                    ? 2.8f + (float)rnd.NextDouble() * 1.2f
+                    : 1.8f + (float)rnd.NextDouble() * 0.8f;
                 var next = _pos + dir * step;
                 if (Vector3.Distance(new Vector3(next.x, _home.y, next.z),
-                        new Vector3(_home.x, _home.y, _home.z)) > 8f)
+                        new Vector3(_home.x, _home.y, _home.z)) > 48f)
                 {
                     dir = (_home - _pos);
                     dir.y = 0f;

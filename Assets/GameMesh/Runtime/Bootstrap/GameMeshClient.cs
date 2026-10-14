@@ -280,14 +280,14 @@ namespace GameMesh.Bootstrap
                 _ = ReconnectAsync();
             }
 
-            if (Mail != null && Session.HasIdentity &&
+            if (Mail != null && Session.HasIdentity && HelloOk &&
                 Mail.ShouldPoll(Time.unscaledTime, _lastMailPoll, Mail.PanelOpen))
             {
                 _lastMailPoll = Time.unscaledTime;
                 _ = Safe(Mail.RefreshAsync(_lifetime.Token));
             }
 
-            if (Friends != null && Session.HasIdentity && !ReconnectGaveUp &&
+            if (Friends != null && Session.HasIdentity && HelloOk && !ReconnectGaveUp &&
                 Friends.ShouldPoll(Time.unscaledTime, _lastFriendPoll, Friends.PanelOpen))
             {
                 _lastFriendPoll = Time.unscaledTime;
@@ -1552,6 +1552,9 @@ namespace GameMesh.Bootstrap
                 return;
             }
 
+            if (!HelloOk)
+                return;
+
             try
             {
                 BusyStage = "查线";
@@ -1748,6 +1751,7 @@ namespace GameMesh.Bootstrap
             if (switched.SpawnPosition != null)
             {
                 HasPendingSpawn = true;
+                PendingSpawnFromServer = true;
                 PendingSpawn = ProtocolMapper.ToUnity(switched.SpawnPosition);
                 PendingSpawnYaw = switched.SpawnYaw;
             }
@@ -2109,10 +2113,13 @@ namespace GameMesh.Bootstrap
             }
             catch (Exception ex)
             {
-                if (connGen != Connection.Generation)
+                Reconnect.EndFailure();
+                if (connGen != Connection.Generation && HelloOk &&
+                    Connection.State != ConnectionState.Disconnected &&
+                    Connection.State != ConnectionState.Closing &&
+                    Connection.State != ConnectionState.Connecting)
                     return;
                 SetError(ex);
-                Reconnect.EndFailure();
             }
         }
 
@@ -2632,6 +2639,10 @@ namespace GameMesh.Bootstrap
                 : 15000;
             if (_idleTimeoutMs > 0 && _idleTimeoutMs < limit)
                 limit = (int)_idleTimeoutMs;
+            var interval = Math.Max(500, (int)_heartbeatIntervalMs);
+            var slack = Config != null ? Math.Max(1000, Config.heartbeatTimeoutMs) : 4000;
+            if (limit < interval + slack)
+                limit = interval + slack;
             return limit;
         }
 
@@ -2846,6 +2857,8 @@ namespace GameMesh.Bootstrap
         {
             var candidates = new[]
             {
+                System.IO.Path.GetFullPath(System.IO.Path.Combine(
+                    Application.dataPath, "..", "docs", "protocol", "export", "protocol_manifest.json")),
                 System.IO.Path.Combine(Application.dataPath, "GameMesh", "Protocol", "protocol_manifest.json"),
                 System.IO.Path.Combine(Application.streamingAssetsPath, "GameMesh", "protocol_manifest.json")
             };

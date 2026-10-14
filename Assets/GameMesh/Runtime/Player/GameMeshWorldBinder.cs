@@ -25,6 +25,18 @@ namespace GameMesh.Player
 
         public int RemoteViewCount => _views.Count;
 
+        public bool TryLocalPosition(out Vector3 position)
+        {
+            if (_local == null)
+            {
+                position = Vector3.zero;
+                return false;
+            }
+
+            position = _local.position;
+            return true;
+        }
+
         public bool TryNearestRemote(out string name, out float distance)
         {
             name = "";
@@ -90,6 +102,7 @@ namespace GameMesh.Player
             BindLocal(client);
             MaybeRefreshAoi(client);
             SyncRemotes(client);
+            PlaceLocal(client);
             MaybeReportMove(client);
         }
 
@@ -123,7 +136,45 @@ namespace GameMesh.Player
                     client.Config.disableSprint)
                     _fps.SprintSpeedModifier = 1f;
             }
+        }
 
+        void PlaceLocal(GameMeshClient client)
+        {
+            if (_local == null)
+                return;
+            if (!string.IsNullOrEmpty(client.LaunchArgs.AutoScenario))
+            {
+                PlaceScripted(client);
+                return;
+            }
+
+            if (client.HasPendingSpawn && client.PendingSpawnFromServer)
+            {
+                if (_local == null || _local.gameObject.scene != SceneManager.GetActiveScene())
+                {
+                    _local = null;
+                    _fps = null;
+                    _controller = null;
+                    FindLocalPawn();
+                }
+
+                if (_local == null)
+                    return;
+
+                ApplyPose(client.PendingSpawn, client.PendingSpawnYaw);
+                client.HasPendingSpawn = false;
+                client.PendingSpawnFromServer = false;
+                client.HasPendingCorrection = false;
+                return;
+            }
+
+            client.HasPendingCorrection = false;
+            if (!client.PendingSpawnFromServer)
+                client.HasPendingSpawn = false;
+        }
+
+        void PlaceScripted(GameMeshClient client)
+        {
             if (client.HasPendingSpawn)
             {
                 if (_holdSpawnFrames <= 0)
