@@ -98,6 +98,7 @@ namespace GameMesh.Bootstrap
         float _lastFriendPoll;
         bool _busy;
         bool _helloInFlight;
+        bool _sessionLive;
         bool _snapshotInFlight;
         bool _staleRouteInFlight;
         float _ignoreStaleMovesUntil;
@@ -394,11 +395,15 @@ namespace GameMesh.Bootstrap
                 if (Session.HasIdentity &&
                     !string.IsNullOrEmpty(Session.Token) &&
                     Connection != null &&
-                    (Connection.State == ConnectionState.Authenticated ||
+                    (_sessionLive ||
+                     Connection.State == ConnectionState.Authenticated ||
                      Connection.State == ConnectionState.InWorld ||
                      Connection.State == ConnectionState.Resyncing ||
                      Connection.State == ConnectionState.EnteringWorld))
                 {
+                    if (Connection.State == ConnectionState.Connected ||
+                        Connection.State == ConnectionState.Authenticating)
+                        AdoptResumedState(ConnectionState.Authenticated);
                     WriteLiveEnter("LOGIN_SKIP already " + Connection.State + " gen=" + Session.Generation);
                     _ = Safe(Friends.RefreshAfterLoginAsync(_lifetime.Token));
                     _ = Safe(Mail.RefreshAsync(_lifetime.Token));
@@ -442,6 +447,7 @@ namespace GameMesh.Bootstrap
 
                 Session.ApplyLogin(playerId, login.SessionId, login.Token, login.Generation,
                     LaunchArgs.DisplayName);
+                _sessionLive = true;
                 Connection.ResetRequestSeq();
                 if (!ApplyProfile(login.Profile))
                     await LoadSelfProfileAsync().ConfigureAwait(true);
@@ -493,6 +499,7 @@ namespace GameMesh.Bootstrap
         {
             var result = new LogoutResult();
             _logoutRequested = true;
+            _sessionLive = false;
             Session.AutoReconnect = false;
             Reconnect.Reset();
             ReconnectGaveUp = false;
@@ -1946,6 +1953,7 @@ namespace GameMesh.Bootstrap
             if (_helloInFlight)
                 throw new GameMeshException(GameMeshErrorCode.ClientIllegalState, "hello already in flight");
             _helloInFlight = true;
+            _sessionLive = false;
             var generation = Connection.Generation;
             try
             {
@@ -2009,6 +2017,20 @@ namespace GameMesh.Bootstrap
             {
                 _helloInFlight = false;
             }
+        }
+
+        void AdoptResumedState(ConnectionState target)
+        {
+            if (Connection == null || Connection.State == target)
+                return;
+            if (Connection.State == ConnectionState.Connected)
+                Connection.SetLogicalState(ConnectionState.Authenticating);
+            if (target != ConnectionState.Authenticated &&
+                target != ConnectionState.Connected &&
+                Connection.State == ConnectionState.Authenticating)
+                Connection.SetLogicalState(ConnectionState.Authenticated);
+            if (Connection.State != target)
+                Connection.SetLogicalState(target);
         }
 
         async Task ReconnectAsync()
@@ -2075,13 +2097,14 @@ namespace GameMesh.Bootstrap
                 }
 
                 Session.ApplyReconnect(rsp.Reconnect.SessionId, rsp.Reconnect.Token, rsp.Reconnect.Generation);
+                _sessionLive = true;
                 if (rsp.Reconnect.NeedFullSnapshot)
                 {
-                    Connection.SetLogicalState(ConnectionState.Resyncing);
+                    AdoptResumedState(ConnectionState.Resyncing);
                     if (!await RequestWorldSnapshotAsync().ConfigureAwait(true))
                     {
                         Session.AutoReconnect = false;
-                        Connection.SetLogicalState(ConnectionState.Authenticated);
+                        AdoptResumedState(ConnectionState.Authenticated);
                         Reconnect.EndFailure();
                         if (Session.HasIdentity && Friends != null)
                             _ = Safe(Friends.RefreshAfterLoginAsync(_lifetime.Token));
@@ -2092,11 +2115,11 @@ namespace GameMesh.Bootstrap
                 }
                 else if (Session.MapInstanceId != 0)
                 {
-                    Connection.SetLogicalState(ConnectionState.InWorld);
+                    AdoptResumedState(ConnectionState.InWorld);
                 }
                 else
                 {
-                    Connection.SetLogicalState(ConnectionState.Authenticated);
+                    AdoptResumedState(ConnectionState.Authenticated);
                 }
 
                 if (Session.MapInstanceId != 0)
@@ -2485,6 +2508,7 @@ namespace GameMesh.Bootstrap
         {
             Session.SessionReplaced = true;
             Session.AutoReconnect = false;
+            _sessionLive = false;
             Reconnect.Reset();
             StopHeartbeat();
             HelloOk = false;

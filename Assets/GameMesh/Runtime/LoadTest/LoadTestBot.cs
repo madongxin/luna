@@ -337,29 +337,9 @@ namespace GameMesh.LoadTest
             var angle = _index * 2.39996323f;
             var ring = 20f + Mathf.Sqrt(_index) * 16f;
             _home = _spawn + new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle)) * ring;
-            _pos = _home;
+            _pos = _spawn;
             _yaw = rsp.EnterMap.SpawnYaw;
             _conn.SetLogicalState(ConnectionState.InWorld);
-            try
-            {
-                var moved = await SendAsync(new GameRequest
-                {
-                    Move = new MoveReq
-                    {
-                        PlayerId = _playerId,
-                        MapInstanceId = _mapInstanceId,
-                        Position = ProtocolMapper.ToVec3(_pos),
-                        Yaw = _yaw,
-                        ClientTimeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-                    }
-                }, TimeSpan.FromSeconds(4), ct).ConfigureAwait(true);
-                if (moved.Move != null && moved.Move.Position != null)
-                    _pos = ProtocolMapper.ToUnity(moved.Move.Position);
-            }
-            catch
-            {
-                /* the wander loop keeps walking from the spread point */
-            }
         }
 
         async Task<GameResponse> SendEnterMapAsync(GameMeshClient client, uint lineNo, CancellationToken ct)
@@ -449,12 +429,13 @@ namespace GameMesh.LoadTest
 
         async Task MoveLoopAsync(CancellationToken ct)
         {
+            const float speed = 6f;
             var rnd = new System.Random(_index * 9176 + Environment.TickCount);
             var dir = RandomDir(rnd);
             var gen = _loopGen;
             while (!_stopMoves && !ct.IsCancellationRequested && InWorld && gen == _loopGen)
             {
-                var waitMs = 140 + rnd.Next(0, 70);
+                var waitMs = 200;
                 try
                 {
                     await Task.Delay(waitMs, ct).ConfigureAwait(true);
@@ -469,13 +450,11 @@ namespace GameMesh.LoadTest
                 var toHome = _home - _pos;
                 toHome.y = 0f;
                 var far = toHome.magnitude > 24f;
-                if (far && rnd.NextDouble() < 0.78)
+                if (far)
                     dir = toHome.normalized;
                 else if (rnd.NextDouble() < 0.16)
                     dir = RandomDir(rnd);
-                var step = far
-                    ? 2.8f + (float)rnd.NextDouble() * 1.2f
-                    : 1.8f + (float)rnd.NextDouble() * 0.8f;
+                var step = speed * (waitMs / 1000f);
                 var next = _pos + dir * step;
                 if (Vector3.Distance(new Vector3(next.x, _home.y, next.z),
                         new Vector3(_home.x, _home.y, _home.z)) > 48f)
@@ -490,7 +469,6 @@ namespace GameMesh.LoadTest
                 }
 
                 next.y = _spawn.y;
-                _pos = next;
                 _yaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
                 try
                 {
@@ -500,13 +478,15 @@ namespace GameMesh.LoadTest
                         {
                             PlayerId = _playerId,
                             MapInstanceId = _mapInstanceId,
-                            Position = ProtocolMapper.ToVec3(_pos),
+                            Position = ProtocolMapper.ToVec3(next),
                             Yaw = _yaw,
                             ClientTimeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
                         }
                     }, TimeSpan.FromSeconds(4), ct).ConfigureAwait(true);
                     if (rsp.Move != null && rsp.Move.Position != null)
                         _pos = ProtocolMapper.ToUnity(rsp.Move.Position);
+                    else if (rsp.Ok)
+                        _pos = next;
                 }
                 catch (TaskCanceledException)
                 {
