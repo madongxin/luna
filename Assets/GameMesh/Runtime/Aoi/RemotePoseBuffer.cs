@@ -4,7 +4,9 @@ namespace GameMesh.Aoi
 {
     public sealed class RemotePoseBuffer
     {
-        public const int Depth = 3;
+        public const int Depth = 8;
+        // No extrapolation: overshoot-then-correct is what looks like twitching.
+        const float MaxExtrapolateSec = 0f;
 
         struct Sample
         {
@@ -66,7 +68,22 @@ namespace GameMesh.Aoi
             var last = _count - 1;
             if (t >= _samples[last].Time)
             {
-                Copy(_samples[last], out x, out y, out z, out yaw);
+                // Past the newest sample: short extrapolation so sparse AOI does not stutter.
+                var b = _samples[last];
+                var a = _samples[last - 1];
+                var span = b.Time - a.Time;
+                var ahead = Math.Min(t - b.Time, MaxExtrapolateSec);
+                if (span > 0.0001f && ahead > 0f)
+                {
+                    var u = ahead / span;
+                    x = b.X + (b.X - a.X) * u;
+                    y = b.Y + (b.Y - a.Y) * u;
+                    z = b.Z + (b.Z - a.Z) * u;
+                    yaw = LerpAngle(b.Yaw, b.Yaw + (b.Yaw - a.Yaw), Math.Min(1f, u));
+                    return true;
+                }
+
+                Copy(b, out x, out y, out z, out yaw);
                 return true;
             }
 
@@ -78,6 +95,8 @@ namespace GameMesh.Aoi
                     continue;
                 var span = b.Time - a.Time;
                 var u = span <= 0.0001f ? 1f : (t - a.Time) / span;
+                // Smoothstep softens sparse AOI jumps.
+                u = u * u * (3f - 2f * u);
                 x = a.X + (b.X - a.X) * u;
                 y = a.Y + (b.Y - a.Y) * u;
                 z = a.Z + (b.Z - a.Z) * u;

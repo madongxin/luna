@@ -68,11 +68,15 @@ namespace GameMesh.Protocol
                     continue;
                 }
 
+                var entity = ToEntityDto(ev.Entity, delta.MapInstanceId);
+                if (entity != null && ev.ServerTimeMs != 0)
+                    entity.ServerTimeMs = ev.ServerTimeMs;
                 var ok = world.ApplyDelta(new AoiDeltaDto
                 {
                     Op = (AoiOp)ev.Op,
                     MapInstanceId = delta.MapInstanceId,
-                    Entity = ToEntityDto(ev.Entity, delta.MapInstanceId)
+                    ServerTimeMs = ev.ServerTimeMs,
+                    Entity = entity
                 });
                 if (!ok)
                     applied = false;

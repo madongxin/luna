@@ -240,7 +240,7 @@ namespace GameMesh.Mail
             Page.Mails.Clear();
             Page.Mails.AddRange(acc);
             Page.NextCursor = cursor;
-            Page.LastError = "";
+                Page.LastError = "";
             }
             finally
             {

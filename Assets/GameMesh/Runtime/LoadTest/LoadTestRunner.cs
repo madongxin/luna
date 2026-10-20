@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
 using GameMesh.Bootstrap;
 using GameMesh.Map;
 using GameMesh.Network;
+using GameMesh.Player;
 using GameMesh.Protocol;
 using UnityEngine;
 
@@ -167,6 +169,7 @@ namespace GameMesh.LoadTest
 
                 _phase = "集体登录 " + count + "  端口 " + portA + "/" + portB;
 
+                LoadTestSessionLedger.CachePathOnMainThread();
                 var dispatcher = client != null
                     ? GameMeshMainThreadDispatcher.Ensure(client.gameObject)
                     : null;
@@ -177,7 +180,15 @@ namespace GameMesh.LoadTest
                     staggerMs = 40;
                 for (var i = 0; i < count; i++)
                 {
+                    if (i > 0 && i % 25 == 0 && client != null)
+                    {
+                        try { await client.QueryMapLinesAsync(true).ConfigureAwait(true); }
+                        catch { /* later bots still ask the server to choose a line */ }
+                    }
+
                     var bot = new LoadTestBot(i, dispatcher);
+                    // 0 = server default TTL (7200s). Heartbeat does not renew the key.
+                    bot.SessionTtlSec = 0;
                     _bots.Add(bot);
                     var device = "lt-" + stamp + "-" + i.ToString("D3");
                     var name = "Bot" + i.ToString("D3");
@@ -203,7 +214,9 @@ namespace GameMesh.LoadTest
                 }
 
                 _phase = "补登失败 " + FailedCount;
+                DumpFailureReport("after-wave");
                 await RetryFailedAsync(password, portA, portB, gate, ct).ConfigureAwait(true);
+                DumpFailureReport("after-retry");
 
                 if (ct.IsCancellationRequested)
                 {
@@ -241,7 +254,7 @@ namespace GameMesh.LoadTest
             await gate.WaitAsync(ct).ConfigureAwait(true);
             try
             {
-                for (var attempt = 0; attempt < 5; attempt++)
+                for (var attempt = 0; attempt < 8; attempt++)
                 {
                     if (ct.IsCancellationRequested)
                     {
@@ -251,8 +264,17 @@ namespace GameMesh.LoadTest
 
                     if (attempt > 0)
                     {
+                        if (bot.InWorld)
+                            return;
+                        var live = GameMeshClient.Instance;
+                        if (live != null)
+                        {
+                            try { await live.QueryMapLinesAsync(true).ConfigureAwait(true); }
+                            catch { /* retry with the last line list */ }
+                        }
+
                         await bot.PrepareRetryAsync().ConfigureAwait(true);
-                        await Task.Delay(500 * attempt, ct).ConfigureAwait(true);
+                        await Task.Delay(Math.Min(4000, 500 * attempt), ct).ConfigureAwait(true);
                     }
 
                     try
@@ -263,13 +285,19 @@ namespace GameMesh.LoadTest
                     }
                     catch (OperationCanceledException)
                     {
-                        try { await bot.CloseSessionAsync().ConfigureAwait(true); }
-                        catch { /* ignore */ }
+                        if (!bot.InWorld)
+                        {
+                            try { await bot.CloseSessionAsync().ConfigureAwait(true); }
+                            catch { /* ignore */ }
+                        }
+
                         throw;
                     }
                     catch
                     {
-                        if (attempt == 4)
+                        if (bot.InWorld)
+                            return;
+                        if (attempt == 7)
                         {
                             try { await bot.CloseSessionAsync().ConfigureAwait(true); }
                             catch { /* ignore */ }
@@ -416,6 +444,8 @@ namespace GameMesh.LoadTest
             _logoutInFlight = true;
             _holdOnline = false;
             _busy = true;
+            if (FailedCount > 0)
+                DumpFailureReport("before-logout");
             _phase = "集体下线";
             try
             {
@@ -453,12 +483,37 @@ namespace GameMesh.LoadTest
                     /* next start will retry */
                 }
 
+                // Bots are gone; AOI Leave Push often lags or never arrives → clear ghost models.
+                ResyncLocalPresenceAfterBots();
                 _phase = "空闲";
             }
             finally
             {
                 _busy = false;
                 _logoutInFlight = false;
+            }
+        }
+
+        static void ResyncLocalPresenceAfterBots()
+        {
+            var client = GameMeshClient.Instance;
+            if (client == null)
+                return;
+            try
+            {
+                client.Aoi.Clear();
+                var binder = client.GetComponent<GameMeshWorldBinder>();
+                if (binder != null)
+                    binder.PurgeAllRemoteViews("loadtest-logout");
+                if (client.IsOnMap)
+                {
+                    _ = client.QueryMapLinesAsync(true);
+                    _ = client.RequestWorldSnapshotAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                GameMeshLog.Warn("resync after bots " + GameMeshLog.Redact(ex.Message));
             }
         }
 
@@ -552,34 +607,91 @@ namespace GameMesh.LoadTest
         {
             if (!string.IsNullOrEmpty(_lastError))
                 return _lastError;
+            var ranked = RankErrors(3);
+            if (ranked.Count == 0)
+                return "";
+            return string.Join("  ||  ", ranked);
+        }
+
+        /// <summary>Top failure classes with one concrete example each (for server核对).</summary>
+        public List<string> RankErrors(int maxBuckets)
+        {
             var counts = new Dictionary<string, int>();
-            var first = "";
+            var example = new Dictionary<string, string>();
             for (var i = 0; i < _bots.Count; i++)
             {
-                var err = _bots[i] != null ? _bots[i].LastError : "";
-                if (string.IsNullOrEmpty(err))
+                var bot = _bots[i];
+                if (bot == null || string.IsNullOrEmpty(bot.LastError))
                     continue;
-                if (string.IsNullOrEmpty(first))
-                    first = err;
-                int n;
-                counts.TryGetValue(err, out n);
-                counts[err] = n + 1;
-            }
-
-            if (counts.Count == 0)
-                return "";
-            var top = first;
-            var topN = 0;
-            foreach (var pair in counts)
-            {
-                if (pair.Value > topN)
+                var bucket = bot.LastErrorBucket;
+                if (string.IsNullOrEmpty(bucket))
                 {
-                    top = pair.Key;
-                    topN = pair.Value;
+                    var pipe = bot.LastError.IndexOf(" | ", StringComparison.Ordinal);
+                    bucket = pipe > 0 ? bot.LastError.Substring(0, pipe) : bot.LastError;
                 }
+
+                int n;
+                counts.TryGetValue(bucket, out n);
+                counts[bucket] = n + 1;
+                if (!example.ContainsKey(bucket))
+                    example[bucket] = bot.LastError;
             }
 
-            return topN > 1 ? top + " ×" + topN : top;
+            var list = new List<KeyValuePair<string, int>>(counts);
+            list.Sort((a, b) => b.Value.CompareTo(a.Value));
+            var outList = new List<string>();
+            var take = Math.Min(maxBuckets, list.Count);
+            for (var i = 0; i < take; i++)
+            {
+                var bucket = list[i].Key;
+                var n = list[i].Value;
+                string eg;
+                example.TryGetValue(bucket, out eg);
+                if (string.IsNullOrEmpty(eg))
+                    eg = bucket;
+                outList.Add(n > 1 ? eg + " ×" + n : eg);
+            }
+
+            return outList;
+        }
+
+        public string DumpFailureReport(string tag)
+        {
+            if (FailedCount <= 0)
+                return "";
+            try
+            {
+                var dir = Path.Combine(Application.dataPath, "..", "Logs");
+                Directory.CreateDirectory(dir);
+                var path = Path.Combine(dir,
+                    "loadtest-fail-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + "-" + tag + ".txt");
+                var sb = new System.Text.StringBuilder(4096);
+                sb.AppendLine("tag=" + tag);
+                sb.AppendLine("phase=" + _phase);
+                sb.AppendLine("target=" + TargetCount + " in_world=" + InWorldCount +
+                              " failed=" + FailedCount + " line=" + TargetLineNo);
+                sb.AppendLine("--- buckets ---");
+                foreach (var line in RankErrors(20))
+                    sb.AppendLine(line);
+                sb.AppendLine("--- all failed bots ---");
+                for (var i = 0; i < _bots.Count; i++)
+                {
+                    var bot = _bots[i];
+                    if (bot == null || !bot.Failed || string.IsNullOrEmpty(bot.LastError))
+                        continue;
+                    sb.AppendLine(bot.LastError);
+                }
+
+                File.WriteAllText(path, sb.ToString());
+                GameMeshLog.Warn("loadtest failure report: " + path);
+                _lastError = "报告 " + Path.GetFileName(path) + "  " + SampleError();
+                return path;
+            }
+            catch (Exception ex)
+            {
+                GameMeshLog.Warn("loadtest dump failed " + ex.Message);
+                return "";
+            }
         }
     }
 }

@@ -18,6 +18,8 @@ namespace GameMesh.UI
         bool _socialWasOpen;
         bool _showDebug;
         bool _panelOpen = true;
+        // User reopened the panel (F2 / Tab / button). Resync must not slam it shut.
+        bool _userKeptOpen;
         ConnectionState _lastState = ConnectionState.Disconnected;
         string _friendQuery = "";
         string _friendConfirm = "";
@@ -79,21 +81,25 @@ namespace GameMesh.UI
             if (client?.Connection != null)
             {
                 var state = client.Connection.State;
-                if (state == ConnectionState.InWorld && _lastState != ConnectionState.InWorld)
-                    SetPanelOpen(false);
+                // Hide once when the player first lands in the map. Snapshot/reconnect
+                // bounce Resyncing → InWorld and must not close an open debug panel.
+                var firstEnter = state == ConnectionState.InWorld &&
+                                 (_lastState == ConnectionState.EnteringWorld ||
+                                  _lastState == ConnectionState.Authenticated);
+                if (firstEnter && !_userKeptOpen)
+                    SetPanelOpen(false, userAction: false);
+                if (state == ConnectionState.Disconnected || state == ConnectionState.LoggingOut)
+                    _userKeptOpen = false;
                 _lastState = state;
             }
 
-            if (Input.GetKeyDown(KeyCode.F2))
-                SetPanelOpen(!_panelOpen);
+            // IMGUI text fields use Tab to move focus; that must not toggle the panel.
+            var typing = GUIUtility.keyboardControl != 0;
+            if (!typing && Input.GetKeyDown(KeyCode.F2))
+                SetPanelOpen(!_panelOpen, userAction: true);
 
-            if (Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.F1))
-            {
-                if (_panelOpen)
-                    SetPanelOpen(false);
-                else
-                    SetPanelOpen(true);
-            }
+            if (!typing && (Input.GetKeyDown(KeyCode.Tab) || Input.GetKeyDown(KeyCode.F1)))
+                SetPanelOpen(!_panelOpen, userAction: true);
 
             if (!PlayableScenePlayer.SceneUsesFpsLook && !PlayableScenePlayer.UsesHoldToLook)
             {
@@ -115,7 +121,7 @@ namespace GameMesh.UI
 
             if (!_panelOpen && Cursor.lockState != CursorLockMode.Locked &&
                 Input.GetMouseButtonDown(0) && overLauncher)
-                SetPanelOpen(true);
+                SetPanelOpen(true, userAction: true);
 
             if (_panelOpen || altUi)
             {
@@ -183,7 +189,7 @@ namespace GameMesh.UI
             GUILayout.Label("LUNA / GameMesh 联调", _title);
             GUILayout.FlexibleSpace();
             if (GUILayout.Button("隐  藏", _logoutStyle, GUILayout.Width(160), GUILayout.Height(60)))
-                SetPanelOpen(false);
+                SetPanelOpen(false, userAction: true);
             GUILayout.EndHorizontal();
             GUILayout.Label("F2 或 Tab 打开/关闭    按住 Alt 再点「F2 联调」    隐藏后面板外点击才射击", _hint);
 
@@ -224,7 +230,7 @@ namespace GameMesh.UI
             var label = state == ConnectionState.InWorld ? "F2  联调" : "F2  登录";
             var launcher = LauncherRect();
             if (GUI.Button(launcher, label, _loginStyle))
-                SetPanelOpen(true);
+                SetPanelOpen(true, userAction: true);
             EatMouseOver(launcher);
 
             string text;
@@ -243,11 +249,11 @@ namespace GameMesh.UI
                 if (binder != null && binder.TryNearestRemote(out var botName, out var dist))
                     near = "    最近 " + botName + " " + dist.ToString("0") + "m";
                 else if (bots > 0 && client.Aoi.Entities.Count == 0)
-                    near = "    同线视野空，正在拉快照";
+                    near = "    周围 32m 内没有其他人";
                 text = "已在地图中    " +
-                       (client.Lines.LineNo != 0 ? client.Lines.LineNo + "线 " +
+                       (client.Lines.LineNo != 0 ? "分线占用 " + client.Lines.LineNo + "线 " +
                            client.Lines.Occupancy + "/" + client.Lines.EffectiveSplitAt + "    " : "") +
-                       "AOI " + client.Aoi.Entities.Count +
+                       "视野AOI " + client.Aoi.Entities.Count + "（画面按视野画）" +
                        "    压测在线 " + bots +
                        (runner != null && runner.TargetLineNo != 0 ? "→" + runner.TargetLineNo + "线" : "") +
                        near;
@@ -280,12 +286,14 @@ namespace GameMesh.UI
 
         public void PrepareExploreGameplay()
         {
-            SetPanelOpen(false);
+            SetPanelOpen(false, userAction: false);
         }
 
-        void SetPanelOpen(bool open)
+        void SetPanelOpen(bool open, bool userAction)
         {
             _panelOpen = open;
+            if (userAction)
+                _userKeptOpen = open;
             if (open)
             {
                 _cursorUnlocked = true;
@@ -376,6 +384,10 @@ namespace GameMesh.UI
             client.Config.host = Field("服务器", client.Config.host);
             client.Config.port = IntField("Gateway A", client.Config.port);
             client.Config.portB = IntField("Gateway B", client.Config.portB);
+            client.Config.NormalizeGatewayPorts();
+            GUILayout.Label(
+                "A=8081  B=8083。不要填同一个口。连不上或 Hello 失败会自动换另一个口再登录。",
+                _hint);
             client.LaunchArgs.DeviceId = Field("设备ID", client.LaunchArgs.DeviceId);
             client.LaunchArgs.DisplayName = Field("显示名", client.LaunchArgs.DisplayName);
             client.LaunchArgs.EnsureDefaultPassword();
@@ -456,9 +468,11 @@ namespace GameMesh.UI
                 "端口 " + portA + "  " + runner.InWorldOnPort(portA) +
                 "    端口 " + portB + "  " + runner.InWorldOnPort(portB), _hint);
             GUILayout.Label("剩余在线  " + remainText, _hint);
-            var sample = runner.SampleError();
-            if (!string.IsNullOrEmpty(sample))
-                GUILayout.Label("最近错误  " + sample, _statusErr);
+            var samples = runner.RankErrors(3);
+            for (var si = 0; si < samples.Count; si++)
+                GUILayout.Label((si == 0 ? "最近错误  " : "         ") + samples[si], _statusErr);
+            if (samples.Count == 0 && !string.IsNullOrEmpty(runner.LastError))
+                GUILayout.Label("最近错误  " + runner.LastError, _statusErr);
 
             GUILayout.Space(8);
             GUILayout.BeginHorizontal();
@@ -478,6 +492,14 @@ namespace GameMesh.UI
                     gwA = 8081;
                 if (gwB <= 0)
                     gwB = 8083;
+                if (gwA == gwB && (gwA == 8081 || gwA == 8083))
+                {
+                    gwA = 8081;
+                    gwB = 8083;
+                    _loadPortA = "8081";
+                    _loadPortB = "8083";
+                }
+
                 runner.StartCollectiveLogin(count, minutes, stagger, _loadPassword, gwA, gwB);
             }
 

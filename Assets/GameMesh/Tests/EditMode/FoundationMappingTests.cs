@@ -8,6 +8,7 @@ using GameMesh.Mail;
 using GameMesh.Map;
 using GameMesh.Network;
 using GameMesh.Protocol;
+using Google.Protobuf;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -273,6 +274,41 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void EnterMapSnapshot_ReplacesTableAndDropsMissingIds()
+        {
+            var world = new AoiWorld { LocalPlayerId = 1 };
+            world.SetMapInstance(9);
+            world.ApplySnapshot(new[]
+            {
+                new EntitySnapshotDto { EntityId = 2, PlayerId = 2, X = 1, MapInstanceId = 9 },
+                new EntitySnapshotDto { EntityId = 3, PlayerId = 3, X = 2, MapInstanceId = 9 }
+            });
+            world.ApplySnapshot(new[]
+            {
+                new EntitySnapshotDto { EntityId = 3, PlayerId = 3, X = 8, MapInstanceId = 9 }
+            });
+            Assert.AreEqual(1, world.Entities.Count);
+            Assert.IsFalse(world.Entities.ContainsKey(2));
+            Assert.AreEqual(8f, world.Entities[3].X);
+        }
+
+        [Test]
+        public void Aoi_PruneSilentRemovesEntityWithoutMoveOrLeave()
+        {
+            var world = new AoiWorld { LocalPlayerId = 1 };
+            world.SetMapInstance(9);
+            world.ApplySnapshot(new[]
+            {
+                new EntitySnapshotDto { EntityId = 2, PlayerId = 2, MapInstanceId = 9 }
+            });
+            var seen = world.Entities[2].LastLocalMs;
+            Assert.Greater(seen, 0);
+            Assert.AreEqual(0, world.PruneSilent(seen + 1000, 10000));
+            Assert.AreEqual(1, world.PruneSilent(seen + 10000, 10000));
+            Assert.AreEqual(0, world.Entities.Count);
+        }
+
+        [Test]
         public void AoiDelta_MapsRealProtobufEvents()
         {
             var world = new AoiWorld { LocalPlayerId = 1 };
@@ -534,6 +570,30 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void ReconnectRsp_NeedEnterMapFieldsRoundTrip()
+        {
+            var rsp = new ReconnectRsp
+            {
+                Ok = true,
+                Token = "t",
+                SessionId = "s",
+                Generation = 3,
+                MapInstanceId = 77,
+                GamelogicInstanceId = "gl-1",
+                NeedEnterMap = true,
+                OnMap = false
+            };
+            var parsed = ReconnectRsp.Parser.ParseFrom(rsp.ToByteArray());
+            Assert.IsTrue(parsed.Ok);
+            Assert.IsTrue(parsed.NeedEnterMap);
+            Assert.IsFalse(parsed.OnMap);
+            Assert.AreEqual(77ul, parsed.MapInstanceId);
+            Assert.AreEqual("gl-1", parsed.GamelogicInstanceId);
+            // Client rule: NeedEnterMap || !OnMap ⇒ must EnterMap before Move/Heartbeat.
+            Assert.IsTrue(parsed.NeedEnterMap || !parsed.OnMap);
+        }
+
+        [Test]
         public void MoveReq_FieldsAreFilled()
         {
             var req = new GameRequest
@@ -633,7 +693,8 @@ namespace GameMesh.Tests.EditMode
                 }
             });
             pick.ApplyEnter(new EnterMapRsp { Ok = true, Kind = "LINE", LineNo = 1, Occupancy = 1, SoftCap = 100 });
-            Assert.AreEqual(3u, pick.PickLoadTestLine(1, 0));
+            Assert.AreEqual(0u, pick.PickLoadTestLine(1, 0));
+            Assert.AreEqual(3u, pick.PickLoadTestLine(3, 0));
             Assert.AreEqual(0u, pick.PickLoadTestLine(3, 100));
             Assert.AreEqual(3u, pick.PickLineWithRoom());
             Assert.AreEqual(3u, pick.ResolveConcreteLine(0));

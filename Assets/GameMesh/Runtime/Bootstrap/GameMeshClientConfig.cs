@@ -16,6 +16,12 @@ namespace GameMesh.Bootstrap
                 port = 8081;
             if (portB <= 0)
                 portB = 8083;
+            // One TCP stays on one Gateway. A and B must not collapse to the same port.
+            if (port == portB && (port == 8081 || port == 8083))
+            {
+                port = 8081;
+                portB = 8083;
+            }
         }
 
         public int[] GatewayPorts()
@@ -25,10 +31,33 @@ namespace GameMesh.Bootstrap
                 return new[] { port };
             return new[] { port, portB };
         }
+
+        /// <summary>Try preferred first, then the other Gateway.</summary>
+        public int[] GatewayPortsPreferred(int preferred)
+        {
+            var ports = GatewayPorts();
+            if (ports.Length <= 1)
+                return ports;
+            if (preferred == ports[0])
+                return ports;
+            if (preferred == ports[1])
+                return new[] { ports[1], ports[0] };
+            return ports;
+        }
+
+        public int OtherGatewayPort(int current)
+        {
+            NormalizeGatewayPorts();
+            if (current == port)
+                return portB;
+            if (current == portB)
+                return port;
+            return portB != current ? portB : port;
+        }
         public int connectTimeoutMs = 5000;
-        public int requestTimeoutMs = 8000;
+        public int requestTimeoutMs = 12000;
         public int helloTimeoutMs = 5000;
-        public int heartbeatTimeoutMs = 4000;
+        public int heartbeatTimeoutMs = 12000;
         public int heartbeatIntervalMs = 5000;
         public int heartbeatIdleTimeoutMs = 15000;
         public int reconnectMaxAttempts = 5;
@@ -36,7 +65,7 @@ namespace GameMesh.Bootstrap
         public float moveSendHz = 10f;
         public float moveFastSendHz = 20f;
         public float moveFastSpeed = 6f;
-        public int interpolationDelayMs = 100;
+        public int interpolationDelayMs = 280;
         public float aoiLeaveFadeSeconds = 0.2f;
         public int maxFrameBytes = 4 * 1024 * 1024;
         public int sendQueueLimit = 128;

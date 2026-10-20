@@ -16,9 +16,9 @@ MonoBehaviour:
   port: 8081
   portB: 8083
   connectTimeoutMs: 5000
-  requestTimeoutMs: 8000
+  requestTimeoutMs: 12000
   helloTimeoutMs: 5000
-  heartbeatTimeoutMs: 4000
+  heartbeatTimeoutMs: 12000
   heartbeatIntervalMs: 5000
   heartbeatIdleTimeoutMs: 15000
   reconnectMaxAttempts: 5
@@ -26,7 +26,7 @@ MonoBehaviour:
   moveSendHz: 10
   moveFastSendHz: 20
   moveFastSpeed: 6
-  interpolationDelayMs: 100
+  interpolationDelayMs: 280
   aoiLeaveFadeSeconds: 0.2
   maxFrameBytes: 4194304
   sendQueueLimit: 128

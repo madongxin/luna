@@ -48,22 +48,12 @@ namespace GameMesh.Map
 
         public uint PickLoadTestLine(uint preferred, int index)
         {
-            var chosen = FindLine(preferred);
-            if (chosen == null)
-            {
-                for (var i = 0; i < Lines.Count; i++)
-                {
-                    var line = Lines[i];
-                    if (line == null || line.LineNo == 0)
-                        continue;
-                    if (line.Occupancy < SplitAt(line.SoftCap != 0 ? line.SoftCap : SoftCap))
-                    {
-                        chosen = line;
-                        break;
-                    }
-                }
-            }
+            // Preferred line only. Overflow bots must send line_no=0 so the server
+            // opens or assigns the next line. Never invent line 2/3/4 on the client.
+            if (preferred == 0)
+                return 0;
 
+            var chosen = FindLine(preferred);
             if (chosen == null)
                 return 0;
 
@@ -75,18 +65,7 @@ namespace GameMesh.Map
             if (LineNo == chosen.LineNo && slots > 1)
                 slots -= 1;
             if (occ >= cap || index >= slots)
-            {
-                for (var i = 0; i < Lines.Count; i++)
-                {
-                    var line = Lines[i];
-                    if (line == null || line.LineNo == 0 || line.LineNo == chosen.LineNo)
-                        continue;
-                    if (line.Occupancy < SplitAt(line.SoftCap != 0 ? line.SoftCap : SoftCap))
-                        return line.LineNo;
-                }
-
                 return 0;
-            }
 
             return chosen.LineNo;
         }

@@ -168,7 +168,22 @@ namespace GameMesh.Player
                 return;
             }
 
-            client.HasPendingCorrection = false;
+            // Adopt MoveRsp authority (including rejected TooFast). Do not keep a rejected local pose.
+            if (client.HasPendingCorrection)
+            {
+                var err = Vector3.Distance(_local.position, client.PendingCorrection);
+                if (err >= client.Config.snapError)
+                    ApplyPose(client.PendingCorrection, client.PendingCorrectionYaw);
+                else if (err >= client.Config.smoothError)
+                {
+                    ApplyPose(Vector3.Lerp(_local.position, client.PendingCorrection, 0.45f),
+                        client.PendingCorrectionYaw);
+                }
+                else
+                    ApplyPose(client.PendingCorrection, client.PendingCorrectionYaw);
+                client.HasPendingCorrection = false;
+            }
+
             if (!client.PendingSpawnFromServer)
                 client.HasPendingSpawn = false;
         }
@@ -308,18 +323,45 @@ namespace GameMesh.Player
         {
             if (client.Connection == null || client.Connection.State != ConnectionState.InWorld)
                 return;
+
+            var localId = client.Aoi.LocalPlayerId != 0
+                ? client.Aoi.LocalPlayerId
+                : client.Session.PlayerId;
+            var remoteCount = 0;
+            foreach (var kv in client.Aoi.Entities)
+            {
+                if (localId != 0 && kv.Key == localId)
+                    continue;
+                remoteCount++;
+            }
+
+            // Slow gateway: a 10s silence is normal when RTT is several seconds.
+            // Pruning then deletes every bot that is still on the line.
+            var silenceMs = client.LastRttMs > 3000 ? 45000 : 25000;
+            if (client.LastRttMs < 8000)
+            {
+                var pruned = client.Aoi.PruneSilent(AoiWorld.LocalNowMs, silenceMs);
+                if (pruned > 0)
+                {
+                    GameMeshLog.Warn("prune silent AOI n=" + pruned + " silence_ms=" + silenceMs);
+                    remoteCount = System.Math.Max(0, remoteCount - pruned);
+                }
+            }
+
             var runner = GameMeshLoadTestRunner.Instance;
-            if (runner == null || runner.InWorldCount <= 0)
-                return;
-            var empty = client.Aoi.Entities.Count == 0;
-            var far = !empty && _local != null &&
+            var loadActive = runner != null && (runner.InWorldCount > 0 || runner.HoldOnline || runner.Busy);
+            var afterLoadGhosts = runner != null && !loadActive && remoteCount > 0;
+            var far = remoteCount > 0 && _local != null &&
                       TryNearestRemote(out _, out var dist) && dist > 40f;
-            if (!empty && !far)
+            // Empty AOI with a full line is normal: this map only pushes entities inside 32m.
+            // Polling WorldSnapshot here does not create interest, and it times out under load.
+            var needRefresh = far || afterLoadGhosts;
+            if (!needRefresh || client.LastRttMs > 5000)
                 return;
             if (Time.unscaledTime < _nextAoiSnapshotAt)
                 return;
-            _nextAoiSnapshotAt = Time.unscaledTime + 3f;
-            _ = client.RequestWorldSnapshotAsync();
+            _nextAoiSnapshotAt = Time.unscaledTime + 8f;
+            _ = client.RequestWorldSnapshotAsync(background: true);
         }
 
         void SyncRemotes(GameMeshClient client)
@@ -369,13 +411,24 @@ namespace GameMesh.Player
                     dead.Add(kv.Key);
             }
 
-            var fadeSeconds = client.Config != null && client.Config.aoiLeaveFadeSeconds > 0f
-                ? client.Config.aoiLeaveFadeSeconds
-                : 0.2f;
+            // Bulk leave (压测下线 / AOI Clear): destroy immediately, skip fade.
+            var instant = seen.Count == 0 && dead.Count > 0;
+            var fadeSeconds = instant
+                ? 0f
+                : (client.Config != null && client.Config.aoiLeaveFadeSeconds > 0f
+                    ? client.Config.aoiLeaveFadeSeconds
+                    : 0.2f);
             foreach (var id in dead)
             {
                 if (!_views.TryGetValue(id, out var view) || view == null)
                 {
+                    _views.Remove(id);
+                    continue;
+                }
+
+                if (instant || fadeSeconds <= 0f)
+                {
+                    Destroy(view.gameObject);
                     _views.Remove(id);
                     continue;
                 }
@@ -388,6 +441,22 @@ namespace GameMesh.Player
                 _views.Remove(id);
             }
         }
+
+        /// <summary>Called after load-test LogoutAll so leftover Bot models do not linger.</summary>
+        public void PurgeAllRemoteViews(string reason = "")
+        {
+            var n = _views.Count;
+            foreach (var kv in _views)
+            {
+                if (kv.Value != null)
+                    Destroy(kv.Value.gameObject);
+            }
+
+            _views.Clear();
+            if (n > 0)
+                GameMeshLog.Info("purged remote views n=" + n +
+                                 (string.IsNullOrEmpty(reason) ? "" : " " + reason));
+        }
     }
 
     public sealed class RemotePlayerView : MonoBehaviour
@@ -397,11 +466,14 @@ namespace GameMesh.Player
         public bool Fading { get; private set; }
         public bool FadeFinished => Fading && Time.unscaledTime >= _fadeUntil;
         Vector3 _target;
+        Vector3 _velocity;
+        float _animSpeed;
         readonly RemotePoseBuffer _poses = new RemotePoseBuffer();
         float _fadeUntil;
         float _fadeSeconds = 0.2f;
         float _targetYaw;
         float _delay;
+        long _lastServerTimeMs;
         TextMesh _label;
         Animator _anim;
         int _speedId;
@@ -534,8 +606,20 @@ namespace GameMesh.Player
                 if (behaviour == null)
                     continue;
                 var name = behaviour.GetType().Name;
-                if (name == "PlayerInput" || name == "ThirdPersonController" ||
-                    name == "StarterAssetsInputs" || name == "BasicRigidBodyPush")
+                // ThirdPersonController [RequireComponent(PlayerInput)]. Destroy the
+                // dependent first, or Unity refuses to remove PlayerInput.
+                if (name == "ThirdPersonController" || name == "StarterAssetsInputs" ||
+                    name == "BasicRigidBodyPush")
+                    Object.DestroyImmediate(behaviour);
+            }
+
+            behaviours = root.GetComponentsInChildren<MonoBehaviour>(true);
+            for (var i = 0; i < behaviours.Length; i++)
+            {
+                var behaviour = behaviours[i];
+                if (behaviour == null)
+                    continue;
+                if (behaviour.GetType().Name == "PlayerInput")
                     Object.DestroyImmediate(behaviour);
             }
 
@@ -588,20 +672,37 @@ namespace GameMesh.Player
         public void Apply(RemoteEntityState state)
         {
             CancelFade();
+            // Order by server clock when present; timeline for playback stays on local receive time
+            // so we never mix two clocks (that rubber-bands and looks like twitching).
+            if (state.ServerTimeMs != 0 && _lastServerTimeMs != 0 &&
+                state.ServerTimeMs + 5 < _lastServerTimeMs)
+                return;
+            if (state.ServerTimeMs != 0)
+                _lastServerTimeMs = state.ServerTimeMs;
+
             var next = new Vector3(state.X, state.Y, state.Z);
             next.y = GroundY(next.x, next.z, next.y);
             var err = Vector3.Distance(new Vector3(transform.position.x, 0f, transform.position.z),
                 new Vector3(next.x, 0f, next.z));
             var now = Time.unscaledTime;
-            if (err > 24f)
+            var accepted = false;
+            if (err > 30f)
             {
                 transform.position = next;
+                _velocity = Vector3.zero;
                 _poses.Snap(next.x, next.y, next.z, state.Yaw, now, state.StateSeq);
+                accepted = true;
             }
             else
-                _poses.Push(next.x, next.y, next.z, state.Yaw, now, state.StateSeq);
-            _target = next;
-            _targetYaw = state.Yaw;
+                accepted = _poses.Push(next.x, next.y, next.z, state.Yaw, now, state.StateSeq);
+
+            // Only move the follow target when a new sample is accepted; SyncRemotes runs every frame.
+            if (accepted)
+            {
+                _target = next;
+                _targetYaw = state.Yaw;
+            }
+
             if (_label != null)
                 _label.text = $"{state.Name} {state.Hp:0}/{state.MaxHp:0}";
         }
@@ -636,40 +737,48 @@ namespace GameMesh.Player
             }
 
             var pos = transform.position;
-            Vector3 next;
-            float speed;
             if (_poses.TrySample(Time.unscaledTime, _delay, out var sx, out var sy, out var sz, out var syaw))
             {
-                next = new Vector3(sx, GroundY(sx, sz, sy), sz);
-                speed = Vector3.Distance(new Vector3(pos.x, 0f, pos.z), new Vector3(next.x, 0f, next.z)) /
-                        Mathf.Max(Time.deltaTime, 0.0001f);
-                _target = next;
+                _target = new Vector3(sx, sy, sz);
                 _targetYaw = syaw;
-                transform.SetPositionAndRotation(next, Quaternion.Euler(0f, syaw, 0f));
+            }
+
+            var desiredY = GroundY(_target.x, _target.z, _target.y);
+            var desired = new Vector3(_target.x, desiredY, _target.z);
+            var planar = Vector3.Distance(new Vector3(pos.x, 0f, pos.z),
+                new Vector3(desired.x, 0f, desired.z));
+
+            Vector3 next;
+            if (planar > 30f)
+            {
+                next = desired;
+                _velocity = Vector3.zero;
             }
             else
             {
-                _target.y = GroundY(_target.x, _target.z, _target.y);
-                var planar = Vector3.Distance(new Vector3(pos.x, 0f, pos.z),
-                    new Vector3(_target.x, 0f, _target.z));
-                speed = planar > 8f ? 7.5f : (planar > 0.08f ? 4.8f : 0f);
-                next = Vector3.MoveTowards(pos, _target, speed * Time.deltaTime);
-                next.y = GroundY(next.x, next.z, _target.y);
-                transform.position = next;
-                if (planar > 0.05f)
-                {
-                    var look = Quaternion.Euler(0f, _targetYaw, 0f);
-                    transform.rotation = Quaternion.Slerp(transform.rotation, look, 1f - Mathf.Exp(-Time.deltaTime * 8f));
-                }
+                // SmoothDamp kills packet-to-packet jitter; keep under walk speed.
+                next = Vector3.SmoothDamp(pos, desired, ref _velocity, 0.14f, 7.5f, Time.deltaTime);
+                next.y = Mathf.Lerp(pos.y, desiredY, 1f - Mathf.Exp(-Time.deltaTime * 10f));
             }
 
-            var moving = speed > 0.1f;
+            transform.position = next;
+            if (planar > 0.03f || _velocity.sqrMagnitude > 0.01f)
+            {
+                var look = Quaternion.Euler(0f, _targetYaw, 0f);
+                transform.rotation = Quaternion.Slerp(transform.rotation, look,
+                    1f - Mathf.Exp(-Time.deltaTime * 8f));
+            }
+
+            var speed = new Vector3(_velocity.x, 0f, _velocity.z).magnitude;
+            var moving = speed > 0.15f;
+            _animSpeed = Mathf.MoveTowards(_animSpeed, moving ? Mathf.Clamp(speed, 2f, 5.5f) : 0f,
+                Time.deltaTime * 8f);
 
             if (_anim != null)
             {
                 _anim.SetBool(_groundedId, true);
-                _anim.SetFloat(_speedId, moving ? Mathf.Clamp(speed, 1.8f, 6f) : 0f);
-                _anim.SetFloat(_motionSpeedId, moving ? 1f : 0f);
+                _anim.SetFloat(_speedId, _animSpeed);
+                _anim.SetFloat(_motionSpeedId, _animSpeed > 0.2f ? 1f : 0f);
             }
 
             AlignModelToGround();

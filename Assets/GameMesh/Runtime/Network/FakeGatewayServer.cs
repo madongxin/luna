@@ -163,7 +163,10 @@ namespace GameMesh.Network
                 case GameRequest.BodyOneofCase.Reconnect:
                     rsp.Reconnect = new ReconnectRsp
                     {
-                        Ok = true, Token = "tok2", SessionId = "sess-1", Generation = 2
+                        Ok = true, Token = "tok2", SessionId = "sess-1", Generation = 2,
+                        MapInstanceId = 5001,
+                        OnMap = true,
+                        NeedEnterMap = false
                     };
                     break;
                 case GameRequest.BodyOneofCase.EnterMap:

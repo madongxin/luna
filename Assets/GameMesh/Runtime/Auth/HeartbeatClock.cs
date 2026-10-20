@@ -43,6 +43,14 @@ namespace GameMesh.Auth
             HasSample = true;
         }
 
+        public void NoteActivity(long nowMs)
+        {
+            if (HasSample)
+                LastReceivedMonotonicMs = nowMs;
+            else if (AwaitSinceMs <= 0)
+                AwaitSinceMs = nowMs;
+        }
+
         public bool IdleTimedOut(int idleTimeoutMs)
         {
             if (idleTimeoutMs <= 0 || !HasSample)
