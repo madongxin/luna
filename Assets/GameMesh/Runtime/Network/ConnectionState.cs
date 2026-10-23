@@ -155,11 +155,13 @@ namespace GameMesh.Network
     public sealed class GameMeshException : Exception
     {
         public string ErrorCode { get; }
+        public bool FrameWritten { get; }
 
-        public GameMeshException(string errorCode, string message, Exception inner = null)
+        public GameMeshException(string errorCode, string message, Exception inner = null, bool frameWritten = false)
             : base(message, inner)
         {
             ErrorCode = errorCode ?? GameMeshErrorCode.ServerError;
+            FrameWritten = frameWritten;
         }
     }
 }

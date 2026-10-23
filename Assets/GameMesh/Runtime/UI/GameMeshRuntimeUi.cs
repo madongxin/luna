@@ -341,7 +341,8 @@ namespace GameMesh.UI
                 "    AOI  " + client.Aoi.Entities.Count +
                 "    快照线/解析/保留  " + client.LastSnapshotWireEntities +
                 "/" + client.LastSnapshotParsedEntities +
-                "/" + client.LastSnapshotKeptRemotes, _label);
+                "/" + client.LastSnapshotKeptRemotes +
+                (client.AoiResyncHealthy ? "" : "    视野未恢复"), _label);
             GUILayout.Label(CrowdText(client), _label);
             GUILayout.Label(LocalCoordText(client), _label);
             if (client.IsDungeon)
@@ -522,14 +523,18 @@ namespace GameMesh.UI
             var move = runner.SumMovement();
             GUILayout.Label(
                 "移动  计划 " + move.Planned +
-                "  发出 " + move.Sent +
+                "  入队 " + move.QueueAccepted +
+                "  写出 " + move.WriteCompleted +
+                "  匹配 " + move.RspMatched +
                 "  权威确认 " + move.AckOk +
                 "  拒绝 " + move.Rejected +
                 "  超时 " + move.Timeout +
+                "  写出前超时 " + move.TimeoutBeforeWrite +
                 "  忙跳过 " + move.SkippedBusy +
                 "  未就绪 " + move.SkippedNotReady +
                 "  过载 " + move.Overloaded,
                 _hint);
+            GUILayout.Label(runner.GatewayRateLine(), _hint);
             GUILayout.Label(runner.PresenceSummary(), _hint);
             GUILayout.Label(runner.LineSpread(), _hint);
 

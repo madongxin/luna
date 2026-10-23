@@ -196,12 +196,13 @@ namespace GameMesh.Network
                 timeoutCts.CancelAfter(timeout);
                 using (timeoutCts.Token.Register(() =>
                        {
-                           if (_pending.TryTimeout(slot, ct.IsCancellationRequested))
+                           if (_pending.TryTimeout(slot, ct.IsCancellationRequested, out var frameWritten))
                            {
                                var code = ct.IsCancellationRequested
                                    ? GameMeshErrorCode.ClientCancelled
                                    : GameMeshErrorCode.ClientTimeout;
-                               pending.TrySetException(new GameMeshException(code, $"seq={request.Seq} {code}"));
+                               pending.TrySetException(new GameMeshException(
+                                   code, $"seq={request.Seq} {code}", null, frameWritten));
                            }
                        }))
                 {
@@ -315,6 +316,12 @@ namespace GameMesh.Network
                     while (_sendQueue.TryDequeue(out var item))
                     {
                         Interlocked.Decrement(ref _queued);
+                        if (!_pending.TryBeginWrite(generation, item.Seq))
+                        {
+                            _pending.NoteSkippedBeforeWrite();
+                            continue;
+                        }
+
                         var stream = _stream;
                         if (stream == null)
                             break;
@@ -413,12 +420,14 @@ namespace GameMesh.Network
                 generation, response.Seq, (int)response.BodyCase, response.Ok, out var slot);
             if (match != RpcPendingTable.Match.Completed)
             {
-                _dispatcher.Enqueue(() => PushReceived?.Invoke(response));
+                // Late, unmatched, and stale-generation replies are not AOI pushes.
                 return;
             }
 
             var call = slot.Tag as PendingCall;
-            _dispatcher.Enqueue(() => call?.TrySetResult(response));
+            // The completion source runs continuations asynchronously, so the
+            // receive thread can finish the RPC without waiting for Unity Update.
+            call?.TrySetResult(response);
         }
 
         static bool IsPush(GameResponse response)

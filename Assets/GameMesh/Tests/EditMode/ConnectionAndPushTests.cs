@@ -248,6 +248,69 @@ namespace GameMesh.Tests.EditMode
             }
         }
 
+        [Test]
+        public void RpcResult_DoesNotNeedUnityDispatcherPump()
+        {
+            using (var server = new FakeGatewayServer())
+            {
+                var dispatcher = new QueueDispatcher();
+                var conn = new GameConnection(dispatcher);
+                try
+                {
+                    conn.ConnectAsync("127.0.0.1", server.Port, CancellationToken.None)
+                        .GetAwaiter().GetResult();
+                    var pending = conn.RequestAsync(
+                        new GameRequest { MapPing = new MapPingReq() },
+                        TimeSpan.FromSeconds(2), CancellationToken.None);
+                    Assert.IsTrue(pending.Wait(TimeSpan.FromMilliseconds(1500)),
+                        "Matched RPC must complete without Pump()");
+                    Assert.IsTrue(pending.Result.Ok);
+                }
+                finally
+                {
+                    conn.DisconnectAsync(DisconnectReason.ClientRequest, CancellationToken.None)
+                        .GetAwaiter().GetResult();
+                    conn.DisposeAsync().GetAwaiter().GetResult();
+                }
+            }
+        }
+
+        [Test]
+        public void LateRpc_DoesNotBecomeServerPush()
+        {
+            using (var server = new FakeGatewayServer())
+            {
+                server.Handler = req =>
+                {
+                    Thread.Sleep(200);
+                    return FakeGatewayServer.DefaultHandler(req);
+                };
+                var dispatcher = new QueueDispatcher();
+                var conn = new GameConnection(dispatcher);
+                var pushes = 0;
+                conn.PushReceived += _ => Interlocked.Increment(ref pushes);
+                try
+                {
+                    conn.ConnectAsync("127.0.0.1", server.Port, CancellationToken.None)
+                        .GetAwaiter().GetResult();
+                    var pending = conn.RequestAsync(
+                        new GameRequest { MapPing = new MapPingReq() },
+                        TimeSpan.FromMilliseconds(40), CancellationToken.None);
+                    Assert.Throws<AggregateException>(() => pending.Wait());
+                    Thread.Sleep(350);
+                    dispatcher.Pump();
+                    Assert.AreEqual(0, pushes);
+                    Assert.GreaterOrEqual(conn.PipeMetrics.Late, 1);
+                }
+                finally
+                {
+                    conn.DisconnectAsync(DisconnectReason.ClientRequest, CancellationToken.None)
+                        .GetAwaiter().GetResult();
+                    conn.DisposeAsync().GetAwaiter().GetResult();
+                }
+            }
+        }
+
         static void SpinPump(QueueDispatcher dispatcher, Func<bool> done, int timeoutMs)
         {
             var start = DateTime.UtcNow;

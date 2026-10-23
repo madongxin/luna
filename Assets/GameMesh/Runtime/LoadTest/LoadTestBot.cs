@@ -51,6 +51,7 @@ namespace GameMesh.LoadTest
         Task _heartbeatTask = Task.CompletedTask;
         Task _moveTask = Task.CompletedTask;
         BotMovementClock _clock;
+        readonly BotPushTracker _push = new BotPushTracker();
 
         public BotMovementSettings Movement { get; set; } = new BotMovementSettings();
         public BotMovementProfile Profile { get; private set; }
@@ -61,6 +62,9 @@ namespace GameMesh.LoadTest
         public uint LineNo => _lastEnterLine;
         public string GameLogicInstanceId { get; private set; } = "";
         public bool PoseUncertain => Volatile.Read(ref _poseUncertain) != 0;
+        public RpcPipeMetrics PipeMetrics => _conn.PipeMetrics;
+        public int VisibleEntities => _push.VisibleCount;
+        public bool PushHealthy => _push.Healthy;
 
         public string Presence
         {
@@ -453,6 +457,8 @@ namespace GameMesh.LoadTest
             GameLogicInstanceId = rsp.EnterMap.GamelogicInstanceId ?? "";
             if (client != null && client.Config != null)
                 RealmId = client.Config.realmId;
+            _push.BindInstance(_mapInstanceId, rsp.EnterMap.OwnerEpoch);
+            _lastServerSeq = _push.LastAppliedServerSeq;
             _spawn = rsp.EnterMap.SpawnPosition != null
                 ? ProtocolMapper.ToUnity(rsp.EnterMap.SpawnPosition)
                 : new Vector3(-26f, -0.2f, -5f);
@@ -1089,6 +1095,7 @@ namespace GameMesh.LoadTest
         {
             var metrics = clock.Metrics;
             metrics.Sent++;
+            metrics.QueueAccepted++;
             var started = Environment.TickCount;
             try
             {
@@ -1125,6 +1132,9 @@ namespace GameMesh.LoadTest
                     adopted = true;
                 }
 
+                metrics.RspRawReceived++;
+                metrics.RspMatched++;
+                metrics.WriteCompleted++;
                 if (rsp != null && rsp.Ok)
                 {
                     // ok means the authority pose was stored. It does not mean
@@ -1169,9 +1179,20 @@ namespace GameMesh.LoadTest
             catch (Exception ex)
             {
                 planner.NoteRejected();
-                if (ex is GameMeshException ge && ge.ErrorCode == GameMeshErrorCode.ClientTimeout)
+                var mesh = ex as GameMeshException;
+                if (mesh != null && mesh.ErrorCode == GameMeshErrorCode.ClientCancelled)
+                {
+                    metrics.Cancelled++;
+                    return;
+                }
+
+                if (mesh != null && mesh.ErrorCode == GameMeshErrorCode.ClientTimeout)
                 {
                     metrics.Timeout++;
+                    if (mesh.FrameWritten)
+                        metrics.WriteCompleted++;
+                    else
+                        metrics.TimeoutBeforeWrite++;
                     _moveTimeoutStreak++;
                     // A timeout does not prove the server rejected the step. Stop sending
                     // from this unconfirmed point until a snapshot returns the authority pose.
@@ -1235,6 +1256,8 @@ namespace GameMesh.LoadTest
                     GameLogicInstanceId = snap.GamelogicInstanceId;
                 Volatile.Write(ref _poseUncertain, 0);
                 _moveTimeoutStreak = 0;
+                if (_push.ApplySnapshot(snap))
+                    _lastServerSeq = _push.LastAppliedServerSeq;
                 if (_clock != null && _clock.Metrics != null)
                     _clock.Metrics.PoseRefresh++;
                 Status = "在线 :" + GatewayPort;
@@ -1286,8 +1309,28 @@ namespace GameMesh.LoadTest
         {
             if (rsp == null)
                 return;
-            if (rsp.Seq > _lastServerSeq)
-                _lastServerSeq = rsp.Seq;
+            if (rsp.BodyCase == GameResponse.BodyOneofCase.ServerPush && rsp.ServerPush != null)
+            {
+                GameResponse inner = null;
+                try
+                {
+                    if (rsp.ServerPush.Payload != null && rsp.ServerPush.Payload.Length > 0)
+                        inner = GameResponse.Parser.ParseFrom(rsp.ServerPush.Payload);
+                }
+                catch (Exception ex)
+                {
+                    GameMeshLog.Warn("bot#" + _index + " push parse " + GameMeshLog.Redact(ex.Message));
+                    return;
+                }
+
+                var applied = _push.ObserveServerPush(rsp.ServerPush, inner);
+                if (applied)
+                    _lastServerSeq = _push.LastAppliedServerSeq;
+                else if (_push.HasGap && Volatile.Read(ref _authorityBusy) == 0)
+                    _ = RefreshAuthorityAsync(_life.Token);
+                return;
+            }
+
             if (rsp.BodyCase == GameResponse.BodyOneofCase.SessionReplaced)
             {
                 RememberRspMeta(rsp);

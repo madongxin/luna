@@ -83,6 +83,7 @@ namespace GameMesh.Bootstrap
         public int LastSnapshotWireEntities { get; private set; }
         public int LastSnapshotParsedEntities { get; private set; }
         public int LastSnapshotKeptRemotes { get; private set; }
+        public bool AoiResyncHealthy { get; private set; } = true;
         public int ProtocolVersion { get; private set; } = (int)ProtocolHandshake.ProtocolVersion;
         public bool HelloOk { get; private set; }
         public bool HeartbeatOk { get; private set; }
@@ -2522,6 +2523,7 @@ namespace GameMesh.Bootstrap
 
                     if (decision == PushReliability.Decision.Gap)
                     {
+                        AoiResyncHealthy = false;
                         GameMeshLog.Warn($"push gap expected={Push.ExpectedNext} got={serverSeq}");
                         if (!_gapCache.TryBuffer(serverSeq, parsed))
                         {
@@ -2607,7 +2609,10 @@ namespace GameMesh.Bootstrap
             }
 
             if (!Push.HasGap && Connection.State == ConnectionState.Resyncing && Session.MapInstanceId != 0)
+            {
+                AoiResyncHealthy = true;
                 Connection.SetLogicalState(ConnectionState.InWorld);
+            }
         }
 
         async Task AckPushAsync(ulong serverSeq)
@@ -2810,6 +2815,7 @@ namespace GameMesh.Bootstrap
 
             if (!WorldSnapshotApplier.AcceptsEpoch(Session.OwnerEpoch, snap.OwnerEpoch))
             {
+                AoiResyncHealthy = false;
                 SetError("ERR_AOI_RESYNC_REQUIRED", "snapshot epoch went backwards", "ERR_AOI_RESYNC_REQUIRED");
                 return false;
             }
@@ -2832,8 +2838,12 @@ namespace GameMesh.Bootstrap
                     PendingSpawnYaw = model.Self.Yaw;
                 }
 
+                AoiResyncHealthy = false;
+                if (Connection != null && Connection.State == ConnectionState.Resyncing &&
+                    Session.MapInstanceId != 0)
+                    Connection.SetLogicalState(ConnectionState.InWorld);
                 GameMeshLog.Warn(
-                    "keep snapshot wire=" + wire + " parsed=" + parsed +
+                    "snapshot not recovered wire=" + wire + " parsed=" + parsed +
                     " aoi=" + Aoi.Entities.Count + " reason=" + (model.RecoveryReason ?? ""));
                 return true;
             }
@@ -2850,7 +2860,10 @@ namespace GameMesh.Bootstrap
 
             DrainGapCache();
             if (Session.MapInstanceId != 0)
+            {
+                AoiResyncHealthy = true;
                 Connection.SetLogicalState(ConnectionState.InWorld);
+            }
             Lines.BindPresence(Session.MapInstanceId);
             LastSnapshotKeptRemotes = RemoteCount(Aoi, localId);
             var views = 0;

@@ -48,27 +48,45 @@ namespace GameMesh.Network
             return true;
         }
 
-        public bool TryTimeout(Slot slot, bool cancelled)
+        public bool TryTimeout(Slot slot, bool cancelled, out bool frameWritten)
         {
+            frameWritten = false;
             if (slot == null)
                 return false;
             var next = cancelled ? Cancelled : TimedOut;
-            if (Interlocked.CompareExchange(ref slot.State, next, Open) != Open)
-                return false;
+            lock (slot.Gate)
+            {
+                if (slot.State != Open)
+                    return false;
+                frameWritten = slot.Written != 0;
+                slot.State = next;
+            }
+
             var key = new RpcKey(slot.Generation, slot.RequestSeq);
             _open.TryRemove(key, out _);
             _seqGeneration.TryRemove(slot.RequestSeq, out _);
-            if (!cancelled)
-            {
-                _recentTimeout[key] = 1;
-                if (_recentTimeout.Count > 2048)
-                    _recentTimeout.Clear();
-            }
+            _recentTimeout[key] = 1;
+            if (_recentTimeout.Count > 2048)
+                _recentTimeout.Clear();
             if (cancelled)
                 Interlocked.Increment(ref Metrics.Cancelled);
             else
                 Interlocked.Increment(ref Metrics.Timeout);
             return true;
+        }
+
+        public bool TryBeginWrite(int generation, ulong requestSeq)
+        {
+            var key = new RpcKey(generation, requestSeq);
+            if (!_open.TryGetValue(key, out var slot))
+                return !_recentTimeout.ContainsKey(key);
+            lock (slot.Gate)
+            {
+                if (slot.State != Open)
+                    return false;
+                slot.Written = 1;
+                return true;
+            }
         }
 
         public Match TryComplete(int generation, ulong responseSeq, int responseOpcode, bool ok, out Slot slot)
@@ -93,18 +111,23 @@ namespace GameMesh.Network
                 return Match.Unmatched;
             }
 
-            if (slot.ExpectedResponseOpcode != 0 && responseOpcode != slot.ExpectedResponseOpcode)
+            lock (slot.Gate)
             {
-                Interlocked.Increment(ref Metrics.OpcodeMismatch);
-                slot = null;
-                return Match.OpcodeMismatch;
-            }
+                if (slot.ExpectedResponseOpcode != 0 && responseOpcode != slot.ExpectedResponseOpcode)
+                {
+                    Interlocked.Increment(ref Metrics.OpcodeMismatch);
+                    slot = null;
+                    return Match.OpcodeMismatch;
+                }
 
-            if (Interlocked.CompareExchange(ref slot.State, Completed, Open) != Open)
-            {
-                Interlocked.Increment(ref Metrics.Late);
-                slot = null;
-                return Match.Late;
+                if (slot.State != Open)
+                {
+                    Interlocked.Increment(ref Metrics.Late);
+                    slot = null;
+                    return Match.Late;
+                }
+
+                slot.State = Completed;
             }
 
             _open.TryRemove(key, out _);
@@ -121,11 +144,18 @@ namespace GameMesh.Network
         {
             foreach (var pair in _open)
             {
-                if (Interlocked.CompareExchange(ref pair.Value.State, Failed, Open) != Open)
+                lock (pair.Value.Gate)
+                {
+                    if (pair.Value.State != Open)
+                        continue;
+                    pair.Value.State = Failed;
+                }
+                if (pair.Value.State != Failed)
                     continue;
                 if (_open.TryRemove(pair.Key, out _))
                 {
                     _seqGeneration.TryRemove(pair.Key.RequestSeq, out _);
+                    _recentTimeout[pair.Key] = 1;
                     Interlocked.Increment(ref Metrics.OtherTerminal);
                     tags?.Add(pair.Value.Tag);
                 }
@@ -135,6 +165,12 @@ namespace GameMesh.Network
         public void NoteWriteRequested()
         {
             Interlocked.Increment(ref Metrics.WriteRequested);
+            Interlocked.Increment(ref Metrics.QueueAccepted);
+        }
+
+        public void NoteSkippedBeforeWrite()
+        {
+            Interlocked.Increment(ref Metrics.SkippedBeforeWrite);
         }
 
         public void NoteBytesSent()
@@ -189,6 +225,8 @@ namespace GameMesh.Network
             public readonly int ExpectedResponseOpcode;
             public object Tag;
             public int State;
+            public int Written;
+            public readonly object Gate = new object();
 
             public Slot(int generation, ulong requestSeq, int expectedResponseOpcode)
             {
@@ -211,6 +249,8 @@ namespace GameMesh.Network
     public sealed class RpcPipeMetrics
     {
         public long WriteRequested;
+        public long QueueAccepted;
+        public long SkippedBeforeWrite;
         public long BytesSent;
         public long FramesDecoded;
         public long OpcodeUnknown;

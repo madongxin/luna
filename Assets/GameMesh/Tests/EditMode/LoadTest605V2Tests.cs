@@ -1,5 +1,6 @@
 using System.Threading;
 using System.Threading.Tasks;
+using GameMesh.Aoi;
 using GameMesh.Auth;
 using GameMesh.LoadTest;
 using GameMesh.Network;
@@ -15,7 +16,8 @@ namespace GameMesh.Tests.EditMode
         {
             var table = new RpcPendingTable();
             Assert.IsTrue(table.TryRegister(1, 10, 7, out var slot));
-            Assert.IsTrue(table.TryTimeout(slot, false));
+            Assert.IsTrue(table.TryTimeout(slot, false, out var written));
+            Assert.IsFalse(written);
             var match = table.TryComplete(1, 10, 7, true, out _);
             Assert.AreEqual(RpcPendingTable.Match.Late, match);
             Assert.AreEqual(0, table.Metrics.AckOk);
@@ -35,7 +37,7 @@ namespace GameMesh.Tests.EditMode
             {
                 if (i == 0)
                 {
-                    if (table.TryTimeout(slot, false))
+                    if (table.TryTimeout(slot, false, out _))
                         Interlocked.Increment(ref timeoutWon);
                 }
                 else if (table.TryComplete(1, 4, 0, true, out _) == RpcPendingTable.Match.Completed)
@@ -168,6 +170,117 @@ namespace GameMesh.Tests.EditMode
             Assert.AreEqual(RpcPendingTable.Match.Completed, match);
             Assert.AreEqual(1, table.Metrics.PendingHit);
             Assert.AreEqual(0, table.Metrics.ReadLoopLagMs);
+        }
+
+        [Test]
+        public void Write_AfterTimeout_IsSkipped()
+        {
+            var table = new RpcPendingTable();
+            Assert.IsTrue(table.TryRegister(1, 5, 0, out var slot));
+            Assert.IsTrue(table.TryTimeout(slot, false, out var written));
+            Assert.IsFalse(written);
+            Assert.IsFalse(table.TryBeginWrite(1, 5));
+        }
+
+        [Test]
+        public void Write_StartedBeforeTimeout_IsReported()
+        {
+            var table = new RpcPendingTable();
+            Assert.IsTrue(table.TryRegister(1, 6, 0, out var slot));
+            Assert.IsTrue(table.TryBeginWrite(1, 6));
+            Assert.IsTrue(table.TryTimeout(slot, false, out var written));
+            Assert.IsTrue(written);
+        }
+
+        [Test]
+        public void BotPush_RpcSeq_DoesNotAdvanceReliableSeq()
+        {
+            var tracker = new BotPushTracker();
+            tracker.BindInstance(9, 3);
+            Assert.IsFalse(tracker.ObserveServerPush(null, new GameResponse { Seq = 490, Ok = true }));
+            Assert.AreEqual(0ul, tracker.LastAppliedServerSeq);
+
+            var first = Delta(9, AoiOp.Enter, 42);
+            Assert.IsTrue(tracker.ObserveServerPush(new ServerPushEnvelope { ServerSeq = 1, Reliable = true }, first));
+            Assert.AreEqual(1ul, tracker.LastAppliedServerSeq);
+            Assert.AreEqual(1, tracker.VisibleCount);
+
+            var gapped = Delta(9, AoiOp.Enter, 43);
+            Assert.IsFalse(tracker.ObserveServerPush(new ServerPushEnvelope { ServerSeq = 3, Reliable = true }, gapped));
+            Assert.IsTrue(tracker.HasGap);
+            Assert.IsFalse(tracker.Healthy);
+            Assert.AreEqual(1ul, tracker.LastAppliedServerSeq);
+            Assert.AreEqual(1, tracker.VisibleCount);
+        }
+
+        [Test]
+        public void BotPush_EmptySnapshot_DoesNotBecomeHealthy()
+        {
+            var tracker = new BotPushTracker();
+            tracker.BindInstance(9, 3);
+            Assert.IsTrue(tracker.ObserveServerPush(
+                new ServerPushEnvelope { ServerSeq = 1, Reliable = true },
+                Delta(9, AoiOp.Enter, 42)));
+            var empty = new FullStateSnapshotRsp
+            {
+                Ok = true,
+                MapInstanceId = 9,
+                OwnerEpoch = 3,
+                BaselineServerSeq = 8,
+                RecoveryReason = "INSTANCE_LIVE"
+            };
+            Assert.IsFalse(tracker.ApplySnapshot(empty));
+            Assert.IsFalse(tracker.Healthy);
+            Assert.AreEqual(1ul, tracker.LastAppliedServerSeq);
+            Assert.AreEqual(1, tracker.VisibleCount);
+
+            var filled = new FullStateSnapshotRsp
+            {
+                Ok = true,
+                MapInstanceId = 9,
+                OwnerEpoch = 3,
+                BaselineServerSeq = 8,
+                RecoveryReason = "INSTANCE_LIVE"
+            };
+            filled.AoiEntities.Add(new EntitySnapshot { PlayerId = 42 });
+            filled.AoiEntities.Add(new EntitySnapshot { PlayerId = 43 });
+            Assert.IsTrue(tracker.ApplySnapshot(filled));
+            Assert.IsTrue(tracker.Healthy);
+            Assert.AreEqual(8ul, tracker.LastAppliedServerSeq);
+            Assert.AreEqual(2, tracker.VisibleCount);
+            var next = Delta(9, AoiOp.Leave, 43);
+            Assert.IsTrue(tracker.ObserveServerPush(new ServerPushEnvelope { ServerSeq = 9, Reliable = true }, next));
+            Assert.AreEqual(1, tracker.VisibleCount);
+        }
+
+        [Test]
+        public void BotPush_OtherInstance_ResetsVisibleSet()
+        {
+            var tracker = new BotPushTracker();
+            tracker.BindInstance(9, 3);
+            Assert.IsTrue(tracker.ObserveServerPush(
+                new ServerPushEnvelope { ServerSeq = 1, Reliable = true },
+                Delta(9, AoiOp.Enter, 42)));
+            Assert.IsFalse(tracker.ObserveServerPush(
+                new ServerPushEnvelope { ServerSeq = 2, Reliable = true },
+                Delta(10, AoiOp.Enter, 99)));
+            Assert.AreEqual(10ul, tracker.MapInstanceId);
+            Assert.AreEqual(0, tracker.VisibleCount);
+            Assert.AreEqual(0ul, tracker.LastAppliedServerSeq);
+        }
+
+        static GameResponse Delta(ulong mapInstanceId, AoiOp op, ulong playerId)
+        {
+            var rsp = new GameResponse
+            {
+                AoiDelta = new AoiDelta { MapInstanceId = mapInstanceId }
+            };
+            rsp.AoiDelta.Events.Add(new AoiEvent
+            {
+                Op = (int)op,
+                Entity = new EntitySnapshot { PlayerId = playerId }
+            });
+            return rsp;
         }
     }
 }

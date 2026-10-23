@@ -93,8 +93,45 @@ namespace GameMesh.LoadTest
             _ = LogoutAllAsync();
         }
 
+        float _nextRateSample = -1f;
+        long _rateLate;
+        long _rateWritten;
+        long _rateMatched;
+        long _rateTimeout;
+        int _gc0;
+        int _gc1;
+        int _gc2;
+        bool _rateReady;
+        public string GatewayRateText { get; private set; } = "网关每秒 尚无采样";
+        public int MaxFrameMs { get; private set; }
+        public int MaxDispatcherBacklog { get; private set; }
+        public int MaxReadLoopLagMs { get; private set; }
+
+        public string GatewayRateLine()
+        {
+            return GatewayRateText +
+                   "    帧峰值 " + MaxFrameMs + "ms" +
+                   "    主线程队列 " + MaxDispatcherBacklog +
+                   "    读循环峰值 " + MaxReadLoopLagMs + "ms";
+        }
+
         void Update()
         {
+            var frameMs = (int)(Time.unscaledDeltaTime * 1000f);
+            if (frameMs > MaxFrameMs)
+                MaxFrameMs = frameMs;
+            var live = GameMeshClient.Instance;
+            var dispatcher = live != null ? live.GetComponent<GameMeshMainThreadDispatcher>() : null;
+            if (dispatcher != null && dispatcher.Backlog > MaxDispatcherBacklog)
+                MaxDispatcherBacklog = dispatcher.Backlog;
+            if (_nextRateSample < 0f)
+                _nextRateSample = Time.unscaledTime + 1f;
+            if (Time.unscaledTime >= _nextRateSample)
+            {
+                _nextRateSample = Time.unscaledTime + 1f;
+                SampleGatewayRates();
+            }
+
             if (_holdOnline && Time.unscaledTime >= _holdUntil)
                 _ = LogoutAllAsync();
             if (InWorldCount > 0 && Time.unscaledTime >= _nextLineRefresh)
@@ -703,6 +740,80 @@ namespace GameMesh.LoadTest
             }
 
             return sum;
+        }
+
+        void SampleGatewayRates()
+        {
+            long late = 0;
+            long written = 0;
+            long matched = 0;
+            long timeout = 0;
+            long lag = 0;
+            var ports = new Dictionary<int, int>();
+            for (var i = 0; i < _bots.Count; i++)
+            {
+                var bot = _bots[i];
+                if (bot == null)
+                    continue;
+                var pipe = bot.PipeMetrics;
+                if (pipe != null)
+                {
+                    late += pipe.Late;
+                    written += pipe.BytesSent;
+                    matched += pipe.PendingHit;
+                    timeout += pipe.Timeout;
+                    if (pipe.ReadLoopLagMs > lag)
+                        lag = pipe.ReadLoopLagMs;
+                }
+
+                if (bot.Presence != "in_world")
+                    continue;
+                var port = bot.GatewayPort;
+                if (!ports.ContainsKey(port))
+                    ports[port] = 0;
+                ports[port]++;
+            }
+
+            if (lag > MaxReadLoopLagMs)
+                MaxReadLoopLagMs = (int)lag;
+            var gc0 = GC.CollectionCount(0);
+            var gc1 = GC.CollectionCount(1);
+            var gc2 = GC.CollectionCount(2);
+            var d0 = _gc0 == 0 && gc0 > 0 ? gc0 : gc0 - _gc0;
+            var d1 = gc1 - _gc1;
+            var d2 = gc2 - _gc2;
+            if (!_rateReady)
+            {
+                _gc0 = gc0;
+                _gc1 = gc1;
+                _gc2 = gc2;
+                _rateLate = late;
+                _rateWritten = written;
+                _rateMatched = matched;
+                _rateTimeout = timeout;
+                _rateReady = true;
+                GatewayRateText = "网关每秒 采样中";
+                return;
+            }
+
+            _gc0 = gc0;
+            _gc1 = gc1;
+            _gc2 = gc2;
+            var parts = new List<string>();
+            foreach (var pair in ports)
+                parts.Add(":" + pair.Key + " 在线" + pair.Value);
+            parts.Sort(StringComparer.Ordinal);
+            GatewayRateText =
+                "每秒 写出 " + (written - _rateWritten) +
+                "  匹配 " + (matched - _rateMatched) +
+                "  晚到 " + (late - _rateLate) +
+                "  超时 " + (timeout - _rateTimeout) +
+                "    GC " + d0 + "/" + d1 + "/" + d2 +
+                (parts.Count > 0 ? "    " + string.Join(" ", parts.ToArray()) : "");
+            _rateLate = late;
+            _rateWritten = written;
+            _rateMatched = matched;
+            _rateTimeout = timeout;
         }
 
         public string LineSpread()

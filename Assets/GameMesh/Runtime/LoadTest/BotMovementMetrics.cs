@@ -7,6 +7,13 @@ namespace GameMesh.LoadTest
     {
         public int Planned;
         public int Sent;
+        public int QueueAccepted;
+        public int WriteCompleted;
+        public int RspRawReceived;
+        public int RspMatched;
+        public int LateRsp;
+        public int TimeoutBeforeWrite;
+        public int Cancelled;
         public int AckOk;
         public int Rejected;
         public int RejectTooFast;
@@ -115,6 +122,13 @@ namespace GameMesh.LoadTest
                 return;
             Planned += other.Planned;
             Sent += other.Sent;
+            QueueAccepted += other.QueueAccepted;
+            WriteCompleted += other.WriteCompleted;
+            RspRawReceived += other.RspRawReceived;
+            RspMatched += other.RspMatched;
+            LateRsp += other.LateRsp;
+            TimeoutBeforeWrite += other.TimeoutBeforeWrite;
+            Cancelled += other.Cancelled;
             AckOk += other.AckOk;
             Rejected += other.Rejected;
             RejectTooFast += other.RejectTooFast;
@@ -141,6 +155,13 @@ namespace GameMesh.LoadTest
             sb.Append("  \"run_id\": \"").Append(runId ?? "").Append("\",\n");
             sb.Append("  \"move_planned\": ").Append(Planned).Append(",\n");
             sb.Append("  \"move_sent\": ").Append(Sent).Append(",\n");
+            sb.Append("  \"queue_accepted\": ").Append(QueueAccepted).Append(",\n");
+            sb.Append("  \"write_completed\": ").Append(WriteCompleted).Append(",\n");
+            sb.Append("  \"rsp_raw_received\": ").Append(RspRawReceived).Append(",\n");
+            sb.Append("  \"rsp_matched\": ").Append(RspMatched).Append(",\n");
+            sb.Append("  \"late_rsp\": ").Append(LateRsp).Append(",\n");
+            sb.Append("  \"timeout_before_write\": ").Append(TimeoutBeforeWrite).Append(",\n");
+            sb.Append("  \"cancel\": ").Append(Cancelled).Append(",\n");
             sb.Append("  \"move_ack_ok\": ").Append(AckOk).Append(",\n");
             sb.Append("  \"move_rejected\": ").Append(Rejected).Append(",\n");
             sb.Append("  \"move_rejected_too_fast\": ").Append(RejectTooFast).Append(",\n");
