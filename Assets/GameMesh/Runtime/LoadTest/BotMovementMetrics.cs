@@ -14,6 +14,8 @@ namespace GameMesh.LoadTest
         public int RejectUnwalkable;
         public int RejectOther;
         public int Timeout;
+        public int Overloaded;
+        public int PoseRefresh;
         public int SkippedBusy;
         public int SkippedNotReady;
         public int Paused;
@@ -26,6 +28,31 @@ namespace GameMesh.LoadTest
         readonly int[] _latency = new int[256];
         int _latencyCount;
         int _latencyCursor;
+
+        public static bool IsBusy(string code)
+        {
+            return code == "ERR_OVERLOADED" || code == "ERR_BUSY";
+        }
+
+        public static int HoldMsAfterTimeouts(int streak)
+        {
+            if (streak < 2)
+                return 0;
+            var hold = 2000;
+            for (var i = 2; i < streak && hold < 15000; i++)
+                hold = Math.Min(15000, hold * 2);
+            return hold;
+        }
+
+        public static int HeartbeatPauseMs(int misses)
+        {
+            if (misses <= 1)
+                return 5000;
+            var pause = 5000;
+            for (var i = 1; i < misses && pause < 30000; i++)
+                pause = Math.Min(30000, pause * 2);
+            return pause;
+        }
 
         public void NoteLatency(int ms)
         {
@@ -95,6 +122,8 @@ namespace GameMesh.LoadTest
             RejectUnwalkable += other.RejectUnwalkable;
             RejectOther += other.RejectOther;
             Timeout += other.Timeout;
+            Overloaded += other.Overloaded;
+            PoseRefresh += other.PoseRefresh;
             SkippedBusy += other.SkippedBusy;
             SkippedNotReady += other.SkippedNotReady;
             Paused += other.Paused;
@@ -119,6 +148,8 @@ namespace GameMesh.LoadTest
             sb.Append("  \"move_rejected_unwalkable\": ").Append(RejectUnwalkable).Append(",\n");
             sb.Append("  \"move_rejected_other\": ").Append(RejectOther).Append(",\n");
             sb.Append("  \"move_timeout\": ").Append(Timeout).Append(",\n");
+            sb.Append("  \"move_overloaded\": ").Append(Overloaded).Append(",\n");
+            sb.Append("  \"pose_refresh\": ").Append(PoseRefresh).Append(",\n");
             sb.Append("  \"move_skipped_busy\": ").Append(SkippedBusy).Append(",\n");
             sb.Append("  \"move_skipped_not_ready\": ").Append(SkippedNotReady).Append(",\n");
             sb.Append("  \"move_paused\": ").Append(Paused).Append(",\n");
@@ -129,7 +160,8 @@ namespace GameMesh.LoadTest
             sb.Append("  \"rpc_latency_p50\": ").Append(LatencyPercentile(50)).Append(",\n");
             sb.Append("  \"rpc_latency_p95\": ").Append(LatencyPercentile(95)).Append(",\n");
             sb.Append("  \"rpc_latency_p99\": ").Append(LatencyPercentile(99)).Append(",\n");
-            sb.Append("  \"scheduler_lag_ms\": ").Append(SchedulerLagMs).Append("\n");
+            sb.Append("  \"scheduler_lag_ms\": ").Append(SchedulerLagMs).Append(",\n");
+            sb.Append("  \"note\": \"live stages are not filled by this export\"\n");
             sb.Append("}\n");
             return sb.ToString();
         }

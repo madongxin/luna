@@ -338,14 +338,17 @@ namespace GameMesh.UI
                     ? client.Lines.LineNo.ToString()
                     : (client.Session.MapInstanceId != 0 ? "在图" : "-")) +
                 "    地图实例  " + client.Session.MapInstanceId +
-                "    AOI  " + client.Aoi.Entities.Count, _label);
+                "    AOI  " + client.Aoi.Entities.Count +
+                "    快照线/解析/保留  " + client.LastSnapshotWireEntities +
+                "/" + client.LastSnapshotParsedEntities +
+                "/" + client.LastSnapshotKeptRemotes, _label);
             GUILayout.Label(CrowdText(client), _label);
             GUILayout.Label(LocalCoordText(client), _label);
             if (client.IsDungeon)
                 GUILayout.Label("当前在副本 2102（画面是 1001）。点「返回 1002」离开副本回苏州。", _statusWarn);
             GUILayout.Label(
-                "client_seq  " + (client.Connection != null ? client.Connection.LastClientSeq.ToString() : "0") +
-                "    server_seq  " + client.Session.LastServerSeq +
+                "请求seq  " + (client.Connection != null ? client.Connection.LastClientSeq.ToString() : "0") +
+                "    推送server_seq  " + client.Session.LastServerSeq +
                 "    RTT  " + client.LastRttMs + "ms", _label);
             GUILayout.Label(
                 "协议  v" + client.ProtocolVersion +
@@ -524,8 +527,11 @@ namespace GameMesh.UI
                 "  拒绝 " + move.Rejected +
                 "  超时 " + move.Timeout +
                 "  忙跳过 " + move.SkippedBusy +
-                "  未就绪 " + move.SkippedNotReady,
+                "  未就绪 " + move.SkippedNotReady +
+                "  过载 " + move.Overloaded,
                 _hint);
+            GUILayout.Label(runner.PresenceSummary(), _hint);
+            GUILayout.Label(runner.LineSpread(), _hint);
 
             GUILayout.Space(8);
             GUILayout.BeginHorizontal();

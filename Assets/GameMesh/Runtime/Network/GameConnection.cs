@@ -17,7 +17,7 @@ namespace GameMesh.Network
         public int PendingLimit = 256;
 
         readonly IMainThreadDispatcher _dispatcher;
-        readonly ConcurrentDictionary<ulong, PendingCall> _pending = new ConcurrentDictionary<ulong, PendingCall>();
+        readonly RpcPendingTable _pending = new RpcPendingTable();
         readonly ConcurrentQueue<SendItem> _sendQueue = new ConcurrentQueue<SendItem>();
         readonly SemaphoreSlim _sendSignal = new SemaphoreSlim(0);
         readonly object _stateGate = new object();
@@ -52,6 +52,7 @@ namespace GameMesh.Network
         public int Generation => _generation;
 
         public ulong LastClientSeq => (ulong)Interlocked.Read(ref _seq);
+        public RpcPipeMetrics PipeMetrics => _pending.Metrics;
 
         public event Action<GameResponse> PushReceived;
         public event Action<ConnectionState> StateChanged;
@@ -155,14 +156,18 @@ namespace GameMesh.Network
             }
 
             AssignRequestSeq(request);
+            var generation = _generation;
 
             if (_pending.Count >= PendingLimit)
                 throw new GameMeshException(GameMeshErrorCode.ClientQueueFull, "too many pending requests");
 
             var tcs = new TaskCompletionSource<GameResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
             var pending = new PendingCall(tcs);
-            if (!_pending.TryAdd(request.Seq, pending))
+            // Expected response opcode stays 0 here. Request and response oneof numbers are different
+            // enums, so comparing them would reject real Move and Heartbeat replies.
+            if (!_pending.TryRegister(generation, request.Seq, 0, out var slot))
                 throw new GameMeshException(GameMeshErrorCode.ClientProtocol, $"duplicate seq {request.Seq}");
+            slot.Tag = pending;
 
             byte[] frame;
             try
@@ -171,17 +176,18 @@ namespace GameMesh.Network
             }
             catch
             {
-                _pending.TryRemove(request.Seq, out _);
+                _pending.TryAbandon(slot);
                 throw;
             }
 
             if (Interlocked.Increment(ref _queued) > SendQueueLimit)
             {
                 Interlocked.Decrement(ref _queued);
-                _pending.TryRemove(request.Seq, out _);
+                _pending.TryAbandon(slot);
                 throw new GameMeshException(GameMeshErrorCode.ClientQueueFull, "send queue full");
             }
 
+            _pending.NoteWriteRequested();
             _sendQueue.Enqueue(new SendItem(frame, request.Seq, BodyName(request)));
             _sendSignal.Release();
 
@@ -190,12 +196,12 @@ namespace GameMesh.Network
                 timeoutCts.CancelAfter(timeout);
                 using (timeoutCts.Token.Register(() =>
                        {
-                           if (_pending.TryRemove(request.Seq, out var call))
+                           if (_pending.TryTimeout(slot, ct.IsCancellationRequested))
                            {
                                var code = ct.IsCancellationRequested
                                    ? GameMeshErrorCode.ClientCancelled
                                    : GameMeshErrorCode.ClientTimeout;
-                               call.TrySetException(new GameMeshException(code, $"seq={request.Seq} {code}"));
+                               pending.TrySetException(new GameMeshException(code, $"seq={request.Seq} {code}"));
                            }
                        }))
                 {
@@ -313,6 +319,7 @@ namespace GameMesh.Network
                         if (stream == null)
                             break;
                         await WriteExactAsync(stream, item.Frame, ct).ConfigureAwait(false);
+                        _pending.NoteBytesSent();
                         if (!Quiet)
                             GameMeshLog.Debug($"send seq={item.Seq} type={item.Type}");
                     }
@@ -348,6 +355,7 @@ namespace GameMesh.Network
                     for (var i = 0; i < n; i++)
                         buffer.Add(read[i]);
 
+                    var decodeStart = System.Diagnostics.Stopwatch.GetTimestamp();
                     while (true)
                     {
                         var status = FrameCodec.TryDecode(buffer, out var payload, out var length);
@@ -370,8 +378,12 @@ namespace GameMesh.Network
                             return;
                         }
 
-                        DispatchResponse(response);
+                        DispatchResponse(response, generation);
                     }
+
+                    var elapsedMs = (System.Diagnostics.Stopwatch.GetTimestamp() - decodeStart) * 1000L /
+                                    System.Diagnostics.Stopwatch.Frequency;
+                    _pending.NoteReadLoopLag(elapsedMs);
                 }
             }
             catch (OperationCanceledException)
@@ -383,15 +395,30 @@ namespace GameMesh.Network
             }
         }
 
-        void DispatchResponse(GameResponse response)
+        void DispatchResponse(GameResponse response, int generation)
         {
-            if (IsPush(response) || !_pending.TryRemove(response.Seq, out var call))
+            _pending.NoteFrameDecoded();
+            if (response != null && response.Seq != 0 && response.BodyCase == GameResponse.BodyOneofCase.None)
+                _pending.NoteOpcodeUnknown();
+
+            // A frame is matched on this connection generation and GameResponse.Seq.
+            // Push server_seq is not an RPC id. A late frame after timeout does not complete the call.
+            if (IsPush(response))
             {
                 _dispatcher.Enqueue(() => PushReceived?.Invoke(response));
                 return;
             }
 
-            _dispatcher.Enqueue(() => call.TrySetResult(response));
+            var match = _pending.TryComplete(
+                generation, response.Seq, (int)response.BodyCase, response.Ok, out var slot);
+            if (match != RpcPendingTable.Match.Completed)
+            {
+                _dispatcher.Enqueue(() => PushReceived?.Invoke(response));
+                return;
+            }
+
+            var call = slot.Tag as PendingCall;
+            _dispatcher.Enqueue(() => call?.TrySetResult(response));
         }
 
         static bool IsPush(GameResponse response)
@@ -442,9 +469,11 @@ namespace GameMesh.Network
 
         void FailPending(Exception ex)
         {
-            foreach (var kv in _pending)
+            var tags = new System.Collections.Generic.List<object>();
+            _pending.FailAll(tags);
+            for (var i = 0; i < tags.Count; i++)
             {
-                if (_pending.TryRemove(kv.Key, out var call))
+                if (tags[i] is PendingCall call)
                     call.TrySetException(ex);
             }
         }

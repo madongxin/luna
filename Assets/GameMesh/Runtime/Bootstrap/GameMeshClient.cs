@@ -80,6 +80,9 @@ namespace GameMesh.Bootstrap
         public string ProtocolSchemaShort { get; private set; } = "";
         public string ProtocolSchemaSha256 { get; private set; } = "";
         public int LastRttMs { get; private set; }
+        public int LastSnapshotWireEntities { get; private set; }
+        public int LastSnapshotParsedEntities { get; private set; }
+        public int LastSnapshotKeptRemotes { get; private set; }
         public int ProtocolVersion { get; private set; } = (int)ProtocolHandshake.ProtocolVersion;
         public bool HelloOk { get; private set; }
         public bool HeartbeatOk { get; private set; }
@@ -1915,6 +1918,15 @@ namespace GameMesh.Bootstrap
                     RestoreMapPresence();
                     _ = RecoverStaleRouteAsync();
                 }
+                else if (request.BodyCase == GameRequest.BodyOneofCase.PushAck &&
+                         string.Equals(code, "ERR_AOI_RESYNC_REQUIRED", StringComparison.Ordinal))
+                {
+                    // The ack is not recovery. One background snapshot is requested; entities stay
+                    // until that snapshot is validated.
+                    SetError(code, rsp.Message, code, trace);
+                    _ = RequestWorldSnapshotAsync(background: true);
+                    return rsp;
+                }
                 else if (!rsp.Ok &&
                          request.BodyCase != GameRequest.BodyOneofCase.Heartbeat &&
                          request.BodyCase != GameRequest.BodyOneofCase.MapPing)
@@ -2796,10 +2808,33 @@ namespace GameMesh.Bootstrap
                 return false;
             }
 
-            var localId = Aoi.LocalPlayerId != 0 ? Aoi.LocalPlayerId : Session.PlayerId;
-            if (keepExistingOnEmpty && RemoteCount(Aoi, localId) > 0 && model.AoiEntities.Count == 0)
+            if (!WorldSnapshotApplier.AcceptsEpoch(Session.OwnerEpoch, snap.OwnerEpoch))
             {
-                GameMeshLog.Warn("skip empty snapshot; keep aoi=" + Aoi.Entities.Count);
+                SetError("ERR_AOI_RESYNC_REQUIRED", "snapshot epoch went backwards", "ERR_AOI_RESYNC_REQUIRED");
+                return false;
+            }
+
+            var localId = Aoi.LocalPlayerId != 0 ? Aoi.LocalPlayerId : Session.PlayerId;
+            var wire = snap.AoiEntities != null ? snap.AoiEntities.Count : 0;
+            var parsed = model.AoiEntities.Count;
+            var existing = RemoteCount(Aoi, localId);
+            LastSnapshotWireEntities = wire;
+            LastSnapshotParsedEntities = parsed;
+            LastSnapshotKeptRemotes = existing;
+            var replace = WorldSnapshotApplier.ShouldReplaceEntities(
+                existing, parsed, true, model.RecoveryReason);
+            if (!replace)
+            {
+                if (model.Self != null)
+                {
+                    HasPendingSpawn = true;
+                    PendingSpawn = new Vector3(model.Self.X, model.Self.Y, model.Self.Z);
+                    PendingSpawnYaw = model.Self.Yaw;
+                }
+
+                GameMeshLog.Warn(
+                    "keep snapshot wire=" + wire + " parsed=" + parsed +
+                    " aoi=" + Aoi.Entities.Count + " reason=" + (model.RecoveryReason ?? ""));
                 return true;
             }
 
@@ -2817,7 +2852,20 @@ namespace GameMesh.Bootstrap
             if (Session.MapInstanceId != 0)
                 Connection.SetLogicalState(ConnectionState.InWorld);
             Lines.BindPresence(Session.MapInstanceId);
-            GameMeshLog.Info($"full snapshot player={Session.PlayerId} seq={Session.LastServerSeq} ver={Session.SnapshotVersion} aoi={Aoi.Entities.Count}");
+            LastSnapshotKeptRemotes = RemoteCount(Aoi, localId);
+            var views = 0;
+            var binder = GetComponent<GameMeshWorldBinder>();
+            if (binder != null)
+                views = binder.RemoteViewCount;
+            GameMeshLog.Info(
+                "full snapshot player=" + Session.PlayerId +
+                " seq=" + Session.LastServerSeq +
+                " ver=" + Session.SnapshotVersion +
+                " wire=" + wire +
+                " parsed=" + parsed +
+                " aoi=" + Aoi.Entities.Count +
+                " views=" + views +
+                " background=" + keepExistingOnEmpty);
             return true;
         }
 

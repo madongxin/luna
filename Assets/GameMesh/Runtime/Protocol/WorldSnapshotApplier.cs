@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Generic;
 using GameMesh.Aoi;
 using GameMesh.Auth;
@@ -24,6 +25,29 @@ namespace GameMesh.Protocol
 
     public static class WorldSnapshotApplier
     {
+        /// <summary>
+        /// An error or NOT_READY snapshot must not clear entities. An empty list must not
+        /// replace a non-empty visible set. A valid snapshot with no existing remotes may clear.
+        /// </summary>
+        public static bool ShouldReplaceEntities(int existingRemotes, int wireEntities, bool snapshotOk, string recoveryReason)
+        {
+            if (!snapshotOk)
+                return false;
+            if (string.Equals(recoveryReason, "NOT_ON_MAP", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(recoveryReason, "NOT_READY", StringComparison.OrdinalIgnoreCase))
+                return false;
+            if (wireEntities <= 0 && existingRemotes > 0)
+                return false;
+            return true;
+        }
+
+        public static bool AcceptsEpoch(ulong currentEpoch, ulong snapshotEpoch)
+        {
+            if (currentEpoch == 0 || snapshotEpoch == 0)
+                return true;
+            return snapshotEpoch >= currentEpoch;
+        }
+
         public static bool TryBuild(FullStateSnapshotRsp snap, ulong expectedPlayerId,
             ulong currentMapInstanceId, uint currentSnapshotVersion,
             out WorldSnapshotModel model, out string errorCode, out string message)

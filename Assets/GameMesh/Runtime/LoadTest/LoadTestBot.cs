@@ -39,6 +39,11 @@ namespace GameMesh.LoadTest
         int _heartbeatMisses;
         int _resumeBusy;
         int _rpcRttMs;
+        int _moveTimeoutStreak;
+        int _poseUncertain;
+        int _authorityBusy;
+        long _moveHoldUntilMs;
+        static readonly SemaphoreSlim AuthorityGate = new SemaphoreSlim(4, 4);
         static int _lineRefreshTick;
         static string _cachedClientVersion = "luna";
         static string _cachedPlatform = "Unknown";
@@ -51,6 +56,27 @@ namespace GameMesh.LoadTest
         public BotMovementProfile Profile { get; private set; }
         public BotMovementMetrics Metrics => _clock != null ? _clock.Metrics : null;
         public ulong MapInstanceId => _mapInstanceId;
+        public uint RealmId { get; private set; }
+        public ulong MapTemplateId { get; private set; }
+        public uint LineNo => _lastEnterLine;
+        public string GameLogicInstanceId { get; private set; } = "";
+        public bool PoseUncertain => Volatile.Read(ref _poseUncertain) != 0;
+
+        public string Presence
+        {
+            get
+            {
+                if (Volatile.Read(ref _resumeBusy) != 0)
+                    return "migrating";
+                if (Failed)
+                    return "disconnected";
+                if (InWorld)
+                    return "in_world";
+                if (Status == "idle")
+                    return "idle";
+                return "entering";
+            }
+        }
 
         public int Index => _index;
         /// <summary>0 means server default (7200s). Heartbeat does not renew TTL.</summary>
@@ -422,6 +448,11 @@ namespace GameMesh.LoadTest
             }
 
             _mapInstanceId = rsp.EnterMap.MapInstanceId;
+            _lastEnterLine = rsp.EnterMap.LineNo;
+            MapTemplateId = rsp.EnterMap.MapTemplateId;
+            GameLogicInstanceId = rsp.EnterMap.GamelogicInstanceId ?? "";
+            if (client != null && client.Config != null)
+                RealmId = client.Config.realmId;
             _spawn = rsp.EnterMap.SpawnPosition != null
                 ? ProtocolMapper.ToUnity(rsp.EnterMap.SpawnPosition)
                 : new Vector3(-26f, -0.2f, -5f);
@@ -654,6 +685,19 @@ namespace GameMesh.LoadTest
             var gen = _loopGen;
             InWorld = false;
             Status = "重连";
+            try
+            {
+                await Task.Delay((_index % 40) * 50, ct).ConfigureAwait(false);
+            }
+            catch (TaskCanceledException)
+            {
+                return;
+            }
+            finally
+            {
+                if (ct.IsCancellationRequested)
+                    Interlocked.Exchange(ref _resumeBusy, 0);
+            }
             Exception last = null;
             var lastStage = "resume";
             var lastOutcome = "";
@@ -749,6 +793,7 @@ namespace GameMesh.LoadTest
         void MarkFailed(string stage, Exception ex, string extra = "")
         {
             Failed = true;
+            InWorld = false;
             var code = ErrCode(ex);
             if (string.IsNullOrEmpty(code))
                 code = "FAIL";
@@ -962,7 +1007,8 @@ namespace GameMesh.LoadTest
 
                     _heartbeatMisses++;
                     Status = "心跳超时 :" + GatewayPort + " x" + _heartbeatMisses;
-                    try { await Task.Delay(5000, ct).ConfigureAwait(false); }
+                    var pause = BotMovementMetrics.HeartbeatPauseMs(_heartbeatMisses) + (_index % 10) * 100;
+                    try { await Task.Delay(pause, ct).ConfigureAwait(false); }
                     catch (TaskCanceledException) { return; }
                 }
             }
@@ -994,7 +1040,14 @@ namespace GameMesh.LoadTest
 
             while (!_stopMoves && !ct.IsCancellationRequested && gen == _loopGen)
             {
+                var nowHold = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                if (Volatile.Read(ref _poseUncertain) != 0 &&
+                    nowHold >= _moveHoldUntilMs &&
+                    Volatile.Read(ref _authorityBusy) == 0)
+                    _ = RefreshAuthorityAsync(ct);
                 var ready = InWorld && Volatile.Read(ref _resumeBusy) == 0 &&
+                            Volatile.Read(ref _poseUncertain) == 0 &&
+                            nowHold >= _moveHoldUntilMs &&
                             _conn.State == ConnectionState.InWorld && _mapInstanceId != 0;
                 var tick = _clock.Evaluate(ready, inflight.IsCompleted ? 0 : 1);
                 if (tick.Kind == BotMoveTickKind.Send)
@@ -1077,11 +1130,21 @@ namespace GameMesh.LoadTest
                     // ok means the authority pose was stored. It does not mean
                     // anyone else can see it yet.
                     metrics.AckOk++;
+                    _moveTimeoutStreak = 0;
+                    Volatile.Write(ref _poseUncertain, 0);
+                    return;
+                }
+
+                var code = ProtocolMapper.ExtractErrorCode(rsp);
+                if (BotMovementMetrics.IsBusy(code))
+                {
+                    metrics.Overloaded++;
+                    HoldMoves(2);
+                    Status = "服务器忙，暂停移动";
                     return;
                 }
 
                 metrics.Rejected++;
-                var code = ProtocolMapper.ExtractErrorCode(rsp);
                 if (code == "ERR_MOVE_TOO_FAST")
                     metrics.RejectTooFast++;
                 else if (code == "ERR_OUT_OF_BOUNDS")
@@ -1109,11 +1172,87 @@ namespace GameMesh.LoadTest
                 if (ex is GameMeshException ge && ge.ErrorCode == GameMeshErrorCode.ClientTimeout)
                 {
                     metrics.Timeout++;
-                    Status = "移动超时 :" + GatewayPort;
+                    _moveTimeoutStreak++;
+                    // A timeout does not prove the server rejected the step. Stop sending
+                    // from this unconfirmed point until a snapshot returns the authority pose.
+                    HoldMoves(_moveTimeoutStreak);
+                    Status = "位姿未确认 :" + GatewayPort;
+                    if (_moveTimeoutStreak >= 2)
+                        _ = RefreshAuthorityAsync(ct);
                     return;
                 }
 
                 metrics.Rejected++;
+            }
+        }
+
+        void HoldMoves(int streak)
+        {
+            var hold = BotMovementMetrics.HoldMsAfterTimeouts(streak);
+            if (hold <= 0)
+                return;
+            Volatile.Write(ref _poseUncertain, 1);
+            _moveHoldUntilMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + hold + (_index % 20) * 50;
+        }
+
+        async Task RefreshAuthorityAsync(CancellationToken ct)
+        {
+            if (Interlocked.CompareExchange(ref _authorityBusy, 1, 0) != 0)
+                return;
+            var acquired = false;
+            try
+            {
+                await Task.Delay((_index % 30) * 40, ct).ConfigureAwait(false);
+                await AuthorityGate.WaitAsync(ct).ConfigureAwait(false);
+                acquired = true;
+                var rsp = await SendAsync(new GameRequest
+                {
+                    WorldSnapshot = new WorldSnapshotReq
+                    {
+                        PlayerId = _playerId,
+                        LastAppliedServerSeq = _lastServerSeq
+                    }
+                }, TimeSpan.FromSeconds(12), ct).ConfigureAwait(false);
+                var snap = rsp != null ? rsp.FullSnapshot : null;
+                if (snap == null || !snap.Ok || snap.Self == null || snap.Self.Position == null ||
+                    string.Equals(snap.RecoveryReason, "NOT_ON_MAP", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(snap.RecoveryReason, "NOT_READY", StringComparison.OrdinalIgnoreCase))
+                {
+                    Status = "权威刷新失败 :" + GatewayPort;
+                    _moveHoldUntilMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 4000;
+                    return;
+                }
+
+                _pos = ProtocolMapper.ToUnity(snap.Self.Position);
+                _yaw = snap.Self.Yaw;
+                if (snap.MapInstanceId != 0)
+                    _mapInstanceId = snap.MapInstanceId;
+                if (snap.MapTemplateId != 0)
+                    MapTemplateId = snap.MapTemplateId;
+                if (snap.RealmId != 0)
+                    RealmId = snap.RealmId;
+                if (!string.IsNullOrEmpty(snap.GamelogicInstanceId))
+                    GameLogicInstanceId = snap.GamelogicInstanceId;
+                Volatile.Write(ref _poseUncertain, 0);
+                _moveTimeoutStreak = 0;
+                if (_clock != null && _clock.Metrics != null)
+                    _clock.Metrics.PoseRefresh++;
+                Status = "在线 :" + GatewayPort;
+            }
+            catch (TaskCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                Status = "权威刷新失败 :" + GatewayPort;
+                _moveHoldUntilMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 4000;
+                GameMeshLog.Warn("bot#" + _index + " snapshot " + GameMeshLog.Redact(ex.Message));
+            }
+            finally
+            {
+                if (acquired)
+                    AuthorityGate.Release();
+                Interlocked.Exchange(ref _authorityBusy, 0);
             }
         }
 

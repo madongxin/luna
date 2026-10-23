@@ -705,6 +705,56 @@ namespace GameMesh.LoadTest
             return sum;
         }
 
+        public string LineSpread()
+        {
+            var counts = new Dictionary<string, int>();
+            for (var i = 0; i < _bots.Count; i++)
+            {
+                var bot = _bots[i];
+                if (bot == null || bot.Presence != "in_world")
+                    continue;
+                var key = "实例" + bot.MapInstanceId + " 线" + bot.LineNo + " :" + bot.GatewayPort;
+                if (!counts.ContainsKey(key))
+                    counts[key] = 0;
+                counts[key]++;
+            }
+
+            if (counts.Count == 0)
+                return "实例分布 无";
+            var parts = new List<string>();
+            foreach (var pair in counts)
+                parts.Add(pair.Key + " " + pair.Value + "人");
+            parts.Sort(StringComparer.Ordinal);
+            return "实例分布 " + string.Join(" | ", parts.ToArray());
+        }
+
+        public string PresenceSummary()
+        {
+            var inWorld = 0;
+            var entering = 0;
+            var migrating = 0;
+            var disconnected = 0;
+            var idle = 0;
+            for (var i = 0; i < _bots.Count; i++)
+            {
+                var bot = _bots[i];
+                if (bot == null)
+                    continue;
+                switch (bot.Presence)
+                {
+                    case "in_world": inWorld++; break;
+                    case "entering": entering++; break;
+                    case "migrating": migrating++; break;
+                    case "disconnected": disconnected++; break;
+                    default: idle++; break;
+                }
+            }
+
+            return "在线 " + inWorld + "  进入中 " + entering +
+                   "  迁移 " + migrating + "  断开 " + disconnected +
+                   "  未开始 " + idle;
+        }
+
         public string ExportMovementMetrics()
         {
             try
