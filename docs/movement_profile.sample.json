@@ -1,0 +1,20 @@
+{
+  "movement_seed": 20261021,
+  "movement_target_hz": 5,
+  "move_jitter_pct": 10,
+  "max_inflight_move_per_bot": 1,
+  "single_strategy_mode": "",
+  "strategy_weights": {
+    "Idle": 10,
+    "LocalWander": 35,
+    "AoiBoundaryShuttle": 20,
+    "HotspotGather": 20,
+    "BidirectionalPatrol": 15
+  },
+  "walk_speed_mps": 5.5,
+  "server_move_speed_mps": 10,
+  "aoi_radius_m": 32,
+  "aoi_cell_m": 32,
+  "safe_radius_m": 24,
+  "sync_wave": false
+}

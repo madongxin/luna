@@ -35,6 +35,15 @@ namespace GameMesh.Network
 
         public bool Quiet;
 
+        public bool TransportOpen
+        {
+            get
+            {
+                lock (_stateGate)
+                    return _tcp != null && _tcp.Connected && !_failClosed;
+            }
+        }
+
         public ConnectionState State
         {
             get { lock (_stateGate) return _state; }
@@ -81,6 +90,7 @@ namespace GameMesh.Network
 
             lock (_stateGate)
                 _generation++;
+            CloseLeftoverSocket();
             SetState(ConnectionState.Connecting);
             TcpClient tcp = null;
             try
@@ -477,6 +487,22 @@ namespace GameMesh.Network
         static void SafeCloseSocket(TcpClient tcp)
         {
             try { tcp?.Close(); } catch { /* ignore */ }
+        }
+
+        void CloseLeftoverSocket()
+        {
+            TcpClient previous;
+            NetworkStream stream;
+            lock (_stateGate)
+            {
+                previous = _tcp;
+                stream = _stream;
+                _tcp = null;
+                _stream = null;
+            }
+
+            try { stream?.Close(); } catch { /* ignore */ }
+            SafeCloseSocket(previous);
         }
 
         static string BodyName(GameRequest request) => request.BodyCase.ToString();

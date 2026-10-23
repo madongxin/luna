@@ -67,6 +67,8 @@ namespace GameMesh.LoadTest
 
         public string Phase => _phase;
         public string LastError => _lastError;
+        public BotMovementSettings Movement { get; } = new BotMovementSettings();
+        public string MovementExport { get; private set; } = "";
 
         void Awake()
         {
@@ -97,7 +99,7 @@ namespace GameMesh.LoadTest
                 _ = LogoutAllAsync();
             if (InWorldCount > 0 && Time.unscaledTime >= _nextLineRefresh)
             {
-                _nextLineRefresh = Time.unscaledTime + 4f;
+                _nextLineRefresh = Time.unscaledTime + 5f;
                 var live = GameMeshClient.Instance;
                 if (live != null && live.Session != null && live.Session.HasIdentity)
                     _ = live.QueryMapLinesAsync(true);
@@ -135,7 +137,22 @@ namespace GameMesh.LoadTest
             _lastError = "";
             try
             {
-                count = Mathf.Clamp(count, 1, 20000);
+                if (count > MoveStepLimit.SuzhouMaxPlayers)
+                {
+                    _lastError = "1002 最多 8 条线、每线 400 人，一共 3200。这一波没有启动";
+                    _phase = "超出 1002 容量";
+                    _busy = false;
+                    return;
+                }
+
+                count = Mathf.Clamp(count, 1, MoveStepLimit.SuzhouMaxPlayers);
+                if (Movement.SyncWave && count > 50)
+                {
+                    _lastError = "同步波次最多 50 人，这一波没有启动";
+                    _busy = false;
+                    return;
+                }
+
                 staggerMs = Mathf.Clamp(staggerMs, 0, 5000);
                 durationMinutes = Mathf.Max(0f, durationMinutes);
                 _durationSec = durationMinutes * 60f;
@@ -180,13 +197,14 @@ namespace GameMesh.LoadTest
                     staggerMs = 40;
                 for (var i = 0; i < count; i++)
                 {
-                    if (i > 0 && i % 25 == 0 && client != null)
+                    if (i > 0 && i % 25 == 0 && client != null && client.LastRttMs < 3000)
                     {
                         try { await client.QueryMapLinesAsync(true).ConfigureAwait(true); }
                         catch { /* later bots still ask the server to choose a line */ }
                     }
 
                     var bot = new LoadTestBot(i, dispatcher);
+                    bot.Movement = Movement.Clone();
                     // 0 = server default TTL (7200s). Heartbeat does not renew the key.
                     bot.SessionTtlSec = 0;
                     _bots.Add(bot);
@@ -232,10 +250,7 @@ namespace GameMesh.LoadTest
                 var live = GameMeshClient.Instance;
                 if (live != null && live.Connection != null &&
                     live.Connection.State == ConnectionState.InWorld)
-                {
-                    _ = live.RequestWorldSnapshotAsync();
                     _ = live.QueryMapLinesAsync(true);
-                }
             }
             catch (Exception ex)
             {
@@ -505,10 +520,10 @@ namespace GameMesh.LoadTest
                 var binder = client.GetComponent<GameMeshWorldBinder>();
                 if (binder != null)
                     binder.PurgeAllRemoteViews("loadtest-logout");
-                if (client.IsOnMap)
+                if (client.IsOnMap && client.LastRttMs < 1000)
                 {
                     _ = client.QueryMapLinesAsync(true);
-                    _ = client.RequestWorldSnapshotAsync();
+                    _ = client.RequestWorldSnapshotAsync(background: true);
                 }
             }
             catch (Exception ex)
@@ -526,10 +541,7 @@ namespace GameMesh.LoadTest
                 return;
             var client = GameMeshClient.Instance;
             if (client == null)
-            {
-                LoadTestSessionLedger.ForgetMany(entries);
                 return;
-            }
 
             var dispatcher = GameMeshMainThreadDispatcher.Ensure(client.gameObject);
             var gate = new SemaphoreSlim(8);
@@ -568,8 +580,6 @@ namespace GameMesh.LoadTest
                     catch { /* ignore */ }
                 }
             }
-
-            LoadTestSessionLedger.ForgetMany(entries);
         }
 
         static async Task SweepOneAsync(IMainThreadDispatcher dispatcher, string host, int port, ulong playerId,
@@ -653,6 +663,77 @@ namespace GameMesh.LoadTest
             }
 
             return outList;
+        }
+
+        public string ConfigureMovement(int hz, int jitterPct, int seed, string singleProfile, string weights)
+        {
+            Movement.TargetHz = hz > 0 ? hz : 5;
+            Movement.JitterPct = jitterPct;
+            Movement.Seed = seed;
+            Movement.SingleProfile = (singleProfile ?? "").Trim();
+            if (!string.IsNullOrEmpty(weights))
+            {
+                var parts = weights.Split(',');
+                if (parts.Length == 5 &&
+                    int.TryParse(parts[0].Trim(), out var idle) &&
+                    int.TryParse(parts[1].Trim(), out var wander) &&
+                    int.TryParse(parts[2].Trim(), out var shuttle) &&
+                    int.TryParse(parts[3].Trim(), out var hotspot) &&
+                    int.TryParse(parts[4].Trim(), out var patrol))
+                {
+                    Movement.IdlePct = idle;
+                    Movement.WanderPct = wander;
+                    Movement.ShuttlePct = shuttle;
+                    Movement.HotspotPct = hotspot;
+                    Movement.PatrolPct = patrol;
+                }
+            }
+
+            return Movement.Validate();
+        }
+
+        public BotMovementMetrics SumMovement()
+        {
+            var sum = new BotMovementMetrics();
+            for (var i = 0; i < _bots.Count; i++)
+            {
+                var metrics = _bots[i] != null ? _bots[i].Metrics : null;
+                if (metrics != null)
+                    sum.Add(metrics);
+            }
+
+            return sum;
+        }
+
+        public string ExportMovementMetrics()
+        {
+            try
+            {
+                var dir = Path.Combine(Application.dataPath, "..", "Logs");
+                Directory.CreateDirectory(dir);
+                var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
+                var sum = SumMovement();
+                var jsonPath = Path.Combine(dir, "movement-metrics-" + stamp + ".json");
+                File.WriteAllText(jsonPath, sum.ToJson("client-" + stamp));
+                var csvPath = Path.Combine(dir, "movement-metrics-" + stamp + ".csv");
+                File.WriteAllText(csvPath,
+                    "move_planned,move_sent,move_ack_ok,move_rejected,move_timeout,move_skipped_busy,move_skipped_not_ready,move_paused,path_rejected,corrections,actual_send_hz,actual_success_hz,p50,p95,p99,scheduler_lag_ms,reject_too_fast,reject_bounds,reject_unwalkable,reject_other\n" +
+                    sum.Planned + "," + sum.Sent + "," + sum.AckOk + "," + sum.Rejected + "," +
+                    sum.Timeout + "," + sum.SkippedBusy + "," + sum.SkippedNotReady + "," +
+                    sum.Paused + "," + sum.PathRejected + "," + sum.Corrections + "," +
+                    sum.ActualSendHz.ToString("0.###") + "," + sum.ActualSuccessHz.ToString("0.###") + "," +
+                    sum.LatencyPercentile(50) + "," + sum.LatencyPercentile(95) + "," +
+                    sum.LatencyPercentile(99) + "," + sum.SchedulerLagMs + "," +
+                    sum.RejectTooFast + "," + sum.RejectBounds + "," + sum.RejectUnwalkable + "," +
+                    sum.RejectOther + "\n");
+                MovementExport = jsonPath;
+                return jsonPath;
+            }
+            catch (Exception ex)
+            {
+                GameMeshLog.Warn("movement export failed " + ex.Message);
+                return "";
+            }
         }
 
         public string DumpFailureReport(string tag)

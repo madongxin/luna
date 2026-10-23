@@ -1,0 +1,334 @@
+using GameMesh.LoadTest;
+using GameMesh.Map;
+using NUnit.Framework;
+using UnityEngine;
+
+namespace GameMesh.Tests.EditMode
+{
+    public sealed class BotMovementTests
+    {
+        static BotMovementSettings Settings(int hz = 5)
+        {
+            return new BotMovementSettings { TargetHz = hz, JitterPct = 10, Seed = 20261021 };
+        }
+
+        [Test]
+        public void Cli01_SameSeed_ReplaysWaypointSequence()
+        {
+            var a = new BotMovementPlanner(BotMovementProfile.LocalWander, 7, Settings(),
+                new Vector3(180f, -18f, 350f));
+            var b = new BotMovementPlanner(BotMovementProfile.LocalWander, 7, Settings(),
+                new Vector3(180f, -18f, 350f));
+            var pos = new Vector3(180f, -18f, 350f);
+            for (var i = 0; i < 12; i++)
+            {
+                var left = a.Next(pos);
+                var right = b.Next(pos);
+                Assert.AreEqual(left.Send, right.Send);
+                Assert.AreEqual(left.Reason, right.Reason);
+                Assert.AreEqual(left.WaypointIndex, right.WaypointIndex);
+                if (left.Send)
+                {
+                    Assert.AreEqual(left.Position, right.Position);
+                    pos = left.Position;
+                }
+            }
+
+            var otherSeed = Settings();
+            otherSeed.Seed = 7;
+            var samePlanner = new BotMovementPlanner(BotMovementProfile.LocalWander, 7, Settings(),
+                new Vector3(180f, -18f, 350f));
+            var other = new BotMovementPlanner(BotMovementProfile.LocalWander, 7, otherSeed,
+                new Vector3(180f, -18f, 350f));
+            var again = new Vector3(180f, -18f, 350f);
+            var same = "";
+            var changed = "";
+            for (var i = 0; i < 12; i++)
+            {
+                var left = samePlanner.Next(again);
+                var right = other.Next(again);
+                if (!left.Send && !right.Send)
+                    continue;
+                same += left.Send ? left.Position.ToString() : left.Reason;
+                changed += right.Send ? right.Position.ToString() : right.Reason;
+                if (left.Send)
+                    again = left.Position;
+            }
+
+            Assert.AreNotEqual(same, changed);
+        }
+
+        [Test]
+        public void Cli02_Idle_SendsNoMove()
+        {
+            var planner = new BotMovementPlanner(BotMovementProfile.Idle, 1, Settings(), Vector3.zero);
+            for (var i = 0; i < 5; i++)
+            {
+                var plan = planner.Next(Vector3.zero);
+                Assert.IsFalse(plan.Send);
+                Assert.AreEqual("idle", plan.Reason);
+            }
+        }
+
+        [Test]
+        public void Cli03_Wander_StaysInsideSafeDisk_AndKeepsHeight()
+        {
+            var settings = Settings();
+            var spawn = new Vector3(181.9f, -18.7f, 351.5f);
+            var planner = new BotMovementPlanner(BotMovementProfile.LocalWander, 3, settings, spawn);
+            var pos = new Vector3(spawn.x, -18.7f, spawn.z);
+            var moved = false;
+            for (var i = 0; i < 40; i++)
+            {
+                var plan = planner.Next(pos);
+                if (!plan.Send)
+                    continue;
+                moved = true;
+                Assert.AreEqual(-18.7f, plan.Position.y, 0.001f);
+                var dx = plan.Position.x - pos.x;
+                var dz = plan.Position.z - pos.z;
+                var step = Mathf.Sqrt(dx * dx + dz * dz);
+                Assert.LessOrEqual(step, settings.MaxStepMeters + 0.02f);
+                var ox = plan.Position.x - spawn.x;
+                var oz = plan.Position.z - spawn.z;
+                Assert.LessOrEqual(ox * ox + oz * oz, settings.SafeRadius * settings.SafeRadius + 0.1f);
+                pos = plan.Position;
+            }
+
+            Assert.IsTrue(moved);
+        }
+
+        [Test]
+        public void Cli04_Shuttle_CrossesCell_NotInterest_IncludingNegativeOrigin()
+        {
+            var settings = Settings();
+            settings.CellSize = 32f;
+            settings.AoiRadius = 32f;
+            settings.SafeRadius = 24f;
+            var spawn = new Vector3(-20f, 2f, -8f);
+            var planner = new BotMovementPlanner(BotMovementProfile.AoiBoundaryShuttle, 4, settings, spawn);
+            var pos = spawn;
+            var crossedCell = false;
+            for (var i = 0; i < 80; i++)
+            {
+                var plan = planner.Next(pos);
+                if (!plan.Send)
+                    continue;
+                Assert.AreEqual(2f, plan.Position.y, 0.001f);
+                Assert.IsFalse(plan.CrossesInterest);
+                if (plan.CrossesCell)
+                    crossedCell = true;
+                var ox = plan.Position.x - spawn.x;
+                var oz = plan.Position.z - spawn.z;
+                Assert.LessOrEqual(ox * ox + oz * oz, settings.SafeRadius * settings.SafeRadius + 0.1f);
+                pos = plan.Position;
+            }
+
+            Assert.IsTrue(crossedCell);
+        }
+
+        [Test]
+        public void Cli05_Counters_StayIndependent()
+        {
+            var metrics = new BotMovementMetrics();
+            metrics.Planned = 10;
+            metrics.Sent = 4;
+            metrics.AckOk = 3;
+            metrics.Rejected = 1;
+            metrics.Timeout = 0;
+            metrics.SkippedBusy = 6;
+            metrics.SampleStartedMs = 0;
+            metrics.SampleEndedMs = 2000;
+            Assert.AreEqual(2.0, metrics.ActualSendHz, 0.001);
+            Assert.AreEqual(1.5, metrics.ActualSuccessHz, 0.001);
+            var json = metrics.ToJson("unit");
+            StringAssert.Contains("\"move_planned\": 10", json);
+            StringAssert.Contains("\"move_sent\": 4", json);
+            StringAssert.Contains("\"move_ack_ok\": 3", json);
+            StringAssert.Contains("\"move_skipped_busy\": 6", json);
+            Assert.AreEqual(500, new BotMovementClock(new BotMovementSettings { TargetHz = 2 }, 1).IntervalMs);
+            Assert.AreEqual(200, new BotMovementClock(Settings(5), 1).IntervalMs);
+            Assert.AreEqual(100, new BotMovementClock(new BotMovementSettings { TargetHz = 10 }, 1).IntervalMs);
+            Assert.AreNotEqual(5.0, metrics.ActualSendHz);
+        }
+
+        [Test]
+        public void Cli06_BusySlot_DoesNotReplayMissedTicks()
+        {
+            var clock = new BotMovementClock(Settings(), 0);
+            long now = 0;
+            clock.Evaluate(now, true, 0);
+            var sends = 0;
+            long busyUntil = 0;
+            for (var step = 0; step < 40; step++)
+            {
+                now += 50;
+                var inflight = now < busyUntil ? 1 : 0;
+                var tick = clock.Evaluate(now, true, inflight);
+                if (tick.Kind != BotMoveTickKind.Send)
+                    continue;
+                sends++;
+                busyUntil = now + 250;
+            }
+
+            Assert.Greater(clock.Metrics.SkippedBusy, 0);
+            Assert.LessOrEqual(clock.Metrics.Planned, 16);
+            Assert.AreEqual(sends + clock.Metrics.SkippedBusy, clock.Metrics.Planned);
+            Assert.LessOrEqual(sends, 8);
+
+            var slow = new BotMovementClock(Settings(), 1);
+            now = 0;
+            slow.Evaluate(now, true, 0);
+            sends = 0;
+            busyUntil = 0;
+            for (var step = 0; step < 40; step++)
+            {
+                now += 50;
+                var inflight = now < busyUntil ? 1 : 0;
+                var tick = slow.Evaluate(now, true, inflight);
+                if (tick.Kind != BotMoveTickKind.Send)
+                    continue;
+                sends++;
+                busyUntil = now + 500;
+            }
+
+            Assert.Greater(slow.Metrics.SkippedBusy, 0);
+            Assert.LessOrEqual(sends, 4);
+            Assert.AreEqual(sends + slow.Metrics.SkippedBusy, slow.Metrics.Planned);
+        }
+
+        [Test]
+        public void Cli07_Reject_DropsTheSameGoal()
+        {
+            var settings = Settings();
+            var spawn = new Vector3(100f, 1f, 40f);
+            var planner = new BotMovementPlanner(BotMovementProfile.BidirectionalPatrol, 2, settings, spawn);
+            MovePlan first = default;
+            var pos = spawn;
+            for (var i = 0; i < 8 && !first.Send; i++)
+                first = planner.Next(pos);
+            Assert.IsTrue(first.Send);
+            planner.NoteRejected();
+            MovePlan second = default;
+            for (var i = 0; i < 8 && !second.Send; i++)
+                second = planner.Next(pos);
+            Assert.IsTrue(second.Send);
+            Assert.AreNotEqual(first.Position, second.Position);
+        }
+
+        [Test]
+        public void Cli08_NotReady_DoesNotSend()
+        {
+            var clock = new BotMovementClock(Settings(), 9);
+            clock.Evaluate(0, false, 0);
+            var tick = clock.Evaluate(1000, false, 0);
+            Assert.AreEqual(BotMoveTickKind.SkipNotReady, tick.Kind);
+            Assert.AreEqual(1, clock.Metrics.SkippedNotReady);
+            Assert.AreEqual(0, clock.Metrics.Sent);
+        }
+
+        [Test]
+        public void Cli09_Visibility_RequiresMapInstanceId()
+        {
+            Assert.IsTrue(BotMovementSettings.SameMapInstance(42, 42));
+            Assert.IsFalse(BotMovementSettings.SameMapInstance(42, 43));
+            Assert.IsFalse(BotMovementSettings.SameMapInstance(0, 0));
+        }
+
+        [Test]
+        public void Cli10_LiveModelSync_NotRun()
+        {
+            Assert.Ignore("NOT RUN: needs two live clients on one map_instance_id. No production wave was started.");
+        }
+
+        [Test]
+        public void Cli11_Rates_UseSampleWindow()
+        {
+            var metrics = new BotMovementMetrics();
+            metrics.Sent = 50;
+            metrics.AckOk = 40;
+            metrics.SampleStartedMs = 1000;
+            metrics.SampleEndedMs = 11000;
+            Assert.AreEqual(5.0, metrics.ActualSendHz, 0.001);
+            Assert.AreEqual(4.0, metrics.ActualSuccessHz, 0.001);
+            metrics.NoteLatency(10);
+            metrics.NoteLatency(20);
+            metrics.NoteLatency(100);
+            Assert.AreEqual(20, metrics.LatencyPercentile(50));
+            Assert.GreaterOrEqual(metrics.LatencyPercentile(99), 20);
+        }
+
+        [Test]
+        public void Cli12_Weights_AndSingleStrategy()
+        {
+            var bad = new BotMovementSettings { IdlePct = 10, WanderPct = 10, ShuttlePct = 10, HotspotPct = 10, PatrolPct = 10 };
+            Assert.AreEqual("strategy weights must sum to 100", bad.Validate());
+            var hz = Settings();
+            hz.TargetHz = 7;
+            Assert.AreEqual("client send hz must be 2, 5, or 10", hz.Validate());
+
+            var forced = Settings();
+            forced.SingleProfile = "HotspotGather";
+            for (var i = 0; i < 20; i++)
+                Assert.AreEqual(BotMovementProfile.HotspotGather, forced.ProfileFor(i));
+
+            var mixed = Settings();
+            var idle = 0;
+            var wander = 0;
+            var shuttle = 0;
+            var hotspot = 0;
+            var patrol = 0;
+            const int n = 4000;
+            for (var i = 0; i < n; i++)
+            {
+                switch (mixed.ProfileFor(i))
+                {
+                    case BotMovementProfile.Idle: idle++; break;
+                    case BotMovementProfile.LocalWander: wander++; break;
+                    case BotMovementProfile.AoiBoundaryShuttle: shuttle++; break;
+                    case BotMovementProfile.HotspotGather: hotspot++; break;
+                    default: patrol++; break;
+                }
+            }
+
+            Assert.AreEqual(n, idle + wander + shuttle + hotspot + patrol);
+            Assert.AreEqual(mixed.ProfileFor(3), mixed.ProfileFor(3));
+            AssertNear(idle, n * 0.10, n * 0.03);
+            AssertNear(wander, n * 0.35, n * 0.03);
+            AssertNear(shuttle, n * 0.20, n * 0.03);
+            AssertNear(hotspot, n * 0.20, n * 0.03);
+            AssertNear(patrol, n * 0.15, n * 0.03);
+
+            var left = new BotMovementPlanner(BotMovementProfile.BidirectionalPatrol, 0, Settings(), Vector3.zero);
+            var right = new BotMovementPlanner(BotMovementProfile.BidirectionalPatrol, 1, Settings(), Vector3.zero);
+            MovePlan a = default;
+            MovePlan b = default;
+            for (var i = 0; i < 6 && !a.Send; i++)
+                a = left.Next(Vector3.zero);
+            for (var i = 0; i < 6 && !b.Send; i++)
+                b = right.Next(Vector3.zero);
+            Assert.IsTrue(a.Send && b.Send);
+            Assert.Less(a.Position.x * b.Position.x, 0f);
+        }
+
+        [Test]
+        public void StepLimit_UsesClientTime_NotSendHz()
+        {
+            var dt = 0.05f;
+            var step = MoveStepLimit.PlannedMeters(dt, 5.5f);
+            Assert.AreEqual(0.275f, step, 0.001f);
+            Assert.LessOrEqual(step, MoveStepLimit.MaxMeters(dt) + 0.0001f);
+            var far = MoveStepLimit.Clamp(Vector3.zero, new Vector3(5f, -20f, 0f), MoveStepLimit.MaxMeters(0.1f));
+            Assert.LessOrEqual(far.magnitude, 1.001f);
+            Assert.Greater(600, MoveStepLimit.SuzhouLineCap);
+            Assert.AreEqual(3200, MoveStepLimit.SuzhouLineCap * MoveStepLimit.SuzhouMaxLines);
+            Assert.Greater(10000, MoveStepLimit.SuzhouMaxPlayers);
+            Assert.AreEqual(200, MoveStepLimit.VisibleOthers);
+        }
+
+        static void AssertNear(int actual, double expected, double slack)
+        {
+            Assert.LessOrEqual(System.Math.Abs(actual - expected), slack);
+        }
+    }
+}

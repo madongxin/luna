@@ -19,9 +19,19 @@ namespace GameMesh.Player
         Health _health;
         readonly System.Collections.Generic.Dictionary<ulong, RemotePlayerView> _views =
             new System.Collections.Generic.Dictionary<ulong, RemotePlayerView>();
+        readonly System.Collections.Generic.HashSet<ulong> _seenRemoteIds =
+            new System.Collections.Generic.HashSet<ulong>();
+        readonly System.Collections.Generic.List<ulong> _deadRemoteIds =
+            new System.Collections.Generic.List<ulong>();
         float _nextAoiSnapshotAt;
         int _modelBudget;
         int _holdSpawnFrames;
+        Vector3 _goodPose;
+        bool _hasGoodPose;
+        bool _loggedSink;
+        // maps/1002.grid.json bounds_min.y is -38. Terrain origin Y is -40, so the
+        // lowest mesh sits under the server box. A pawn that falls there is rejected.
+        const float MapFloorY = -37.5f;
 
         public int RemoteViewCount => _views.Count;
 
@@ -103,6 +113,7 @@ namespace GameMesh.Player
             MaybeRefreshAoi(client);
             SyncRemotes(client);
             PlaceLocal(client);
+            HoldStable(client);
             MaybeReportMove(client);
         }
 
@@ -136,6 +147,10 @@ namespace GameMesh.Player
                     client.Config.disableSprint)
                     _fps.SprintSpeedModifier = 1f;
             }
+
+            // Skin 0.001 lets the capsule tunnel through the heightfield in one step.
+            if (_controller != null && _controller.skinWidth < 0.05f)
+                _controller.skinWidth = 0.08f;
         }
 
         void PlaceLocal(GameMeshClient client)
@@ -161,7 +176,11 @@ namespace GameMesh.Player
                 if (_local == null)
                     return;
 
-                ApplyPose(client.PendingSpawn, client.PendingSpawnYaw);
+                var seated = SeatOnTerrain(client.PendingSpawn);
+                ApplyPose(seated, client.PendingSpawnYaw);
+                NoteGoodPose(seated);
+                if (_fps != null)
+                    _fps.CharacterVelocity = Vector3.zero;
                 client.HasPendingSpawn = false;
                 client.PendingSpawnFromServer = false;
                 client.HasPendingCorrection = false;
@@ -171,16 +190,11 @@ namespace GameMesh.Player
             // Adopt MoveRsp authority (including rejected TooFast). Do not keep a rejected local pose.
             if (client.HasPendingCorrection)
             {
-                var err = Vector3.Distance(_local.position, client.PendingCorrection);
-                if (err >= client.Config.snapError)
-                    ApplyPose(client.PendingCorrection, client.PendingCorrectionYaw);
-                else if (err >= client.Config.smoothError)
-                {
-                    ApplyPose(Vector3.Lerp(_local.position, client.PendingCorrection, 0.45f),
-                        client.PendingCorrectionYaw);
-                }
-                else
-                    ApplyPose(client.PendingCorrection, client.PendingCorrectionYaw);
+                var back = SeatOnTerrain(client.PendingCorrection);
+                ApplyPose(back, client.PendingCorrectionYaw);
+                NoteGoodPose(back);
+                if (_fps != null)
+                    _fps.CharacterVelocity = Vector3.zero;
                 client.HasPendingCorrection = false;
             }
 
@@ -278,6 +292,130 @@ namespace GameMesh.Player
                 _controller.enabled = true;
         }
 
+        void NoteGoodPose(Vector3 pos)
+        {
+            _goodPose = pos;
+            _hasGoodPose = true;
+        }
+
+        static bool UsesTerrainHold(GameMeshClient client)
+        {
+            if (client.Session.MapTemplateId == 1001)
+                return false;
+            return Terrain.activeTerrain != null ||
+                   (Terrain.activeTerrains != null && Terrain.activeTerrains.Length > 0);
+        }
+
+        static bool IsPoseStable(Vector3 pos)
+        {
+            if (pos.y < MapFloorY)
+                return false;
+            if (!TryTerrainSurface(pos, out var surface))
+                return false;
+            if (surface < MapFloorY)
+                return false;
+            if (pos.y < surface - 0.35f)
+                return false;
+            return true;
+        }
+
+        // Spawn Y is about -18.7. The capsule then falls through the heightfield and
+        // the request Y keeps decreasing. Put the feet back on the sampled surface
+        // before that height is sent. Do not adopt a lower server ack as the stance.
+        public static bool TryLiftAboveSurface(Vector3 pos, out Vector3 lifted)
+        {
+            lifted = pos;
+            if (!TryTerrainSurface(pos, out var surface) || surface < MapFloorY)
+                return false;
+            if (pos.y >= surface - 0.35f)
+                return false;
+            lifted.y = surface + 0.12f;
+            return true;
+        }
+
+        static bool SameSpotDrop(Vector3 pos, Vector3 stance)
+        {
+            var dx = pos.x - stance.x;
+            var dz = pos.z - stance.z;
+            return dx * dx + dz * dz < 0.64f && stance.y - pos.y > 1.5f;
+        }
+
+        void HoldStable(GameMeshClient client)
+        {
+            if (_local == null || !UsesTerrainHold(client))
+                return;
+            if (client.Connection == null || client.Connection.State != ConnectionState.InWorld)
+                return;
+
+            var pos = _local.position;
+            var yaw = _local.eulerAngles.y;
+            Vector3 held;
+            if (TryLiftAboveSurface(pos, out var lifted))
+                held = lifted;
+            else if (_hasGoodPose && SameSpotDrop(pos, _goodPose))
+                held = new Vector3(pos.x, _goodPose.y, pos.z);
+            else if (!IsPoseStable(pos) && _hasGoodPose)
+                held = _goodPose;
+            else
+            {
+                if (IsPoseStable(pos))
+                    NoteGoodPose(pos);
+                return;
+            }
+
+            if (!_loggedSink)
+            {
+                _loggedSink = true;
+                GameMeshLog.Warn("feet through terrain y=" + pos.y.ToString("F2") +
+                                 " put=" + held.y.ToString("F2") +
+                                 " xz=" + pos.x.ToString("F1") + "," + pos.z.ToString("F1"));
+            }
+
+            ApplyPose(held, yaw);
+            if (_fps != null)
+            {
+                var velocity = _fps.CharacterVelocity;
+                if (velocity.y < 0f)
+                    _fps.CharacterVelocity = new Vector3(velocity.x, 0f, velocity.z);
+            }
+
+            NoteGoodPose(held);
+        }
+
+        static Vector3 SeatOnTerrain(Vector3 pos)
+        {
+            return TryLiftAboveSurface(pos, out var lifted) ? lifted : pos;
+        }
+
+        static bool TryTerrainSurface(Vector3 pos, out float surfaceY)
+        {
+            surfaceY = pos.y;
+            var terrains = Terrain.activeTerrains;
+            if (terrains == null || terrains.Length == 0)
+            {
+                var only = Terrain.activeTerrain;
+                terrains = only != null ? new[] { only } : null;
+            }
+
+            if (terrains == null)
+                return false;
+            for (var i = 0; i < terrains.Length; i++)
+            {
+                var terrain = terrains[i];
+                if (terrain == null || terrain.terrainData == null)
+                    continue;
+                var origin = terrain.transform.position;
+                var size = terrain.terrainData.size;
+                if (pos.x < origin.x || pos.z < origin.z ||
+                    pos.x > origin.x + size.x || pos.z > origin.z + size.z)
+                    continue;
+                surfaceY = terrain.SampleHeight(pos) + origin.y;
+                return true;
+            }
+
+            return false;
+        }
+
         static Vector3 SnapToWalkable(Vector3 pos)
         {
             var terrain = Terrain.activeTerrain;
@@ -309,6 +447,8 @@ namespace GameMesh.Player
                 return;
             var pos = _local.position;
             var yaw = _local.eulerAngles.y;
+            if (UsesTerrainHold(client) && !IsPoseStable(pos))
+                return;
             if (!client.MoveSampler.ShouldSend(pos, yaw, Time.unscaledTime, out var reject))
             {
                 if (reject != null)
@@ -335,10 +475,12 @@ namespace GameMesh.Player
                 remoteCount++;
             }
 
-            // Slow gateway: a 10s silence is normal when RTT is several seconds.
-            // Pruning then deletes every bot that is still on the line.
+            // While bots are online, a missing MOVE is usually a full write buffer, not a leave.
+            // PruneSilent would delete the whole crowd about 25s after the last push.
+            var runner = GameMeshLoadTestRunner.Instance;
+            var loadActive = runner != null && (runner.InWorldCount > 0 || runner.HoldOnline || runner.Busy);
             var silenceMs = client.LastRttMs > 3000 ? 45000 : 25000;
-            if (client.LastRttMs < 8000)
+            if (!loadActive && client.LastRttMs < 8000)
             {
                 var pruned = client.Aoi.PruneSilent(AoiWorld.LocalNowMs, silenceMs);
                 if (pruned > 0)
@@ -348,8 +490,6 @@ namespace GameMesh.Player
                 }
             }
 
-            var runner = GameMeshLoadTestRunner.Instance;
-            var loadActive = runner != null && (runner.InWorldCount > 0 || runner.HoldOnline || runner.Busy);
             var afterLoadGhosts = runner != null && !loadActive && remoteCount > 0;
             var far = remoteCount > 0 && _local != null &&
                       TryNearestRemote(out _, out var dist) && dist > 40f;
@@ -369,7 +509,8 @@ namespace GameMesh.Player
             var localId = client.Aoi.LocalPlayerId != 0
                 ? client.Aoi.LocalPlayerId
                 : client.Session.PlayerId;
-            var seen = new System.Collections.Generic.HashSet<ulong>();
+            var seen = _seenRemoteIds;
+            seen.Clear();
             var localPos = _local != null ? _local.position : Vector3.zero;
             _modelBudget = 32;
             foreach (var kv in client.Aoi.Entities)
@@ -404,7 +545,8 @@ namespace GameMesh.Player
                 view.Apply(kv.Value);
             }
 
-            var dead = new System.Collections.Generic.List<ulong>();
+            var dead = _deadRemoteIds;
+            dead.Clear();
             foreach (var kv in _views)
             {
                 if (!seen.Contains(kv.Key))

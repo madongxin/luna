@@ -3,6 +3,46 @@ using UnityEngine;
 
 namespace GameMesh.Map
 {
+    /// <summary>
+    /// Server move and AOI limits. Hz is only how often this client sends.
+    /// </summary>
+    public static class MoveStepLimit
+    {
+        public const float ServerMetersPerSec = 10f;
+        public const int AoiMergeMs = 200;
+        public const int VisibleOthers = 200;
+        public const int SuzhouLineCap = 400;
+        public const int SuzhouMaxLines = 8;
+        public const int SuzhouMaxPlayers = 3200;
+
+        public static float MaxMeters(float dtSec)
+        {
+            if (dtSec <= 0f)
+                return 0f;
+            return ServerMetersPerSec * dtSec;
+        }
+
+        public static float PlannedMeters(float dtSec, float walkSpeed)
+        {
+            var cap = MaxMeters(dtSec);
+            if (dtSec <= 0f || walkSpeed <= 0f)
+                return 0f;
+            var walk = walkSpeed * dtSec;
+            return walk < cap ? walk : cap;
+        }
+
+        public static Vector3 Clamp(Vector3 from, Vector3 to, float maxMeters)
+        {
+            if (maxMeters < 0f)
+                maxMeters = 0f;
+            var delta = to - from;
+            var dist = delta.magnitude;
+            if (dist <= maxMeters || dist <= 0.0001f)
+                return to;
+            return from + delta * (maxMeters / dist);
+        }
+    }
+
     public sealed class MoveSampler
     {
         public float SendHz = 10f;

@@ -29,8 +29,15 @@ namespace GameMesh.UI
         string _loadPortA = "8081";
         string _loadPortB = "8083";
         string _loadPassword = "loadtest";
+        string _loadHz = "5";
+        string _loadJitter = "10";
+        string _loadSeed = "20261021";
+        string _loadProfile = "";
+        string _loadWeights = "10,35,20,20,15";
+        string _loadMoveError = "";
         Vector2 _friendScroll;
         Vector2 _panelScroll;
+        float _nextPanelLinePoll;
         bool _cursorUnlocked = true;
         bool _stylesReady;
         Texture2D _bg;
@@ -128,6 +135,9 @@ namespace GameMesh.UI
                 _cursorUnlocked = true;
                 ApplyCursor();
             }
+
+            if (_panelOpen)
+                PollLinesWhilePanelOpen(client);
         }
 
         void LateUpdate()
@@ -242,21 +252,7 @@ namespace GameMesh.UI
                 text = "还没进服，压测机器人不会出现。进游戏会自动登录，或按 F2。";
             else
             {
-                var runner = GameMeshLoadTestRunner.Instance;
-                var bots = runner != null ? runner.InWorldCount : 0;
-                var binder = client.GetComponent<GameMeshWorldBinder>();
-                var near = "";
-                if (binder != null && binder.TryNearestRemote(out var botName, out var dist))
-                    near = "    最近 " + botName + " " + dist.ToString("0") + "m";
-                else if (bots > 0 && client.Aoi.Entities.Count == 0)
-                    near = "    周围 32m 内没有其他人";
-                text = "已在地图中    " +
-                       (client.Lines.LineNo != 0 ? "分线占用 " + client.Lines.LineNo + "线 " +
-                           client.Lines.Occupancy + "/" + client.Lines.EffectiveSplitAt + "    " : "") +
-                       "视野AOI " + client.Aoi.Entities.Count + "（画面按视野画）" +
-                       "    压测在线 " + bots +
-                       (runner != null && runner.TargetLineNo != 0 ? "→" + runner.TargetLineNo + "线" : "") +
-                       near;
+                text = CrowdText(client);
                 if (!string.IsNullOrEmpty(client.LastNotice))
                     text += "    " + client.LastNotice;
             }
@@ -301,7 +297,7 @@ namespace GameMesh.UI
                 var client = GameMeshClient.Instance;
                 if (client != null && client.Session.HasIdentity &&
                     (client.Lines.IsLineMap || client.Config.mapTemplateId == 1002))
-                    _ = client.QueryMapLinesAsync();
+                    _ = client.QueryMapLinesAsync(true);
                 return;
             }
 
@@ -343,6 +339,7 @@ namespace GameMesh.UI
                     : (client.Session.MapInstanceId != 0 ? "在图" : "-")) +
                 "    地图实例  " + client.Session.MapInstanceId +
                 "    AOI  " + client.Aoi.Entities.Count, _label);
+            GUILayout.Label(CrowdText(client), _label);
             GUILayout.Label(LocalCoordText(client), _label);
             if (client.IsDungeon)
                 GUILayout.Label("当前在副本 2102（画面是 1001）。点「返回 1002」离开副本回苏州。", _statusWarn);
@@ -367,6 +364,37 @@ namespace GameMesh.UI
                 GUILayout.Label(client.LastErrorUi, _statusErr);
             if (client.MapBlocked)
                 GUILayout.Label("进图被阻止  " + client.MapBlockReason, _statusErr);
+        }
+
+        static string CrowdText(GameMeshClient client)
+        {
+            var runner = GameMeshLoadTestRunner.Instance;
+            var bots = runner != null ? runner.InWorldCount : 0;
+            var binder = client != null ? client.GetComponent<GameMeshWorldBinder>() : null;
+            var near = "";
+            if (binder != null && binder.TryNearestRemote(out var botName, out var dist))
+                near = "    最近 " + botName + " " + dist.ToString("0") + "m";
+            else if (bots > 0 && client.Aoi.Entities.Count == 0)
+                near = "    周围 32m 内没有其他人";
+            return "已在地图中    " +
+                   (client.Lines.LineNo != 0 ? "分线占用 " + client.Lines.LineNo + "线 " +
+                       client.Lines.Occupancy + "/" + client.Lines.EffectiveSplitAt + "    " : "") +
+                   "视野AOI " + client.Aoi.Entities.Count +
+                   "    压测在线 " + bots +
+                   (runner != null && runner.TargetLineNo != 0 ? "→" + runner.TargetLineNo + "线" : "") +
+                   near;
+        }
+
+        void PollLinesWhilePanelOpen(GameMeshClient client)
+        {
+            if (client == null || !client.Session.HasIdentity || !client.HelloOk)
+                return;
+            if (!client.Lines.IsLineMap && client.Config.mapTemplateId != 1002)
+                return;
+            if (Time.unscaledTime < _nextPanelLinePoll)
+                return;
+            _nextPanelLinePoll = Time.unscaledTime + 5f;
+            _ = client.QueryMapLinesAsync(true);
         }
 
         static string LocalCoordText(GameMeshClient client)
@@ -435,12 +463,25 @@ namespace GameMesh.UI
             GUILayout.Space(12);
             GUILayout.Label("压测机器人", _section);
             GUILayout.Label(
-                "先把你送进一条未满的线，机器人跟你进同一条。满 " + MapLineState.DefaultSplitAt +
-                " 人开下一线。活动约 8m（本图 AOI 32m）。你未进线时周围看不到人。8081/8083 各一半，上限 20000。",
+                "1002 单线最多 " + MoveStepLimit.SuzhouLineCap +
+                " 人，一共 " + MoveStepLimit.SuzhouMaxLines + " 条线（" +
+                MoveStepLimit.SuzhouMaxPlayers +
+                " 人）。600 人会拆到多条线，线与线之间没有 AOI。同一 map_instance_id 才能互相看见。每个观察者最多看见另外 " +
+                MoveStepLimit.VisibleOthers + " 人，自己不算。",
+                _hint);
+            GUILayout.Label(
+                "移动只在出生点周围 " + runner.Movement.SafeRadius.ToString("0") +
+                "m 内。Hz 只决定多久发一次，服务器不按 2/5/10Hz 拒包。一步不超过 10 米/秒乘 client_time_ms 的间隔。权威确认只表示坐标已提交，别人大约每 " +
+                MoveStepLimit.AoiMergeMs + "ms 合并一次位置。8081/8083 各一半。",
                 _hint);
             _loadCount = Field("登录人数", _loadCount);
             _loadMinutes = Field("在线分钟", _loadMinutes);
             _loadStaggerMs = Field("登录间隔ms", _loadStaggerMs);
+            _loadHz = Field("移动Hz 2/5/10", _loadHz);
+            _loadJitter = Field("抖动%", _loadJitter);
+            _loadSeed = Field("移动种子", _loadSeed);
+            _loadProfile = Field("单一策略(空=混合)", _loadProfile);
+            _loadWeights = Field("比例 停/逛/穿/聚/巡", _loadWeights);
             _loadPortA = Field("Gateway A", _loadPortA);
             _loadPortB = Field("Gateway B", _loadPortB);
             GUILayout.BeginHorizontal();
@@ -473,6 +514,18 @@ namespace GameMesh.UI
                 GUILayout.Label((si == 0 ? "最近错误  " : "         ") + samples[si], _statusErr);
             if (samples.Count == 0 && !string.IsNullOrEmpty(runner.LastError))
                 GUILayout.Label("最近错误  " + runner.LastError, _statusErr);
+            if (!string.IsNullOrEmpty(_loadMoveError))
+                GUILayout.Label(_loadMoveError, _statusErr);
+            var move = runner.SumMovement();
+            GUILayout.Label(
+                "移动  计划 " + move.Planned +
+                "  发出 " + move.Sent +
+                "  权威确认 " + move.AckOk +
+                "  拒绝 " + move.Rejected +
+                "  超时 " + move.Timeout +
+                "  忙跳过 " + move.SkippedBusy +
+                "  未就绪 " + move.SkippedNotReady,
+                _hint);
 
             GUILayout.Space(8);
             GUILayout.BeginHorizontal();
@@ -500,7 +553,15 @@ namespace GameMesh.UI
                     _loadPortB = "8083";
                 }
 
-                runner.StartCollectiveLogin(count, minutes, stagger, _loadPassword, gwA, gwB);
+                int.TryParse(_loadHz, out var hz);
+                int.TryParse(_loadJitter, out var jitter);
+                int.TryParse(_loadSeed, out var seed);
+                if (hz == 0)
+                    hz = 5;
+                var moveError = runner.ConfigureMovement(hz, jitter, seed, _loadProfile, _loadWeights);
+                _loadMoveError = moveError ?? "";
+                if (string.IsNullOrEmpty(moveError))
+                    runner.StartCollectiveLogin(count, minutes, stagger, _loadPassword, gwA, gwB);
             }
 
             GUI.enabled = runner.Busy || runner.HoldOnline || inWorld > 0;
@@ -508,6 +569,11 @@ namespace GameMesh.UI
                 runner.RequestCollectiveLogout();
             GUI.enabled = true;
             GUILayout.EndHorizontal();
+            if (GUILayout.Button("导出移动统计", _btnStyle, GUILayout.Height(48)))
+            {
+                var path = runner.ExportMovementMetrics();
+                _loadMoveError = string.IsNullOrEmpty(path) ? "导出失败" : path;
+            }
         }
 
         static string FormatClock(float seconds)
@@ -581,12 +647,12 @@ namespace GameMesh.UI
                 "    " + client.Lines.Occupancy + " / " + soft +
                 "    " + (string.IsNullOrEmpty(client.Lines.Kind) ? "LINE" : client.Lines.Kind), _label);
             GUILayout.Label(
-                "满 " + MapLineState.DefaultSplitAt +
-                " 人开新线（以服务器回包为准）。进图后点「切线」换线；没进图点「进入」。不要把已满当进图成功。",
+                "1002 单线最多 " + MoveStepLimit.SuzhouLineCap +
+                " 人，当前这条线满不满以服务器回包为准。进图后点「切线」换线；没进图点「进入」。线与线之间看不见。",
                 _hint);
             GUILayout.Label(
                 "分线列表  " + client.Lines.Lines.Count +
-                " 条。一线满 " + MapLineState.DefaultSplitAt + " 人后应出现下一线，点刷新可看到。",
+                " 条。面板打开时约每 5 秒向服务器重拉一次人数。",
                 _hint);
             if (client.Lines.QueuePosition > 0)
                 GUILayout.Label(

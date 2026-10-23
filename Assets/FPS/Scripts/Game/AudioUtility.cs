@@ -41,12 +41,11 @@ namespace Unity.FPS.Game
 
         public static AudioMixerGroup GetAudioGroup(AudioGroups group)
         {
-            if (s_AudioManager == null)
-                s_AudioManager = GameObject.FindObjectOfType<AudioManager>();
+            if (!EnsureManager())
+                return null;
 
             var groups = s_AudioManager.FindMatchingGroups(group.ToString());
-
-            if (groups.Length > 0)
+            if (groups != null && groups.Length > 0)
                 return groups[0];
 
             Debug.LogWarning("Didn't find audio group for " + group.ToString());
@@ -55,8 +54,8 @@ namespace Unity.FPS.Game
 
         public static void SetMasterVolume(float value)
         {
-            if (s_AudioManager == null)
-                s_AudioManager = GameObject.FindObjectOfType<AudioManager>();
+            if (!EnsureManager())
+                return;
 
             if (value <= 0)
                 value = 0.001f;
@@ -67,11 +66,18 @@ namespace Unity.FPS.Game
 
         public static float GetMasterVolume()
         {
-            if (s_AudioManager == null)
-                s_AudioManager = GameObject.FindObjectOfType<AudioManager>();
+            if (!EnsureManager())
+                return 1f;
 
             s_AudioManager.GetFloat("MasterVolume", out var valueInDb);
             return Mathf.Pow(10f, valueInDb / 20.0f);
+        }
+
+        static bool EnsureManager()
+        {
+            if (s_AudioManager == null)
+                s_AudioManager = GameObject.FindObjectOfType<AudioManager>();
+            return s_AudioManager != null;
         }
     }
 }

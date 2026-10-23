@@ -31,19 +31,26 @@ namespace GameMesh.LoadTest
         int _heartbeatMs = 15000;
         int _loopGen;
         Vector3 _spawn;
-        Vector3 _home;
         Vector3 _pos;
+        long _lastClientTimeMs;
         float _yaw;
         bool _helloOk;
         bool _stopMoves;
         int _heartbeatMisses;
         int _resumeBusy;
+        int _rpcRttMs;
         static int _lineRefreshTick;
         static string _cachedClientVersion = "luna";
         static string _cachedPlatform = "Unknown";
         static bool _unityInfoCached;
         Task _heartbeatTask = Task.CompletedTask;
         Task _moveTask = Task.CompletedTask;
+        BotMovementClock _clock;
+
+        public BotMovementSettings Movement { get; set; } = new BotMovementSettings();
+        public BotMovementProfile Profile { get; private set; }
+        public BotMovementMetrics Metrics => _clock != null ? _clock.Metrics : null;
+        public ulong MapInstanceId => _mapInstanceId;
 
         public int Index => _index;
         /// <summary>0 means server default (7200s). Heartbeat does not renew TTL.</summary>
@@ -295,7 +302,7 @@ namespace GameMesh.LoadTest
                     DisplayName = _displayName ?? "",
                     Password = _password ?? ""
                 }
-            }, TimeSpan.FromSeconds(8), ct).ConfigureAwait(true);
+            }, TimeSpan.FromSeconds(15), ct).ConfigureAwait(true);
             if (!rsp.Ok || rsp.Register == null || !rsp.Register.Ok || rsp.Register.PlayerId == 0)
             {
                 var msg = rsp.Register != null ? rsp.Register.Message : rsp.Message;
@@ -360,7 +367,10 @@ namespace GameMesh.LoadTest
                 catch (Exception ex)
                 {
                     last = ex;
-                    if (attempt == 2 || !IsRetryableEnter(ex))
+                    // A slow EnterMap on a live socket is still in the gateway queue.
+                    // Sending it again is what piled 605 logins into multi-second replies.
+                    var slowOnly = IsLinkFailure(ex) && !IsTransportDead(ex) && !IsLinkDown();
+                    if (attempt == 2 || !IsRetryableEnter(ex) || slowOnly)
                         throw;
                 }
             }
@@ -415,11 +425,6 @@ namespace GameMesh.LoadTest
             _spawn = rsp.EnterMap.SpawnPosition != null
                 ? ProtocolMapper.ToUnity(rsp.EnterMap.SpawnPosition)
                 : new Vector3(-26f, -0.2f, -5f);
-            // This map's AOI is 32m. Keep the crowd inside it; a 400m ring never gets pushed.
-            var slot = _index % 80;
-            var angle = slot * 2.39996323f;
-            var ring = 3f + Mathf.Sqrt(slot) * 1.7f;
-            _home = _spawn + new Vector3(Mathf.Sin(angle), 0f, Mathf.Cos(angle)) * ring;
             _pos = _spawn;
             _yaw = rsp.EnterMap.SpawnYaw;
             _conn.SetLogicalState(ConnectionState.InWorld);
@@ -533,7 +538,7 @@ namespace GameMesh.LoadTest
         async Task RefreshSharedLinesAsync()
         {
             var now = Environment.TickCount;
-            if (unchecked(now - _lineRefreshTick) < 2000)
+            if (unchecked(now - _lineRefreshTick) < 5000)
                 return;
             _lineRefreshTick = now;
             var live = GameMeshClient.Instance;
@@ -676,19 +681,13 @@ namespace GameMesh.LoadTest
 
                         if (outcome == ResumeOutcome.Unconfirmed)
                         {
-                            // Gateway was slow. The old session may still be valid.
-                            // Another Reconnect on the same live socket only piles up CLIENT_TIMEOUT.
-                            if (!IsLinkDown() && _mapInstanceId != 0)
-                            {
+                            // 605-bot run: one slow Reconnect was retried 6 times, then the
+                            // retry wave did it again. The session was still on the map.
+                            if (_mapInstanceId != 0)
                                 InWorld = true;
-                                Status = "重连超时，保持原会话 :" + GatewayPort;
-                                _heartbeatMisses = 0;
-                                return;
-                            }
-
-                            lastStage = "reconnect";
-                            throw new GameMeshException(GameMeshErrorCode.ClientTimeout,
-                                "reconnect timeout, skip login");
+                            Status = "重连超时，保持原会话 :" + GatewayPort;
+                            _heartbeatMisses = 0;
+                            return;
                         }
 
                         if (outcome == ResumeOutcome.NeedEnter)
@@ -855,7 +854,7 @@ namespace GameMesh.LoadTest
                         ReconnectTicket = _token,
                         LastServerSeq = _lastServerSeq
                     }
-                }, TimeSpan.FromSeconds(15), ct).ConfigureAwait(true);
+                }, RpcBudget(15000), ct).ConfigureAwait(true);
             }
             catch (GameMeshException ex)
             {
@@ -939,7 +938,7 @@ namespace GameMesh.LoadTest
                             LastServerSeq = _lastServerSeq,
                             EchoMs = mono
                         }
-                    }, TimeSpan.FromSeconds(12), ct).ConfigureAwait(false);
+                    }, RpcBudget(12000), ct).ConfigureAwait(false);
                     _heartbeatMisses = 0;
                 }
                 catch (TaskCanceledException)
@@ -963,79 +962,81 @@ namespace GameMesh.LoadTest
 
                     _heartbeatMisses++;
                     Status = "心跳超时 :" + GatewayPort + " x" + _heartbeatMisses;
+                    try { await Task.Delay(5000, ct).ConfigureAwait(false); }
+                    catch (TaskCanceledException) { return; }
                 }
             }
         }
 
         async Task MoveLoopAsync(CancellationToken ct)
         {
-            // Local speed must stay ≤ server move_speed (default 10). Step = speed * dt.
-            const float speed = 5.5f;
-            const float maxSpeed = 10f;
-            const int tickMs = 100;
-            const float turnRadPerTick = 1.1f;
-            var walkSpeed = Mathf.Min(speed, maxSpeed);
-            var rnd = new System.Random(_index * 9176 + Environment.TickCount);
-            var dir = RandomDir(rnd);
-            var desired = dir;
+            // Absolute send clock. The Move RPC stays in flight beside the clock.
+            // A slow reply skips the next slot; it does not queue a burst.
+            var settings = Movement ?? new BotMovementSettings();
+            var invalid = settings.Validate();
+            Profile = invalid == null
+                ? settings.ProfileFor(_index)
+                : BotMovementProfile.Idle;
+            _clock = new BotMovementClock(settings, _index);
+            var planner = new BotMovementPlanner(Profile, _index, settings, _spawn);
             var gen = _loopGen;
             Task inflight = Task.CompletedTask;
+            if (Profile == BotMovementProfile.Idle)
+            {
+                while (!_stopMoves && !ct.IsCancellationRequested && gen == _loopGen)
+                {
+                    try { await Task.Delay(500, ct).ConfigureAwait(false); }
+                    catch (TaskCanceledException) { return; }
+                }
+
+                return;
+            }
+
             while (!_stopMoves && !ct.IsCancellationRequested && gen == _loopGen)
             {
-                var tickStart = Environment.TickCount;
-                if (InWorld && Volatile.Read(ref _resumeBusy) == 0 && inflight.IsCompleted)
+                var ready = InWorld && Volatile.Read(ref _resumeBusy) == 0 &&
+                            _conn.State == ConnectionState.InWorld && _mapInstanceId != 0;
+                var tick = _clock.Evaluate(ready, inflight.IsCompleted ? 0 : 1);
+                if (tick.Kind == BotMoveTickKind.Send)
                 {
-                    var toHome = _home - _pos;
-                    toHome.y = 0f;
-                    var distHome = toHome.magnitude;
-                    if (distHome > 28f)
-                        desired = toHome.normalized;
-                    else if (rnd.NextDouble() < 0.035)
-                        desired = RandomDir(rnd);
-
-                    dir = Vector3.RotateTowards(dir, desired, turnRadPerTick, 0f);
-                    if (dir.sqrMagnitude < 0.01f)
-                        dir = desired.sqrMagnitude > 0.01f ? desired : RandomDir(rnd);
-                    else
-                        dir.Normalize();
-
-                    var step = walkSpeed * (tickMs / 1000f);
-                    var next = _pos + dir * step;
-                    if (Vector3.Distance(new Vector3(next.x, _home.y, next.z),
-                            new Vector3(_home.x, _home.y, _home.z)) > 8f)
+                    var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    var dt = _lastClientTimeMs <= 0
+                        ? 1f / settings.TargetHz
+                        : (nowMs - _lastClientTimeMs) / 1000f;
+                    if (dt < 0f)
+                        dt = 0f;
+                    // A long stall may advance client_time_ms. The step still stays
+                    // within 10 m/s of that delta; one second is enough for one step.
+                    var stepDt = dt > 1f ? 1f : dt;
+                    var maxStep = MoveStepLimit.PlannedMeters(stepDt, settings.WalkSpeed);
+                    var plan = planner.Next(_pos, maxStep);
+                    if (!plan.Send)
                     {
-                        desired = toHome.sqrMagnitude > 0.01f ? toHome.normalized : RandomDir(rnd);
-                        dir = Vector3.RotateTowards(dir, desired, turnRadPerTick * 1.5f, 0f);
-                        if (dir.sqrMagnitude < 0.01f)
-                            dir = desired;
-                        else
-                            dir.Normalize();
-                        next = _pos + dir * step;
+                        if (plan.Reason == "pause")
+                            _clock.Metrics.Paused++;
+                        else if (plan.Reason == "path_rejected")
+                            _clock.Metrics.PathRejected++;
                     }
-
-                    next = SnapWalkable(next, _spawn.y);
-                    _yaw = Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg;
-                    // Do not commit local pose until MoveRsp; keep intent only for the request.
-                    inflight = SendMoveStepAsync(next, ct);
+                    else
+                    {
+                        _yaw = plan.Yaw;
+                        _lastClientTimeMs = nowMs;
+                        inflight = SendMoveStepAsync(plan.Position, nowMs, planner, _clock, ct);
+                    }
                 }
 
-                var elapsed = unchecked(Environment.TickCount - tickStart);
-                var remain = tickMs - elapsed;
-                if (remain < 1)
-                    remain = 1;
-                try
-                {
-                    await Task.Delay(remain, ct).ConfigureAwait(false);
-                }
-                catch (TaskCanceledException)
-                {
-                    return;
-                }
+                var wait = tick.WaitMs > 0 ? tick.WaitMs : 20;
+                try { await Task.Delay(wait, ct).ConfigureAwait(false); }
+                catch (TaskCanceledException) { return; }
             }
         }
 
-        async Task SendMoveStepAsync(Vector3 next, CancellationToken ct)
+        async Task SendMoveStepAsync(Vector3 next, long clientTimeMs, BotMovementPlanner planner,
+            BotMovementClock clock, CancellationToken ct)
         {
+            var metrics = clock.Metrics;
+            metrics.Sent++;
+            var started = Environment.TickCount;
             try
             {
                 var rsp = await SendAsync(new GameRequest
@@ -1046,18 +1047,52 @@ namespace GameMesh.LoadTest
                         MapInstanceId = _mapInstanceId,
                         Position = ProtocolMapper.ToVec3(next),
                         Yaw = _yaw,
-                        ClientTimeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+                        ClientTimeMs = clientTimeMs
                     }
-                }, TimeSpan.FromSeconds(8), ct).ConfigureAwait(false);
+                }, TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+                var elapsed = unchecked(Environment.TickCount - started);
+                if (elapsed > 0 && elapsed < 60000)
+                    metrics.NoteLatency(elapsed);
                 var move = rsp != null ? rsp.Move : null;
-                // Always adopt MoveRsp pose (ok or not). Never keep a rejected local fly-away.
+                var adopted = false;
                 if (move != null && move.Position != null)
                 {
-                    _pos = ProtocolMapper.ToUnity(move.Position);
+                    var authority = ProtocolMapper.ToUnity(move.Position);
+                    var dx = authority.x - _pos.x;
+                    var dz = authority.z - _pos.z;
+                    var dist = Mathf.Sqrt(dx * dx + dz * dz);
+                    if (dist > 0.5f)
+                    {
+                        metrics.Corrections++;
+                        metrics.CorrectionDistanceSum += dist;
+                    }
+
+                    _pos = authority;
                     _yaw = move.Yaw;
+                    adopted = true;
                 }
-                else if (!rsp.Ok && GameErrorCatalog.IsNotOnMap(ProtocolMapper.ExtractErrorCode(rsp)) &&
-                         Volatile.Read(ref _resumeBusy) == 0)
+
+                if (rsp != null && rsp.Ok)
+                {
+                    // ok means the authority pose was stored. It does not mean
+                    // anyone else can see it yet.
+                    metrics.AckOk++;
+                    return;
+                }
+
+                metrics.Rejected++;
+                var code = ProtocolMapper.ExtractErrorCode(rsp);
+                if (code == "ERR_MOVE_TOO_FAST")
+                    metrics.RejectTooFast++;
+                else if (code == "ERR_OUT_OF_BOUNDS")
+                    metrics.RejectBounds++;
+                else if (code == "ERR_UNWALKABLE")
+                    metrics.RejectUnwalkable++;
+                else
+                    metrics.RejectOther++;
+                planner.NoteRejected();
+                if (!adopted && GameErrorCatalog.IsNotOnMap(code) &&
+                    Volatile.Read(ref _resumeBusy) == 0)
                 {
                     var live = GameMeshClient.Instance;
                     if (live != null)
@@ -1068,34 +1103,30 @@ namespace GameMesh.LoadTest
             {
                 /* wave ending */
             }
-            catch
+            catch (Exception ex)
             {
-                /* next free tick resends from the last accepted point */
+                planner.NoteRejected();
+                if (ex is GameMeshException ge && ge.ErrorCode == GameMeshErrorCode.ClientTimeout)
+                {
+                    metrics.Timeout++;
+                    Status = "移动超时 :" + GatewayPort;
+                    return;
+                }
+
+                metrics.Rejected++;
             }
         }
 
-        static Vector3 SnapWalkable(Vector3 pos, float fallbackY)
+        TimeSpan RpcBudget(int floorMs)
         {
-            // Keep intended XZ. NavMesh planar snap was yanking bots back and caused twitching.
-            try
-            {
-                if (UnityEngine.AI.NavMesh.SamplePosition(pos, out var hit, 2.5f,
-                        UnityEngine.AI.NavMesh.AllAreas))
-                {
-                    var drift = Vector2.Distance(new Vector2(pos.x, pos.z),
-                        new Vector2(hit.position.x, hit.position.z));
-                    if (drift < 0.75f)
-                        return hit.position;
-                    return new Vector3(pos.x, hit.position.y, pos.z);
-                }
-            }
-            catch
-            {
-                /* NavMesh may be missing in some scenes */
-            }
-
-            pos.y = fallbackY;
-            return pos;
+            if (floorMs < 8000)
+                return TimeSpan.FromMilliseconds(Math.Max(250, floorMs));
+            var scaled = _rpcRttMs > 1000 ? _rpcRttMs * 2 + 1000 : floorMs;
+            if (scaled < floorMs)
+                scaled = floorMs;
+            if (scaled > 20000)
+                scaled = 20000;
+            return TimeSpan.FromMilliseconds(scaled);
         }
 
         async Task<GameResponse> SendAsync(GameRequest request, TimeSpan timeout, CancellationToken ct)
@@ -1104,7 +1135,12 @@ namespace GameMesh.LoadTest
                 throw new GameMeshException(GameMeshErrorCode.ClientIllegalState, "hello required");
             if (!string.IsNullOrEmpty(_token) && request.BodyCase != GameRequest.BodyOneofCase.ClientHello)
                 request.SessionToken = _token;
-            return await _conn.RequestAsync(request, timeout, ct).ConfigureAwait(false);
+            var started = Environment.TickCount;
+            var rsp = await _conn.RequestAsync(request, timeout, ct).ConfigureAwait(false);
+            var elapsed = unchecked(Environment.TickCount - started);
+            if (elapsed > 0 && elapsed < 60000)
+                _rpcRttMs = _rpcRttMs == 0 ? elapsed : (_rpcRttMs * 3 + elapsed) / 4;
+            return rsp;
         }
 
         void OnPush(GameResponse rsp)
@@ -1134,12 +1170,6 @@ namespace GameMesh.LoadTest
                 return _host;
             var client = GameMeshClient.Instance;
             return client != null ? client.Config.host ?? "" : "";
-        }
-
-        static Vector3 RandomDir(System.Random rnd)
-        {
-            var angle = rnd.NextDouble() * Math.PI * 2.0;
-            return new Vector3((float)Math.Cos(angle), 0f, (float)Math.Sin(angle));
         }
 
         public static async Task LogoutOrphanAsync(IMainThreadDispatcher dispatcher, string host, int port,
