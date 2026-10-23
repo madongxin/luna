@@ -1080,7 +1080,18 @@ namespace GameMesh.LoadTest
                     {
                         _yaw = plan.Yaw;
                         _lastClientTimeMs = nowMs;
-                        inflight = SendMoveStepAsync(plan.Position, nowMs, planner, _clock, ct);
+                        // 名额跟着请求本身释放。统计回调若排在线程池后面，不能继续把机器人算成忙。
+                        try
+                        {
+                            var requestTask = StartMoveRequest(plan.Position, nowMs, ct);
+                            _pos = plan.Position;
+                            inflight = requestTask;
+                            _ = FinishMoveStepAsync(requestTask, planner, _clock, ct);
+                        }
+                        catch (Exception ex)
+                        {
+                            NoteMoveSendFailed(ex, planner, _clock);
+                        }
                     }
                 }
 
@@ -1090,26 +1101,41 @@ namespace GameMesh.LoadTest
             }
         }
 
-        async Task SendMoveStepAsync(Vector3 next, long clientTimeMs, BotMovementPlanner planner,
+        Task<GameResponse> StartMoveRequest(Vector3 next, long clientTimeMs, CancellationToken ct)
+        {
+            var metrics = _clock != null ? _clock.Metrics : null;
+            if (metrics != null)
+            {
+                metrics.Sent++;
+                metrics.QueueAccepted++;
+            }
+
+            var request = new GameRequest
+            {
+                Move = new MoveReq
+                {
+                    PlayerId = _playerId,
+                    MapInstanceId = _mapInstanceId,
+                    Position = ProtocolMapper.ToVec3(next),
+                    Yaw = _yaw,
+                    ClientTimeMs = clientTimeMs
+                }
+            };
+            if (!_helloOk)
+                throw new GameMeshException(GameMeshErrorCode.ClientIllegalState, "hello required");
+            if (!string.IsNullOrEmpty(_token))
+                request.SessionToken = _token;
+            return _conn.RequestAsync(request, TimeSpan.FromSeconds(2), ct);
+        }
+
+        async Task FinishMoveStepAsync(Task<GameResponse> requestTask, BotMovementPlanner planner,
             BotMovementClock clock, CancellationToken ct)
         {
             var metrics = clock.Metrics;
-            metrics.Sent++;
-            metrics.QueueAccepted++;
             var started = Environment.TickCount;
             try
             {
-                var rsp = await SendAsync(new GameRequest
-                {
-                    Move = new MoveReq
-                    {
-                        PlayerId = _playerId,
-                        MapInstanceId = _mapInstanceId,
-                        Position = ProtocolMapper.ToVec3(next),
-                        Yaw = _yaw,
-                        ClientTimeMs = clientTimeMs
-                    }
-                }, TimeSpan.FromSeconds(2), ct).ConfigureAwait(false);
+                var rsp = await requestTask.ConfigureAwait(false);
                 var elapsed = unchecked(Environment.TickCount - started);
                 if (elapsed > 0 && elapsed < 60000)
                     metrics.NoteLatency(elapsed);
@@ -1205,6 +1231,33 @@ namespace GameMesh.LoadTest
 
                 metrics.Rejected++;
             }
+        }
+
+        void NoteMoveSendFailed(Exception ex, BotMovementPlanner planner, BotMovementClock clock)
+        {
+            var metrics = clock != null ? clock.Metrics : null;
+            if (metrics == null || ex is TaskCanceledException)
+                return;
+            var mesh = ex as GameMeshException;
+            if (mesh != null && mesh.ErrorCode == GameMeshErrorCode.ClientCancelled)
+            {
+                metrics.Cancelled++;
+                return;
+            }
+
+            if (mesh != null && mesh.ErrorCode == GameMeshErrorCode.ClientTimeout)
+            {
+                metrics.Timeout++;
+                if (mesh.FrameWritten)
+                    metrics.WriteCompleted++;
+                else
+                    metrics.TimeoutBeforeWrite++;
+                return;
+            }
+
+            metrics.Rejected++;
+            if (planner != null)
+                planner.NoteRejected();
         }
 
         void HoldMoves(int streak)

@@ -155,6 +155,20 @@ namespace GameMesh.LoadTest
             _ = StartWaveAsync(count, durationMinutes, staggerMs, password, portA, portB);
         }
 
+        static void RaisePoolForLoad(int bots)
+        {
+            var need = bots * 4;
+            if (need < 64)
+                need = 64;
+            if (need > 4096)
+                need = 4096;
+            int workers;
+            int io;
+            ThreadPool.GetMinThreads(out workers, out io);
+            if (workers < need || io < need)
+                ThreadPool.SetMinThreads(workers > need ? workers : need, io > need ? io : need);
+        }
+
         public void RequestCollectiveLogout()
         {
             _ = LogoutAllAsync();
@@ -192,6 +206,9 @@ namespace GameMesh.LoadTest
 
                 staggerMs = Mathf.Clamp(staggerMs, 0, 5000);
                 durationMinutes = Mathf.Max(0f, durationMinutes);
+                // 每个机器人两条循环再加收发。线程池若按 CPU 数慢慢扩，应答回调会排到几秒之后，
+                // 这一步的 Move 就一直占着名额，后面的节拍全部记成忙跳过。
+                RaisePoolForLoad(count);
                 _durationSec = durationMinutes * 60f;
                 TargetCount = count;
                 if (string.IsNullOrEmpty(password) || password.Length < 6)

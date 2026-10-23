@@ -143,7 +143,7 @@ namespace GameMesh.Network
             }
         }
 
-        public async Task<GameResponse> RequestAsync(GameRequest request, TimeSpan timeout, CancellationToken ct)
+        public Task<GameResponse> RequestAsync(GameRequest request, TimeSpan timeout, CancellationToken ct)
         {
             if (request == null)
                 throw new GameMeshException(GameMeshErrorCode.ClientProtocol, "request is null");
@@ -161,6 +161,7 @@ namespace GameMesh.Network
             if (_pending.Count >= PendingLimit)
                 throw new GameMeshException(GameMeshErrorCode.ClientQueueFull, "too many pending requests");
 
+            // 直接返回这条 Task。应答在收包线程上结束它，调用方不用再等一次线程池回调才看到完成。
             var tcs = new TaskCompletionSource<GameResponse>(TaskCreationOptions.RunContinuationsAsynchronously);
             var pending = new PendingCall(tcs);
             // Expected response opcode stays 0 here. Request and response oneof numbers are different
@@ -191,24 +192,25 @@ namespace GameMesh.Network
             _sendQueue.Enqueue(new SendItem(frame, request.Seq, BodyName(request)));
             _sendSignal.Release();
 
-            using (var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(timeout);
+            var registration = timeoutCts.Token.Register(() =>
             {
-                timeoutCts.CancelAfter(timeout);
-                using (timeoutCts.Token.Register(() =>
-                       {
-                           if (_pending.TryTimeout(slot, ct.IsCancellationRequested, out var frameWritten))
-                           {
-                               var code = ct.IsCancellationRequested
-                                   ? GameMeshErrorCode.ClientCancelled
-                                   : GameMeshErrorCode.ClientTimeout;
-                               pending.TrySetException(new GameMeshException(
-                                   code, $"seq={request.Seq} {code}", null, frameWritten));
-                           }
-                       }))
+                if (_pending.TryTimeout(slot, ct.IsCancellationRequested, out var frameWritten))
                 {
-                    return await tcs.Task.ConfigureAwait(false);
+                    var code = ct.IsCancellationRequested
+                        ? GameMeshErrorCode.ClientCancelled
+                        : GameMeshErrorCode.ClientTimeout;
+                    pending.TrySetException(new GameMeshException(
+                        code, $"seq={request.Seq} {code}", null, frameWritten));
                 }
-            }
+            });
+            tcs.Task.ContinueWith(_ =>
+            {
+                registration.Dispose();
+                timeoutCts.Dispose();
+            }, TaskScheduler.Default);
+            return tcs.Task;
         }
 
         public void SendBestEffort(GameRequest request, TimeSpan timeout)
