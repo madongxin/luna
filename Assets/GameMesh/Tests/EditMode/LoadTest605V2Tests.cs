@@ -16,8 +16,9 @@ namespace GameMesh.Tests.EditMode
         {
             var table = new RpcPendingTable();
             Assert.IsTrue(table.TryRegister(1, 10, 7, out var slot));
-            Assert.IsTrue(table.TryTimeout(slot, false, out var written));
-            Assert.IsFalse(written);
+            Assert.IsTrue(table.TryTimeout(slot, false, out var phase));
+            Assert.AreEqual(RpcPendingTable.Slot.PhaseIdle, phase);
+            Assert.AreEqual(1, table.Metrics.ExpiredBeforeWrite);
             var match = table.TryComplete(1, 10, 7, true, out _);
             Assert.AreEqual(RpcPendingTable.Match.Late, match);
             Assert.AreEqual(0, table.Metrics.AckOk);
@@ -177,9 +178,9 @@ namespace GameMesh.Tests.EditMode
         {
             var table = new RpcPendingTable();
             Assert.IsTrue(table.TryRegister(1, 5, 0, out var slot));
-            Assert.IsTrue(table.TryTimeout(slot, false, out var written));
-            Assert.IsFalse(written);
-            Assert.IsFalse(table.TryBeginWrite(1, 5));
+            Assert.IsTrue(table.TryTimeout(slot, false, out var phase));
+            Assert.AreEqual(RpcPendingTable.Slot.PhaseIdle, phase);
+            Assert.AreEqual(RpcPendingTable.SendDecision.Closed, table.PrepareSend(slot, 1));
         }
 
         [Test]
@@ -187,9 +188,10 @@ namespace GameMesh.Tests.EditMode
         {
             var table = new RpcPendingTable();
             Assert.IsTrue(table.TryRegister(1, 6, 0, out var slot));
-            Assert.IsTrue(table.TryBeginWrite(1, 6));
-            Assert.IsTrue(table.TryTimeout(slot, false, out var written));
-            Assert.IsTrue(written);
+            Assert.AreEqual(RpcPendingTable.SendDecision.Send, table.PrepareSend(slot, 0));
+            Assert.IsTrue(table.TryTimeout(slot, false, out var phase));
+            Assert.AreEqual(RpcPendingTable.Slot.PhaseWriteStarted, phase);
+            Assert.AreEqual(1, table.Metrics.TimeoutAfterWriteStarted);
         }
 
         [Test]
@@ -267,6 +269,38 @@ namespace GameMesh.Tests.EditMode
             Assert.AreEqual(10ul, tracker.MapInstanceId);
             Assert.AreEqual(0, tracker.VisibleCount);
             Assert.AreEqual(0ul, tracker.LastAppliedServerSeq);
+        }
+
+        [Test]
+        public void Send_PastDeadline_DoesNotStartWrite()
+        {
+            var table = new RpcPendingTable();
+            Assert.IsTrue(table.TryRegister(1, 9, 0, out var slot));
+            slot.DeadlineAtMs = 100;
+            Assert.AreEqual(RpcPendingTable.SendDecision.Expired, table.PrepareSend(slot, 100));
+            Assert.AreEqual(RpcPendingTable.Slot.PhaseIdle, slot.Phase);
+            Assert.AreEqual(RpcPendingTable.SendDecision.Send, table.PrepareSend(slot, 99));
+            table.MarkWriteCompleted(slot);
+            Assert.AreEqual(RpcPendingTable.Slot.PhaseWriteCompleted, slot.Phase);
+            Assert.AreEqual(1, table.Metrics.WriteCompleted);
+        }
+
+        [Test]
+        public void Recovery_BeforeWrite_DoesNotSnapshot()
+        {
+            Assert.IsFalse(MoveRecovery.NeedsSnapshot(0));
+            Assert.IsFalse(MoveRecovery.NeedsSnapshot(2));
+            Assert.IsTrue(MoveRecovery.NeedsSnapshot(3));
+        }
+
+        [Test]
+        public void Recovery_LateMove_NeedsNewerStateSeqAndSameGeneration()
+        {
+            Assert.IsTrue(MoveRecovery.TryAdoptLate(4, 5, 2, 2, 9, 9));
+            Assert.IsFalse(MoveRecovery.TryAdoptLate(4, 5, 2, 3, 9, 9));
+            Assert.IsFalse(MoveRecovery.TryAdoptLate(4, 4, 2, 2, 9, 9));
+            Assert.IsFalse(MoveRecovery.TryAdoptLate(4, 0, 2, 2, 9, 9));
+            Assert.IsFalse(MoveRecovery.TryAdoptLate(4, 8, 2, 2, 9, 10));
         }
 
         static GameResponse Delta(ulong mapInstanceId, AoiOp op, ulong playerId)

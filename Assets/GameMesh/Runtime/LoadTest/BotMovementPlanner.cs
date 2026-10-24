@@ -34,6 +34,7 @@ namespace GameMesh.LoadTest
         int _pauseLeft;
         int _phase;
         bool _rejected;
+        bool _returning;
 
         public int WaypointIndex => _waypoint;
 
@@ -51,8 +52,75 @@ namespace GameMesh.LoadTest
         {
             _rejected = true;
             _hasGoal = false;
+            _returning = false;
             // Skip the rest of this stage so the next point is not the rejected one.
             _waypoint += 6;
+        }
+
+        /// <summary>
+        /// Walk from spawn to a random point OutboundMeters away, then walk back.
+        /// A finished return picks a new direction. The 24m safe disk does not apply.
+        /// </summary>
+        public MovePlan NextOutAndBack(Vector3 confirmed, float maxStepMeters = -1f)
+        {
+            var maxStep = maxStepMeters >= 0f ? maxStepMeters : _settings.MaxStepMeters;
+            var leg = _settings.OutboundMeters > 0f ? _settings.OutboundMeters : 50f;
+            if (_rejected || !_hasGoal)
+            {
+                _rejected = false;
+                _returning = false;
+                _goal = PointOnCircle(_spawn, leg);
+                _hasGoal = true;
+                _waypoint++;
+            }
+
+            var goal = _returning ? _spawn : _goal;
+            if (Flat(confirmed, goal) <= 0.35f)
+            {
+                if (!_returning)
+                {
+                    _returning = true;
+                    goal = _spawn;
+                }
+                else
+                {
+                    _returning = false;
+                    _goal = PointOnCircle(_spawn, leg);
+                    goal = _goal;
+                }
+
+                _waypoint++;
+            }
+
+            var next = Step(confirmed, goal, maxStep);
+            next.y = confirmed.y;
+            if (Flat(next, confirmed) < 0.02f)
+            {
+                _hasGoal = false;
+                _returning = false;
+                return MovePlan.None("path_rejected", _waypoint);
+            }
+
+            var yaw = Mathf.Atan2(next.x - confirmed.x, next.z - confirmed.z) * Mathf.Rad2Deg;
+            return new MovePlan
+            {
+                Send = true,
+                Position = next,
+                Yaw = yaw,
+                Reason = _returning ? "return" : "outbound",
+                WaypointIndex = _waypoint,
+                CrossesCell = CrossesCell(confirmed, next),
+                CrossesInterest = CrossesInterest(confirmed, next)
+            };
+        }
+
+        Vector3 PointOnCircle(Vector3 center, float radius)
+        {
+            var angle = (float)(_rng.NextDouble() * Mathf.PI * 2.0);
+            return new Vector3(
+                center.x + Mathf.Cos(angle) * radius,
+                center.y,
+                center.z + Mathf.Sin(angle) * radius);
         }
 
         public MovePlan Next(Vector3 confirmed, float maxStepMeters = -1f)

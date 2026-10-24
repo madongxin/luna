@@ -40,10 +40,13 @@ namespace GameMesh.LoadTest
         int _resumeBusy;
         int _rpcRttMs;
         int _moveTimeoutStreak;
+        int _unknownStreak;
+        ulong _authorityStateSeq;
         int _poseUncertain;
         int _authorityBusy;
         long _moveHoldUntilMs;
-        static readonly SemaphoreSlim AuthorityGate = new SemaphoreSlim(4, 4);
+        long _nextAuthorityAtMs;
+        static readonly SemaphoreSlim AuthorityGate = new SemaphoreSlim(8, 8);
         static int _lineRefreshTick;
         static string _cachedClientVersion = "luna";
         static string _cachedPlatform = "Unknown";
@@ -103,6 +106,7 @@ namespace GameMesh.LoadTest
             _index = index;
             _conn = new GameConnection(dispatcher ?? new ImmediateDispatcher()) { Quiet = true };
             _conn.PushReceived += OnPush;
+            _conn.LateResponse += OnLateMove;
             CacheUnityInfoOnMainThread();
         }
 
@@ -1000,8 +1004,7 @@ namespace GameMesh.LoadTest
                 {
                     if (_stopMoves || ct.IsCancellationRequested || gen != _loopGen)
                         return;
-                    GameMeshLog.Warn("bot#" + _index + " heartbeat failed " +
-                                     GameMeshLog.Redact(ex.Message));
+                    LoadTestLog.Timeout("heartbeat", "bot#" + _index + " " + GameMeshLog.Redact(ex.Message));
                     // A slow HeartbeatRsp is not a dead session. Only a dropped TCP reconnects immediately.
                     if (IsLinkDown() || IsTransportDead(ex))
                     {
@@ -1033,29 +1036,18 @@ namespace GameMesh.LoadTest
             var planner = new BotMovementPlanner(Profile, _index, settings, _spawn);
             var gen = _loopGen;
             Task inflight = Task.CompletedTask;
-            if (Profile == BotMovementProfile.Idle)
-            {
-                while (!_stopMoves && !ct.IsCancellationRequested && gen == _loopGen)
-                {
-                    try { await Task.Delay(500, ct).ConfigureAwait(false); }
-                    catch (TaskCanceledException) { return; }
-                }
-
-                return;
-            }
-
             while (!_stopMoves && !ct.IsCancellationRequested && gen == _loopGen)
             {
-                var nowHold = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                if (Volatile.Read(ref _poseUncertain) != 0 &&
-                    nowHold >= _moveHoldUntilMs &&
-                    Volatile.Read(ref _authorityBusy) == 0)
-                    _ = RefreshAuthorityAsync(ct);
+                var queueBlocked = _conn.MoveBackpressured;
                 var ready = InWorld && Volatile.Read(ref _resumeBusy) == 0 &&
-                            Volatile.Read(ref _poseUncertain) == 0 &&
-                            nowHold >= _moveHoldUntilMs &&
+                            !queueBlocked &&
                             _conn.State == ConnectionState.InWorld && _mapInstanceId != 0;
                 var tick = _clock.Evaluate(ready, inflight.IsCompleted ? 0 : 1);
+                if (queueBlocked && tick.Kind == BotMoveTickKind.SkipNotReady && _clock.Metrics != null)
+                {
+                    _clock.Metrics.SkippedNotReady--;
+                    _clock.Metrics.SkippedBusy++;
+                }
                 if (tick.Kind == BotMoveTickKind.Send)
                 {
                     var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
@@ -1068,7 +1060,7 @@ namespace GameMesh.LoadTest
                     // within 10 m/s of that delta; one second is enough for one step.
                     var stepDt = dt > 1f ? 1f : dt;
                     var maxStep = MoveStepLimit.PlannedMeters(stepDt, settings.WalkSpeed);
-                    var plan = planner.Next(_pos, maxStep);
+                    var plan = planner.NextOutAndBack(_pos, maxStep);
                     if (!plan.Send)
                     {
                         if (plan.Reason == "pause")
@@ -1158,15 +1150,16 @@ namespace GameMesh.LoadTest
                     adopted = true;
                 }
 
-                metrics.RspRawReceived++;
                 metrics.RspMatched++;
-                metrics.WriteCompleted++;
+                if (move != null && move.StateSeq > _authorityStateSeq)
+                    _authorityStateSeq = move.StateSeq;
                 if (rsp != null && rsp.Ok)
                 {
                     // ok means the authority pose was stored. It does not mean
                     // anyone else can see it yet.
                     metrics.AckOk++;
                     _moveTimeoutStreak = 0;
+                    _unknownStreak = 0;
                     Volatile.Write(ref _poseUncertain, 0);
                     return;
                 }
@@ -1175,7 +1168,7 @@ namespace GameMesh.LoadTest
                 if (BotMovementMetrics.IsBusy(code))
                 {
                     metrics.Overloaded++;
-                    HoldMoves(2);
+                    _moveHoldUntilMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 2000;
                     Status = "服务器忙，暂停移动";
                     return;
                 }
@@ -1212,20 +1205,22 @@ namespace GameMesh.LoadTest
                     return;
                 }
 
+                if (mesh != null &&
+                    (mesh.ErrorCode == GameMeshErrorCode.ClientQueueExpired ||
+                     (mesh.ErrorCode == GameMeshErrorCode.ClientTimeout && mesh.WritePhase == 0)))
+                {
+                    metrics.ExpiredBeforeWrite++;
+                    return;
+                }
+
                 if (mesh != null && mesh.ErrorCode == GameMeshErrorCode.ClientTimeout)
                 {
-                    metrics.Timeout++;
-                    if (mesh.FrameWritten)
-                        metrics.WriteCompleted++;
-                    else
-                        metrics.TimeoutBeforeWrite++;
-                    _moveTimeoutStreak++;
-                    // A timeout does not prove the server rejected the step. Stop sending
-                    // from this unconfirmed point until a snapshot returns the authority pose.
-                    HoldMoves(_moveTimeoutStreak);
-                    Status = "位姿未确认 :" + GatewayPort;
-                    if (_moveTimeoutStreak >= 2)
-                        _ = RefreshAuthorityAsync(ct);
+                    // The server may already have this step. Keep walking from the
+                    // last confirmed pose. A later MoveRsp with a newer state_seq
+                    // still corrects it. Stopping here never reaches another sample.
+                    metrics.UnknownOutcome++;
+                    _unknownStreak++;
+                    Status = "写出后未知，继续移动 :" + GatewayPort;
                     return;
                 }
 
@@ -1233,6 +1228,7 @@ namespace GameMesh.LoadTest
             }
         }
 
+        // RequestAsync throws synchronously only before the frame is queued.
         void NoteMoveSendFailed(Exception ex, BotMovementPlanner planner, BotMovementClock clock)
         {
             var metrics = clock != null ? clock.Metrics : null;
@@ -1245,13 +1241,12 @@ namespace GameMesh.LoadTest
                 return;
             }
 
-            if (mesh != null && mesh.ErrorCode == GameMeshErrorCode.ClientTimeout)
+            if (mesh != null &&
+                (mesh.ErrorCode == GameMeshErrorCode.ClientQueueFull ||
+                 mesh.ErrorCode == GameMeshErrorCode.ClientNotConnected ||
+                 mesh.ErrorCode == GameMeshErrorCode.ClientQueueExpired))
             {
-                metrics.Timeout++;
-                if (mesh.FrameWritten)
-                    metrics.WriteCompleted++;
-                else
-                    metrics.TimeoutBeforeWrite++;
+                metrics.ExpiredBeforeWrite++;
                 return;
             }
 
@@ -1260,24 +1255,23 @@ namespace GameMesh.LoadTest
                 planner.NoteRejected();
         }
 
-        void HoldMoves(int streak)
-        {
-            var hold = BotMovementMetrics.HoldMsAfterTimeouts(streak);
-            if (hold <= 0)
-                return;
-            Volatile.Write(ref _poseUncertain, 1);
-            _moveHoldUntilMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + hold + (_index % 20) * 50;
-        }
-
         async Task RefreshAuthorityAsync(CancellationToken ct)
         {
+            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            if (nowMs < Interlocked.Read(ref _nextAuthorityAtMs))
+                return;
             if (Interlocked.CompareExchange(ref _authorityBusy, 1, 0) != 0)
                 return;
+            Interlocked.Exchange(ref _nextAuthorityAtMs, nowMs + 10000 + (_index % 20) * 250);
             var acquired = false;
             try
             {
                 await Task.Delay((_index % 30) * 40, ct).ConfigureAwait(false);
-                await AuthorityGate.WaitAsync(ct).ConfigureAwait(false);
+                if (!await AuthorityGate.WaitAsync(TimeSpan.FromMilliseconds(250), ct).ConfigureAwait(false))
+                {
+                    _moveHoldUntilMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 2000 + (_index % 20) * 50;
+                    return;
+                }
                 acquired = true;
                 var rsp = await SendAsync(new GameRequest
                 {
@@ -1297,8 +1291,8 @@ namespace GameMesh.LoadTest
                     return;
                 }
 
-                _pos = ProtocolMapper.ToUnity(snap.Self.Position);
-                _yaw = snap.Self.Yaw;
+                // This snapshot only repairs the remote AOI cursor. Self pose comes from MoveRsp;
+                // the snapshot pose lags in-flight moves and would pull the bot back.
                 if (snap.MapInstanceId != 0)
                     _mapInstanceId = snap.MapInstanceId;
                 if (snap.MapTemplateId != 0)
@@ -1307,8 +1301,6 @@ namespace GameMesh.LoadTest
                     RealmId = snap.RealmId;
                 if (!string.IsNullOrEmpty(snap.GamelogicInstanceId))
                     GameLogicInstanceId = snap.GamelogicInstanceId;
-                Volatile.Write(ref _poseUncertain, 0);
-                _moveTimeoutStreak = 0;
                 if (_push.ApplySnapshot(snap))
                     _lastServerSeq = _push.LastAppliedServerSeq;
                 if (_clock != null && _clock.Metrics != null)
@@ -1322,7 +1314,7 @@ namespace GameMesh.LoadTest
             {
                 Status = "权威刷新失败 :" + GatewayPort;
                 _moveHoldUntilMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 4000;
-                GameMeshLog.Warn("bot#" + _index + " snapshot " + GameMeshLog.Redact(ex.Message));
+                LoadTestLog.Timeout("snapshot", "bot#" + _index + " " + GameMeshLog.Redact(ex.Message));
             }
             finally
             {
@@ -1356,6 +1348,25 @@ namespace GameMesh.LoadTest
             if (elapsed > 0 && elapsed < 60000)
                 _rpcRttMs = _rpcRttMs == 0 ? elapsed : (_rpcRttMs * 3 + elapsed) / 4;
             return rsp;
+        }
+
+        void OnLateMove(GameResponse rsp)
+        {
+            var move = rsp != null ? rsp.Move : null;
+            if (move == null || !rsp.Ok || move.Position == null)
+                return;
+            if (!MoveRecovery.TryAdoptLate(_authorityStateSeq, move.StateSeq, _conn.Generation, _conn.Generation,
+                    _mapInstanceId, _mapInstanceId))
+                return;
+            _authorityStateSeq = move.StateSeq;
+            _pos = ProtocolMapper.ToUnity(move.Position);
+            _yaw = move.Yaw;
+            _unknownStreak = 0;
+            _moveTimeoutStreak = 0;
+            Volatile.Write(ref _poseUncertain, 0);
+            if (_clock != null && _clock.Metrics != null)
+                _clock.Metrics.LateRsp++;
+            Status = "迟到坐标 :" + GatewayPort;
         }
 
         void OnPush(GameResponse rsp)
@@ -1581,6 +1592,29 @@ namespace GameMesh.LoadTest
             if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
                 Directory.CreateDirectory(dir);
             File.WriteAllText(FilePath, JsonUtility.ToJson(box));
+        }
+    }
+
+    static class LoadTestLog
+    {
+        static int _heartbeat;
+        static int _snapshot;
+        static int _samples;
+        static int _nextSummary;
+
+        public static void Timeout(string kind, string detail)
+        {
+            if (kind == "heartbeat")
+                Interlocked.Increment(ref _heartbeat);
+            else
+                Interlocked.Increment(ref _snapshot);
+            if (Interlocked.Increment(ref _samples) <= 5)
+                GameMeshLog.Warn(kind + " " + detail);
+            var now = Environment.TickCount;
+            if (_nextSummary != 0 && unchecked(now - _nextSummary) < 0)
+                return;
+            _nextSummary = unchecked(now + 10000);
+            GameMeshLog.Warn("timeout summary heartbeat=" + _heartbeat + " snapshot=" + _snapshot);
         }
     }
 }

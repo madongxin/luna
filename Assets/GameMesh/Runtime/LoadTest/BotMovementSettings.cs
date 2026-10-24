@@ -32,6 +32,7 @@ namespace GameMesh.LoadTest
         // Spawn neighborhood that the live 1002 grid treats as walkable.
         // Do not wander out to the map AABB.
         public float SafeRadius = 24f;
+        public float OutboundMeters = 50f;
         public float WanderMin = 10f;
         public float WanderMax = 24f;
         public float PauseMaxSec = 2f;
@@ -57,6 +58,7 @@ namespace GameMesh.LoadTest
                 AoiRadius = AoiRadius,
                 CellSize = CellSize,
                 SafeRadius = SafeRadius,
+                OutboundMeters = OutboundMeters,
                 WanderMin = WanderMin,
                 WanderMax = WanderMax,
                 PauseMaxSec = PauseMaxSec,
@@ -91,6 +93,8 @@ namespace GameMesh.LoadTest
                 return "strategy weights must be >= 0";
             if (SafeRadius < 4f || AoiRadius < 1f || CellSize < 1f)
                 return "map radii must be positive";
+            if (OutboundMeters < 1f || OutboundMeters > 200f)
+                return "outbound leg must be 1..200 meters";
             if (WanderMin < 0f || WanderMax < WanderMin || WanderMax > SafeRadius)
                 return "wander range must sit inside the safe radius";
             if (PauseMaxSec < 0f || PauseMaxSec > 5f)

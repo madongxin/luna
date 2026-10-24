@@ -155,8 +155,9 @@ namespace GameMesh.Protocol
             world.SetMapInstance(model.MapInstanceId);
             world.ApplySnapshot(model.AoiEntities);
             gapCache?.Clear();
-            push?.Reset(model.BaselineServerSeq);
-            session.LastServerSeq = model.BaselineServerSeq;
+            push?.AdoptBaseline(model.BaselineServerSeq);
+            if (model.BaselineServerSeq > session.LastServerSeq)
+                session.LastServerSeq = model.BaselineServerSeq;
         }
     }
 }

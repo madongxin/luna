@@ -177,6 +177,48 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void Aoi_MoveWithoutNameOrHp_KeepsEnterValues()
+        {
+            var world = new AoiWorld { LocalPlayerId = 1 };
+            world.SetMapInstance(9);
+            world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Enter,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto
+                {
+                    EntityId = 2, PlayerId = 2, Name = "Bot002", Hp = 80, MaxHp = 100, StateSeq = 1, MapInstanceId = 9
+                }
+            });
+            world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Move,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto { EntityId = 2, PlayerId = 2, X = 4, Yaw = 90, StateSeq = 2, MapInstanceId = 9 }
+            });
+            var e = world.Entities[2];
+            Assert.AreEqual("Bot002", e.Name);
+            Assert.AreEqual(80f, e.Hp);
+            Assert.AreEqual(100f, e.MaxHp);
+            Assert.AreEqual(4f, e.X);
+            Assert.AreEqual(90f, e.Yaw);
+            Assert.AreEqual(2UL, e.StateSeq);
+
+            world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Move,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto
+                {
+                    EntityId = 2, PlayerId = 2, Name = "Renamed", Hp = 0, MaxHp = 100, StateSeq = 3, MapInstanceId = 9
+                }
+            });
+            Assert.AreEqual("Renamed", e.Name);
+            Assert.AreEqual(0f, e.Hp);
+            Assert.AreEqual(100f, e.MaxHp);
+        }
+
+        [Test]
         public void Aoi_RejectsOtherMapAndSelf()
         {
             var world = new AoiWorld { LocalPlayerId = 7 };
@@ -231,9 +273,12 @@ namespace GameMesh.Tests.EditMode
             Assert.AreEqual(1UL, conn.AssignRequestSeq(move));
             Assert.AreEqual(2UL, conn.AssignRequestSeq(move2));
             Assert.Greater(move2.Seq, move.Seq);
-            conn.ResetRequestSeq();
             var afterReconnect = new GameRequest { Move = new MoveReq() };
-            Assert.AreEqual(1UL, conn.AssignRequestSeq(afterReconnect));
+            Assert.AreEqual(3UL, conn.AssignRequestSeq(afterReconnect));
+            conn.DisconnectAsync(GameMesh.Network.DisconnectReason.Reconnect, System.Threading.CancellationToken.None)
+                .GetAwaiter().GetResult();
+            var afterDisconnect = new GameRequest { Move = new MoveReq() };
+            Assert.AreEqual(4UL, conn.AssignRequestSeq(afterDisconnect));
         }
 
         [Test]

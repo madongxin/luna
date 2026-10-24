@@ -55,6 +55,32 @@ namespace GameMesh.Network
         public RpcPipeMetrics PipeMetrics => _pending.Metrics;
 
         public event Action<GameResponse> PushReceived;
+        public event Action<GameResponse> LateResponse;
+        long _queueHeadMs;
+
+        public int SendQueueDepth => Volatile.Read(ref _queued);
+
+        public long OldestQueueAgeMs
+        {
+            get
+            {
+                var head = Interlocked.Read(ref _queueHeadMs);
+                if (head == 0)
+                    return 0;
+                var age = MonoMs() - head;
+                return age < 0 ? 0 : age;
+            }
+        }
+
+        public bool MoveBackpressured => SendQueueDepth >= 2 || OldestQueueAgeMs >= 400;
+        public int QueueWaitP95 => _pending.Metrics.QueueWaitMs.Percentile(95);
+        public int QueueWaitMax => _pending.Metrics.QueueWaitMs.Max;
+
+        static long MonoMs()
+        {
+            return System.Diagnostics.Stopwatch.GetTimestamp() * 1000L /
+                   System.Diagnostics.Stopwatch.Frequency;
+        }
         public event Action<ConnectionState> StateChanged;
 
         public GameConnection(IMainThreadDispatcher dispatcher)
@@ -188,21 +214,29 @@ namespace GameMesh.Network
                 throw new GameMeshException(GameMeshErrorCode.ClientQueueFull, "send queue full");
             }
 
+            var now = MonoMs();
+            slot.DeadlineAtMs = now + (long)timeout.TotalMilliseconds;
+            if (Interlocked.CompareExchange(ref _queueHeadMs, now, 0) != 0)
+            {
+            }
+
             _pending.NoteWriteRequested();
-            _sendQueue.Enqueue(new SendItem(frame, request.Seq, BodyName(request)));
+            _sendQueue.Enqueue(new SendItem(frame, slot, request.Seq, BodyName(request), now));
             _sendSignal.Release();
 
             var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(timeout);
             var registration = timeoutCts.Token.Register(() =>
             {
-                if (_pending.TryTimeout(slot, ct.IsCancellationRequested, out var frameWritten))
+                if (_pending.TryTimeout(slot, ct.IsCancellationRequested, out var phase))
                 {
                     var code = ct.IsCancellationRequested
                         ? GameMeshErrorCode.ClientCancelled
-                        : GameMeshErrorCode.ClientTimeout;
+                        : phase == RpcPendingTable.Slot.PhaseIdle
+                            ? GameMeshErrorCode.ClientQueueExpired
+                            : GameMeshErrorCode.ClientTimeout;
                     pending.TrySetException(new GameMeshException(
-                        code, $"seq={request.Seq} {code}", null, frameWritten));
+                        code, $"seq={request.Seq} {code}", null, phase));
                 }
             });
             tcs.Task.ContinueWith(_ =>
@@ -279,7 +313,8 @@ namespace GameMesh.Network
             }
 
             DrainSendQueue();
-            Interlocked.Exchange(ref _seq, 0);
+            // The server keeps the accepted GameRequest.seq across Reconnect.
+            // Zeroing it here made the next Move start at 1 and come back ERR_STALE_SEQ.
             SetState(ConnectionState.Disconnected);
             if (!Quiet)
                 GameMeshLog.Info($"disconnected reason={reason} lastSeq={LastClientSeq}");
@@ -315,23 +350,26 @@ namespace GameMesh.Network
                 while (!ct.IsCancellationRequested)
                 {
                     await _sendSignal.WaitAsync(ct).ConfigureAwait(false);
-                    while (_sendQueue.TryDequeue(out var item))
-                    {
-                        Interlocked.Decrement(ref _queued);
-                        if (!_pending.TryBeginWrite(generation, item.Seq))
-                        {
-                            _pending.NoteSkippedBeforeWrite();
-                            continue;
-                        }
+                    if (!_sendQueue.TryDequeue(out var item))
+                        continue;
+                    Interlocked.Decrement(ref _queued);
+                    NoteQueueHeadAfterDequeue();
+                    _pending.NoteDequeued();
+                    var now = MonoMs();
+                    _pending.Metrics.QueueWaitMs.Add((int)Math.Min(int.MaxValue, Math.Max(0, now - item.EnqueuedAtMs)));
+                    var decision = _pending.PrepareSend(item.Slot, now);
+                    if (decision != RpcPendingTable.SendDecision.Send)
+                        continue;
 
-                        var stream = _stream;
-                        if (stream == null)
-                            break;
-                        await WriteExactAsync(stream, item.Frame, ct).ConfigureAwait(false);
-                        _pending.NoteBytesSent();
-                        if (!Quiet)
-                            GameMeshLog.Debug($"send seq={item.Seq} type={item.Type}");
-                    }
+                    _pending.NoteWriteStarted();
+                    var stream = _stream;
+                    if (stream == null)
+                        break;
+                    await WriteExactAsync(stream, item.Frame, ct).ConfigureAwait(false);
+                    _pending.MarkWriteCompleted(item.Slot);
+                    _pending.NoteBytesSent();
+                    if (!Quiet)
+                        GameMeshLog.Debug($"send seq={item.Seq} type={item.Type}");
                 }
             }
             catch (OperationCanceledException)
@@ -361,6 +399,7 @@ namespace GameMesh.Network
                         return;
                     }
 
+                    _pending.NoteBytesReceived(n);
                     for (var i = 0; i < n; i++)
                         buffer.Add(read[i]);
 
@@ -406,6 +445,8 @@ namespace GameMesh.Network
 
         void DispatchResponse(GameResponse response, int generation)
         {
+            if (generation != _generation)
+                return;
             _pending.NoteFrameDecoded();
             if (response != null && response.Seq != 0 && response.BodyCase == GameResponse.BodyOneofCase.None)
                 _pending.NoteOpcodeUnknown();
@@ -422,7 +463,10 @@ namespace GameMesh.Network
                 generation, response.Seq, (int)response.BodyCase, response.Ok, out var slot);
             if (match != RpcPendingTable.Match.Completed)
             {
-                // Late, unmatched, and stale-generation replies are not AOI pushes.
+                // Late RPC replies are not AOI pushes. A late MoveRsp can still
+                // correct this connection's own pose; it is not a fresh success.
+                if (match == RpcPendingTable.Match.Late)
+                    LateResponse?.Invoke(response);
                 return;
             }
 
@@ -493,6 +537,21 @@ namespace GameMesh.Network
         {
             while (_sendQueue.TryDequeue(out _))
                 Interlocked.Decrement(ref _queued);
+            Interlocked.Exchange(ref _queueHeadMs, 0);
+        }
+
+        void NoteQueueHeadAfterDequeue()
+        {
+            if (Volatile.Read(ref _queued) <= 0)
+            {
+                Interlocked.Exchange(ref _queueHeadMs, 0);
+                return;
+            }
+
+            // Age must follow the frame still waiting. Leaving the old timestamp in
+            // place made every later move look older than 400ms, so the bot stopped.
+            if (_sendQueue.TryPeek(out var front))
+                Interlocked.Exchange(ref _queueHeadMs, front.EnqueuedAtMs);
         }
 
         void SetState(ConnectionState next)
@@ -571,14 +630,18 @@ namespace GameMesh.Network
         readonly struct SendItem
         {
             public readonly byte[] Frame;
+            public readonly RpcPendingTable.Slot Slot;
             public readonly ulong Seq;
             public readonly string Type;
+            public readonly long EnqueuedAtMs;
 
-            public SendItem(byte[] frame, ulong seq, string type)
+            public SendItem(byte[] frame, RpcPendingTable.Slot slot, ulong seq, string type, long enqueuedAtMs)
             {
                 Frame = frame;
+                Slot = slot;
                 Seq = seq;
                 Type = type;
+                EnqueuedAtMs = enqueuedAtMs;
             }
         }
     }

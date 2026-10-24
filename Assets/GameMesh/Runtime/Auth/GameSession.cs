@@ -146,6 +146,23 @@ namespace GameMesh.Auth
             HasGap = false;
         }
 
+        /// <summary>
+        /// A successful full snapshot's baseline_server_seq. Never moves the cursor backwards.
+        /// Clearing the gap stops the snapshot loop until a newer reliable server_seq skips.
+        /// </summary>
+        public void AdoptBaseline(ulong baseline)
+        {
+            if (baseline == 0)
+                return;
+            if (baseline > LastAppliedServerSeq)
+            {
+                _seen.Clear();
+                LastAppliedServerSeq = baseline;
+            }
+
+            HasGap = false;
+        }
+
         public void Reset(ulong lastServerSeq = 0)
         {
             _seen.Clear();

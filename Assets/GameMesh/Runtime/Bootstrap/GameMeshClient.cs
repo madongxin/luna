@@ -72,7 +72,6 @@ namespace GameMesh.Bootstrap
             _staleRouteInFlight ||
             Time.unscaledTime < _ignoreStaleMovesUntil ||
             (AppPaused && string.IsNullOrEmpty(LaunchArgs.AutoScenario)) ||
-            Push.HasGap ||
             Session.IsDead ||
             Session.SessionReplaced;
         public string SchemaHashShort =>
@@ -105,6 +104,17 @@ namespace GameMesh.Bootstrap
         bool _helloInFlight;
         bool _sessionLive;
         bool _snapshotInFlight;
+        int _aoiSnapshotBackoffMs = 1000;
+        float _nextAoiSnapshotAt;
+        bool _allowEmptySnapshotOnce;
+        const float AckIntervalSec = 1f;
+        const float SnapshotMinIntervalSec = 2f;
+        ulong _ackWanted;
+        ulong _ackSent;
+        bool _ackInFlight;
+        float _nextAckAt;
+        float _ackSuspendedUntil;
+        int _ackSuspendSec = 5;
         bool _linesQueryInFlight;
         float _nextQuietLinesQueryAt;
         bool _staleRouteInFlight;
@@ -309,6 +319,7 @@ namespace GameMesh.Bootstrap
                     : Friends.RefreshRequestsAsync(_lifetime.Token));
             }
 
+            PumpPushAck();
             RestoreMapPresence();
         }
 
@@ -469,6 +480,7 @@ namespace GameMesh.Bootstrap
                 _logoutRequested = false;
                 Reconnect.Reset();
                 Push.Reset(0);
+                ResetPushAck();
                 Aoi.LocalPlayerId = Session.PlayerId;
                 PersistIdentity();
                 ClearError();
@@ -1842,8 +1854,14 @@ namespace GameMesh.Bootstrap
                 if (nowMs <= _lastMoveClientTimeMs)
                     return false;
                 var dt = (nowMs - _lastMoveClientTimeMs) / 1000f;
-                var origin = _hasServerPos ? _serverPos : _lastMoveSent;
-                sent = MoveStepLimit.Clamp(origin, position, MoveStepLimit.MaxMeters(dt));
+                // The gateway applies this connection in receive order. A step measured
+                // from the last ack is still at the spawn while later frames are in flight,
+                // and the later frame then pulls authority back to that spawn.
+                sent = MoveStepLimit.Clamp(_lastMoveSent, position, MoveStepLimit.MaxMeters(dt));
+            }
+            else if (_hasServerPos)
+            {
+                sent = MoveStepLimit.Clamp(_serverPos, position, MoveStepLimit.MaxMeters(0.1f));
             }
 
             var req = new GameRequest
@@ -1865,7 +1883,7 @@ namespace GameMesh.Bootstrap
                 MoveSampler.MarkSent(sent, yaw, Time.unscaledTime);
                 var rsp = await pending.ConfigureAwait(true);
                 if (Alive)
-                    ApplyMoveRsp(rsp);
+                    ApplyMoveRsp(rsp, sent);
                 return GameErrorCatalog.MoveAccepted(rsp);
             }
             catch (Exception ex)
@@ -1897,12 +1915,12 @@ namespace GameMesh.Bootstrap
                 request.SessionToken = Session.Token;
             using (var linked = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, ct))
             {
-                var started = Time.realtimeSinceStartup;
+                var started = System.Diagnostics.Stopwatch.StartNew();
                 var rsp = await Connection.RequestAsync(
                     request,
                     TimeSpan.FromMilliseconds(RpcBudgetMs(timeout)),
                     linked.Token).ConfigureAwait(true);
-                LastRttMs = Mathf.Max(0, (int)((Time.realtimeSinceStartup - started) * 1000f));
+                LastRttMs = (int)started.ElapsedMilliseconds;
                 var code = ProtocolMapper.ExtractErrorCode(rsp);
                 var trace = ProtocolMapper.ShortTraceId(rsp);
                 GameMeshLog.Debug($"rsp seq={rsp.Seq} type={rsp.BodyCase} ok={rsp.Ok} code={code} rtt_ms={LastRttMs}");
@@ -1922,10 +1940,10 @@ namespace GameMesh.Bootstrap
                 else if (request.BodyCase == GameRequest.BodyOneofCase.PushAck &&
                          string.Equals(code, "ERR_AOI_RESYNC_REQUIRED", StringComparison.Ordinal))
                 {
-                    // The ack is not recovery. One background snapshot is requested; entities stay
-                    // until that snapshot is validated.
-                    SetError(code, rsp.Message, code, trace);
-                    _ = RequestWorldSnapshotAsync(background: true);
+                    // The server's replay window has a hole, but this client saw no gap: the view
+                    // is complete. A snapshot does not repair the server ack cursor, so asking for
+                    // one here loops. Back off acks instead; real gaps still snapshot from OnPush.
+                    NotePushAckRejected(request.PushAck.AckServerSeq);
                     return rsp;
                 }
                 else if (!rsp.Ok &&
@@ -2196,9 +2214,10 @@ namespace GameMesh.Bootstrap
                 var recon = rsp.Reconnect;
                 Session.ApplyReconnect(recon.SessionId, recon.Token, recon.Generation);
                 _sessionLive = true;
-                // Schema: ok && need_enter_map (or !on_map) → EnterMap before Move/Heartbeat.
-                // Do not trust a stale local MapInstanceId as InWorld.
-                var needEnterMap = recon.NeedEnterMap || !recon.OnMap;
+                ResetPushAck();
+                // Still on the map: do not EnterMap, and do not restart GameRequest.seq.
+                var stayOnMap = recon.OnMap && !recon.NeedEnterMap;
+                var needEnterMap = !stayOnMap && (recon.NeedEnterMap || !recon.OnMap);
                 if (needEnterMap)
                 {
                     _awaitEnterMapAfterReconnect = true;
@@ -2215,38 +2234,32 @@ namespace GameMesh.Bootstrap
                         Session.GameLogicInstanceId = recon.GamelogicInstanceId;
                 }
 
-                if (recon.NeedFullSnapshot)
+                if (stayOnMap && (recon.NeedFullSnapshot || recon.ReplayFromSeq == 0))
                 {
+                    // One snapshot on this connection. A failed snapshot retries here;
+                    // it must not close the socket and dial again.
                     AdoptResumedState(ConnectionState.Resyncing);
-                    if (!await RequestWorldSnapshotAsync().ConfigureAwait(true) && !IsOnMap)
+                    await RequestWorldSnapshotAsync().ConfigureAwait(true);
+                }
+                else if (stayOnMap && recon.ReplayFromSeq != 0)
+                {
+                    if (recon.ReplayFromSeq > Session.LastServerSeq)
                     {
-                        AdoptResumedState(ConnectionState.Authenticated);
-                        if (!_awaitEnterMapAfterReconnect)
-                            _awaitEnterMapAfterReconnect = true;
-                        await TryEnterWorldAfterLoginAsync().ConfigureAwait(true);
+                        Push.AdoptBaseline(recon.ReplayFromSeq);
+                        Session.LastServerSeq = Push.LastAppliedServerSeq;
                     }
+
+                    QueuePushAck(Session.LastServerSeq);
                 }
 
-                if (IsOnMap)
+                if (stayOnMap || IsOnMap)
                 {
                     _awaitEnterMapAfterReconnect = false;
                     AdoptResumedState(ConnectionState.InWorld);
-                    Connection.ResetRequestSeq();
                 }
-                else
+                else if (!needEnterMap)
                 {
                     AdoptResumedState(ConnectionState.Authenticated);
-                    if (!needEnterMap)
-                    {
-                        _awaitEnterMapAfterReconnect = true;
-                        await TryEnterWorldAfterLoginAsync().ConfigureAwait(true);
-                        if (IsOnMap)
-                        {
-                            _awaitEnterMapAfterReconnect = false;
-                            AdoptResumedState(ConnectionState.InWorld);
-                            Connection.ResetRequestSeq();
-                        }
-                    }
                 }
 
                 Reconnect.EndSuccess();
@@ -2302,7 +2315,22 @@ namespace GameMesh.Bootstrap
             return true;
         }
 
-        void ApplyMoveRsp(GameResponse rsp)
+        void RebaseMoveChain(Vector3 authority)
+        {
+            _lastMoveSent = authority;
+            _lastMoveClientTimeMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        }
+
+        static float HorizontalMeters(Vector3 a, Vector3 b)
+        {
+            var dx = a.x - b.x;
+            var dz = a.z - b.z;
+            return Mathf.Sqrt(dx * dx + dz * dz);
+        }
+
+        bool IsLatestSent(Vector3 sent) => HorizontalMeters(_lastMoveSent, sent) <= 0.05f;
+
+        void ApplyMoveRsp(GameResponse rsp, Vector3 sent)
         {
             var move = rsp?.Move;
             if (move == null)
@@ -2341,9 +2369,16 @@ namespace GameMesh.Bootstrap
                 }
 
                 RememberServerPresence(Session.MapTemplateId, Session.MapInstanceId, move.Position);
-                HasPendingCorrection = true;
-                PendingCorrection = authority;
-                PendingCorrectionYaw = move.Yaw;
+                // An echo of the point we sent must not drag the pawn back onto it.
+                // The body has already walked on past that sample. Only the newest
+                // sample, and only when the server rewrote its horizontal pose, corrects.
+                if (IsLatestSent(sent) && HorizontalMeters(authority, sent) > 0.75f)
+                {
+                    RebaseMoveChain(authority);
+                    HasPendingCorrection = true;
+                    PendingCorrection = authority;
+                    PendingCorrectionYaw = move.Yaw;
+                }
                 if (LastErrorCode == "ERR_OUT_OF_BOUNDS" || LastErrorCode == "ERR_UNWALKABLE")
                     ClearError();
                 if (!string.IsNullOrEmpty(LastNotice) && LastNotice.StartsWith("坐标超出"))
@@ -2393,8 +2428,11 @@ namespace GameMesh.Bootstrap
                     return;
                 }
 
-                if (haveBack)
+                if (haveBack && IsLatestSent(sent))
                 {
+                    _serverPos = back;
+                    _hasServerPos = true;
+                    RebaseMoveChain(back);
                     HasPendingCorrection = true;
                     PendingCorrection = back;
                     PendingCorrectionYaw = move.Yaw;
@@ -2484,7 +2522,9 @@ namespace GameMesh.Bootstrap
                     serverSeq = response.ServerPush.ServerSeq;
                     reliable = response.ServerPush.Reliable;
                     var messageType = response.ServerPush.MessageType ?? "";
-                    if (serverSeq == 0 || messageType == "map.lines.v1" ||
+                    // server_seq 0 is not a reliable cursor. An AOI MOVE with seq 0
+                    // must not open a gap or start a snapshot loop.
+                    if (!reliable || serverSeq == 0 || messageType == "map.lines.v1" ||
                         messageType == "friend.presence.v1")
                     {
                         GameResponse linePush;
@@ -2504,11 +2544,7 @@ namespace GameMesh.Bootstrap
 
                     var decision = Push.Observe(serverSeq);
                     if (decision == PushReliability.Decision.Duplicate)
-                    {
-                        if (reliable)
-                            _ = AckPushAsync(serverSeq);
                         return;
-                    }
 
                     GameResponse parsed;
                     try
@@ -2527,23 +2563,24 @@ namespace GameMesh.Bootstrap
                         GameMeshLog.Warn($"push gap expected={Push.ExpectedNext} got={serverSeq}");
                         if (!_gapCache.TryBuffer(serverSeq, parsed))
                         {
-                            SetError(GameMeshErrorCode.ClientProtocol, "push gap cache overflow");
-                            _ = Connection.DisconnectAsync(DisconnectReason.ProtocolError, CancellationToken.None);
-                            return;
+                            GameMeshLog.Warn("push gap cache overflow; snapshot on this tcp");
+                            _gapCache.Clear();
                         }
 
-                        // A foreground snapshot here stalled the player socket and, when the
-                        // reply was empty, replaced a live AOI table. Fill in the background.
-                        _ = RequestWorldSnapshotAsync(background: true);
+                        // Display only: the cursor stays at the hole until a snapshot, but remote
+                        // players keep moving. Draining the cache later re-applies in seq order.
+                        if (parsed.AoiDelta != null)
+                            ApplyInnerPush(parsed);
+                        // TCP is still up. Fill the hole here. Do not dial a second connection.
+                        ScheduleAoiSnapshot();
                         return;
                     }
 
                     ApplyInnerPush(parsed);
                     Push.MarkApplied(serverSeq);
                     Session.LastServerSeq = Push.LastAppliedServerSeq;
-                    if (reliable)
-                        _ = AckPushAsync(serverSeq);
                     DrainGapCache();
+                    QueuePushAck(Session.LastServerSeq);
                     return;
                 }
 
@@ -2615,11 +2652,52 @@ namespace GameMesh.Bootstrap
             }
         }
 
+        void QueuePushAck(ulong serverSeq)
+        {
+            if (serverSeq > _ackWanted)
+                _ackWanted = serverSeq;
+        }
+
+        // One ack in flight, at most once per AckIntervalSec, always the latest applied seq.
+        void PumpPushAck()
+        {
+            if (_ackInFlight || _ackWanted <= _ackSent || !HelloOk || Connection == null ||
+                !Connection.TransportOpen || !Session.HasIdentity)
+                return;
+            var now = Time.unscaledTime;
+            if (now < _nextAckAt || now < _ackSuspendedUntil)
+                return;
+            if (Connection.SendQueueDepth >= 2)
+                return;
+            _nextAckAt = now + AckIntervalSec;
+            _ = AckPushAsync(_ackWanted);
+        }
+
+        void ResetPushAck()
+        {
+            _ackWanted = 0;
+            _ackSent = 0;
+            _nextAckAt = 0f;
+            _ackSuspendedUntil = 0f;
+            _ackSuspendSec = 5;
+        }
+
+        void NotePushAckRejected(ulong serverSeq)
+        {
+            if (serverSeq > _ackSent)
+                _ackSent = serverSeq;
+            _ackSuspendedUntil = Time.unscaledTime + _ackSuspendSec;
+            GameMeshLog.Warn("push ack " + serverSeq + " ERR_AOI_RESYNC_REQUIRED; acks paused " +
+                             _ackSuspendSec + "s");
+            _ackSuspendSec = Math.Min(30, _ackSuspendSec * 2);
+        }
+
         async Task AckPushAsync(ulong serverSeq)
         {
+            _ackInFlight = true;
             try
             {
-                await RequestAsync(new GameRequest
+                var rsp = await RequestAsync(new GameRequest
                 {
                     PushAck = new PushAckReq
                     {
@@ -2630,10 +2708,20 @@ namespace GameMesh.Bootstrap
                         Generation = Session.Generation
                     }
                 }).ConfigureAwait(true);
+                if (rsp.Ok)
+                {
+                    if (serverSeq > _ackSent)
+                        _ackSent = serverSeq;
+                    _ackSuspendSec = 5;
+                }
             }
             catch (Exception ex)
             {
                 GameMeshLog.Warn("push ack failed " + ex.Message);
+            }
+            finally
+            {
+                _ackInFlight = false;
             }
         }
 
@@ -2728,8 +2816,60 @@ namespace GameMesh.Bootstrap
                 _ = Connection.DisconnectAsync(DisconnectReason.ClientRequest, CancellationToken.None);
         }
 
+        void ScheduleAoiSnapshot()
+        {
+            if (Connection == null || !Connection.TransportOpen)
+                return;
+            if (Time.unscaledTime < _nextAoiSnapshotAt)
+                return;
+            _ = RequestWorldSnapshotAsync(background: true);
+        }
+
+        void NoteAoiSnapshotFailed()
+        {
+            AoiResyncHealthy = false;
+            var waitSec = _aoiSnapshotBackoffMs / 1000f;
+            _nextAoiSnapshotAt = Time.unscaledTime + waitSec;
+            _aoiSnapshotBackoffMs = Math.Min(8000, _aoiSnapshotBackoffMs * 2);
+        }
+
+        void NoteAoiSnapshotRecovered()
+        {
+            _aoiSnapshotBackoffMs = 1000;
+            _nextAoiSnapshotAt = Time.unscaledTime + SnapshotMinIntervalSec;
+            AoiResyncHealthy = true;
+            QueuePushAck(Session.LastServerSeq);
+        }
+
+        static bool SnapshotNotRecovered(FullStateSnapshotRsp snap)
+        {
+            if (snap == null || !snap.Ok)
+                return true;
+            if (string.Equals(snap.ErrorCode, "ERR_AOI_RESYNC_REQUIRED", StringComparison.Ordinal))
+                return true;
+            if (string.Equals(snap.RecoveryReason, "NOT_READY", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(snap.RecoveryReason, "NOT_ON_MAP", StringComparison.OrdinalIgnoreCase))
+                return true;
+            var text = (snap.Message ?? "") + " " + (snap.RecoveryReason ?? "");
+            if (text.IndexOf("AOI interest not ready", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+            if (text.IndexOf("snapshot not on this owner", StringComparison.OrdinalIgnoreCase) >= 0)
+                return true;
+            return false;
+        }
+
+        // Load-test bots just logged out, so an empty AOI from the server is the truth.
+        public Task<bool> RequestSnapshotAfterBotsLeftAsync()
+        {
+            _allowEmptySnapshotOnce = true;
+            _nextAoiSnapshotAt = 0f;
+            return RequestWorldSnapshotAsync(background: true);
+        }
+
         public async Task<bool> RequestWorldSnapshotAsync(bool background = false)
         {
+            if (background && Time.unscaledTime < _nextAoiSnapshotAt)
+                return false;
             if (_snapshotInFlight)
             {
                 if (background)
@@ -2737,7 +2877,7 @@ namespace GameMesh.Bootstrap
                 var waitUntil = Time.unscaledTime + 8f;
                 while (_snapshotInFlight && Time.unscaledTime < waitUntil)
                     await Task.Yield();
-                return Session.MapInstanceId != 0 && Connection.State == ConnectionState.InWorld;
+                return Session.MapInstanceId != 0 && !Push.HasGap;
             }
             _snapshotInFlight = true;
             var connGen = Connection != null ? Connection.Generation : 0;
@@ -2768,13 +2908,20 @@ namespace GameMesh.Bootstrap
                      GameErrorCatalog.IsNotOnMap(snap.ErrorCode)))
                 {
                     WriteLiveEnter("SNAPSHOT NOT_ON_MAP");
-                    if (Connection.State == ConnectionState.Resyncing)
+                    NoteAoiSnapshotFailed();
+                    if (Connection.State == ConnectionState.Resyncing && Session.MapInstanceId != 0)
+                        Connection.SetLogicalState(ConnectionState.InWorld);
+                    else if (Connection.State == ConnectionState.Resyncing)
                         Connection.SetLogicalState(ConnectionState.Authenticated);
                     return false;
                 }
 
                 if (snap == null || !ApplyValidatedSnapshot(snap, keepExistingOnEmpty: background))
+                {
+                    NoteAoiSnapshotFailed();
                     return false;
+                }
+
                 return true;
             }
             catch (Exception ex)
@@ -2804,19 +2951,32 @@ namespace GameMesh.Bootstrap
 
         bool ApplyValidatedSnapshot(FullStateSnapshotRsp snap, bool keepExistingOnEmpty = false)
         {
+            if (SnapshotNotRecovered(snap))
+            {
+                AoiResyncHealthy = false;
+                GameMeshLog.Warn("snapshot not recovered code=" + (snap != null ? snap.ErrorCode : "") +
+                                 " reason=" + (snap != null ? snap.RecoveryReason ?? "" : "") +
+                                 " msg=" + (snap != null ? snap.Message ?? "" : ""));
+                if (Connection != null && Connection.State == ConnectionState.Resyncing &&
+                    Session.MapInstanceId != 0)
+                    Connection.SetLogicalState(ConnectionState.InWorld);
+                return false;
+            }
+
             if (Mail != null)
                 Mail.ObserveBag(snap);
             if (!WorldSnapshotApplier.TryBuild(snap, Session.PlayerId, Session.MapInstanceId,
                     Session.SnapshotVersion, out var model, out var code, out var message))
             {
-                SetError(code, message, code);
+                AoiResyncHealthy = false;
+                GameMeshLog.Warn("snapshot rejected " + code + " " + message);
                 return false;
             }
 
             if (!WorldSnapshotApplier.AcceptsEpoch(Session.OwnerEpoch, snap.OwnerEpoch))
             {
                 AoiResyncHealthy = false;
-                SetError("ERR_AOI_RESYNC_REQUIRED", "snapshot epoch went backwards", "ERR_AOI_RESYNC_REQUIRED");
+                GameMeshLog.Warn("snapshot epoch went backwards");
                 return false;
             }
 
@@ -2827,17 +2987,12 @@ namespace GameMesh.Bootstrap
             LastSnapshotWireEntities = wire;
             LastSnapshotParsedEntities = parsed;
             LastSnapshotKeptRemotes = existing;
+            var allowEmpty = _allowEmptySnapshotOnce;
+            _allowEmptySnapshotOnce = false;
             var replace = WorldSnapshotApplier.ShouldReplaceEntities(
-                existing, parsed, true, model.RecoveryReason);
+                allowEmpty ? 0 : existing, parsed, true, model.RecoveryReason);
             if (!replace)
             {
-                if (model.Self != null)
-                {
-                    HasPendingSpawn = true;
-                    PendingSpawn = new Vector3(model.Self.X, model.Self.Y, model.Self.Z);
-                    PendingSpawnYaw = model.Self.Yaw;
-                }
-
                 AoiResyncHealthy = false;
                 if (Connection != null && Connection.State == ConnectionState.Resyncing &&
                     Session.MapInstanceId != 0)
@@ -2845,20 +3000,15 @@ namespace GameMesh.Bootstrap
                 GameMeshLog.Warn(
                     "snapshot not recovered wire=" + wire + " parsed=" + parsed +
                     " aoi=" + Aoi.Entities.Count + " reason=" + (model.RecoveryReason ?? ""));
-                return true;
+                return false;
             }
 
             WorldSnapshotApplier.Apply(Session, Aoi, Push, _gapCache, model);
             RememberServerPresence(Session.MapTemplateId, Session.MapInstanceId,
                 model.Self != null ? new Vec3 { X = model.Self.X, Y = model.Self.Y, Z = model.Self.Z } : null);
-            if (model.Self != null)
-            {
-                HasPendingSpawn = true;
-                PendingSpawn = new Vector3(model.Self.X, model.Self.Y, model.Self.Z);
-                PendingSpawnYaw = model.Self.Yaw;
-            }
 
             DrainGapCache();
+            NoteAoiSnapshotRecovered();
             if (Session.MapInstanceId != 0)
             {
                 AoiResyncHealthy = true;

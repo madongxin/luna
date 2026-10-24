@@ -129,6 +129,7 @@ namespace GameMesh.Network
         public const string ClientNotConnected = "CLIENT_NOT_CONNECTED";
         public const string ClientIllegalState = "CLIENT_ILLEGAL_STATE";
         public const string ClientTimeout = "CLIENT_TIMEOUT";
+        public const string ClientQueueExpired = "CLIENT_QUEUE_EXPIRED";
         public const string ClientCancelled = "CLIENT_CANCELLED";
         public const string ClientProtocol = "CLIENT_PROTOCOL";
         public const string ClientQueueFull = "CLIENT_QUEUE_FULL";
@@ -155,13 +156,14 @@ namespace GameMesh.Network
     public sealed class GameMeshException : Exception
     {
         public string ErrorCode { get; }
-        public bool FrameWritten { get; }
+        public int WritePhase { get; }
+        public bool FrameWritten => WritePhase > 0;
 
-        public GameMeshException(string errorCode, string message, Exception inner = null, bool frameWritten = false)
+        public GameMeshException(string errorCode, string message, Exception inner = null, int writePhase = 0)
             : base(message, inner)
         {
             ErrorCode = errorCode ?? GameMeshErrorCode.ServerError;
-            FrameWritten = frameWritten;
+            WritePhase = writePhase;
         }
     }
 }

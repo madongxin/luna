@@ -326,6 +326,68 @@ namespace GameMesh.Tests.EditMode
             Assert.AreEqual(200, MoveStepLimit.VisibleOthers);
         }
 
+        [Test]
+        public void OutAndBack_WalksFiftyMetersThenReturnsHome()
+        {
+            var settings = Settings();
+            var spawn = new Vector3(10f, 3f, -4f);
+            var left = new BotMovementPlanner(BotMovementProfile.Idle, 5, settings, spawn);
+            var right = new BotMovementPlanner(BotMovementProfile.Idle, 6, settings, spawn);
+            var same = new BotMovementPlanner(BotMovementProfile.Idle, 5, settings, spawn);
+            var leftTarget = left.NextOutAndBack(spawn, 50f);
+            var rightTarget = right.NextOutAndBack(spawn, 50f);
+            var sameTarget = same.NextOutAndBack(spawn, 50f);
+            Assert.AreEqual(50f, Flat(spawn, leftTarget.Position), 0.05f);
+            Assert.AreEqual(50f, Flat(spawn, rightTarget.Position), 0.05f);
+            Assert.AreEqual(leftTarget.Position, sameTarget.Position);
+            Assert.Greater(Flat(leftTarget.Position, rightTarget.Position), 1f);
+            Assert.AreEqual(3f, leftTarget.Position.y, 0.001f);
+
+            var walker = new BotMovementPlanner(BotMovementProfile.Idle, 5, settings, spawn);
+            var pos = spawn;
+            var returned = false;
+            for (var i = 0; i < 80; i++)
+            {
+                var plan = walker.NextOutAndBack(pos, 1.1f);
+                Assert.IsTrue(plan.Send);
+                Assert.AreEqual(3f, plan.Position.y, 0.001f);
+                Assert.LessOrEqual(Flat(pos, plan.Position), 1.12f);
+                if (plan.Reason == "return")
+                {
+                    Assert.GreaterOrEqual(Flat(pos, spawn), 49f);
+                    returned = true;
+                    pos = plan.Position;
+                    break;
+                }
+
+                Assert.AreEqual("outbound", plan.Reason);
+                Assert.Greater(Flat(plan.Position, spawn), Flat(pos, spawn));
+                pos = plan.Position;
+            }
+
+            Assert.IsTrue(returned);
+            var home = walker.NextOutAndBack(leftTarget.Position, 50f);
+            Assert.AreEqual("return", home.Reason);
+            Assert.LessOrEqual(Flat(home.Position, spawn), 0.05f);
+            var nextLeg = walker.NextOutAndBack(home.Position, 1.1f);
+            Assert.AreEqual("outbound", nextLeg.Reason);
+            Assert.Greater(Flat(nextLeg.Position, spawn), 0.5f);
+
+            var rejected = new BotMovementPlanner(BotMovementProfile.Idle, 5, settings, spawn);
+            var target = rejected.NextOutAndBack(spawn, 50f);
+            rejected.NoteRejected();
+            var turned = rejected.NextOutAndBack(target.Position, 5f);
+            Assert.AreEqual("outbound", turned.Reason);
+            Assert.Greater(Flat(turned.Position, target.Position), 0.02f);
+        }
+
+        static float Flat(Vector3 a, Vector3 b)
+        {
+            var dx = a.x - b.x;
+            var dz = a.z - b.z;
+            return Mathf.Sqrt(dx * dx + dz * dz);
+        }
+
         static void AssertNear(int actual, double expected, double slack)
         {
             Assert.LessOrEqual(System.Math.Abs(actual - expected), slack);

@@ -152,7 +152,18 @@ namespace GameMesh.Tests.EditMode
             WorldSnapshotApplier.Apply(session, world, push, new PushGapCache(), model);
             Assert.AreEqual(80f, session.Attributes.Hp);
             Assert.AreEqual(40ul, session.LastServerSeq);
+            Assert.AreEqual(40ul, push.LastAppliedServerSeq);
             Assert.AreEqual(3u, session.SnapshotVersion);
+            push.MarkApplied(50);
+            session.LastServerSeq = 50;
+            model.BaselineServerSeq = 30;
+            WorldSnapshotApplier.Apply(session, world, push, new PushGapCache(), model);
+            Assert.AreEqual(50ul, session.LastServerSeq);
+            Assert.AreEqual(50ul, push.LastAppliedServerSeq);
+            model.BaselineServerSeq = 80;
+            WorldSnapshotApplier.Apply(session, world, push, new PushGapCache(), model);
+            Assert.AreEqual(80ul, session.LastServerSeq);
+            Assert.IsFalse(push.HasGap);
             Assert.AreEqual(1, world.Entities.Count);
             Assert.IsTrue(world.Entities.ContainsKey(3));
         }

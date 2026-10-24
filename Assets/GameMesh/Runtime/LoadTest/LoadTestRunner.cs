@@ -102,10 +102,27 @@ namespace GameMesh.LoadTest
         int _gc1;
         int _gc2;
         bool _rateReady;
+        long _rateRxBytes;
+        long _rateRxFrames;
+        float _rateAt;
+        public float MaxRxMbps { get; private set; }
         public string GatewayRateText { get; private set; } = "网关每秒 尚无采样";
         public int MaxFrameMs { get; private set; }
         public int MaxDispatcherBacklog { get; private set; }
         public int MaxReadLoopLagMs { get; private set; }
+
+        public long PipeWriteCompleted()
+        {
+            long n = 0;
+            for (var i = 0; i < _bots.Count; i++)
+            {
+                var pipe = _bots[i] != null ? _bots[i].PipeMetrics : null;
+                if (pipe != null)
+                    n += pipe.WriteCompleted;
+            }
+
+            return n;
+        }
 
         public string GatewayRateLine()
         {
@@ -137,7 +154,6 @@ namespace GameMesh.LoadTest
             if (InWorldCount > 0 && Time.unscaledTime >= _nextLineRefresh)
             {
                 _nextLineRefresh = Time.unscaledTime + 5f;
-                var live = GameMeshClient.Instance;
                 if (live != null && live.Session != null && live.Session.HasIdentity)
                     _ = live.QueryMapLinesAsync(true);
             }
@@ -574,10 +590,10 @@ namespace GameMesh.LoadTest
                 var binder = client.GetComponent<GameMeshWorldBinder>();
                 if (binder != null)
                     binder.PurgeAllRemoteViews("loadtest-logout");
-                if (client.IsOnMap && client.LastRttMs < 1000)
+                if (client.IsOnMap)
                 {
                     _ = client.QueryMapLinesAsync(true);
-                    _ = client.RequestWorldSnapshotAsync(background: true);
+                    _ = client.RequestSnapshotAfterBotsLeftAsync();
                 }
             }
             catch (Exception ex)
@@ -766,6 +782,8 @@ namespace GameMesh.LoadTest
             long matched = 0;
             long timeout = 0;
             long lag = 0;
+            long rxBytes = 0;
+            long rxFrames = 0;
             var ports = new Dictionary<int, int>();
             for (var i = 0; i < _bots.Count; i++)
             {
@@ -779,6 +797,8 @@ namespace GameMesh.LoadTest
                     written += pipe.BytesSent;
                     matched += pipe.PendingHit;
                     timeout += pipe.Timeout;
+                    rxBytes += Interlocked.Read(ref pipe.BytesReceived);
+                    rxFrames += Interlocked.Read(ref pipe.FramesDecoded);
                     if (pipe.ReadLoopLagMs > lag)
                         lag = pipe.ReadLoopLagMs;
                 }
@@ -808,10 +828,23 @@ namespace GameMesh.LoadTest
                 _rateWritten = written;
                 _rateMatched = matched;
                 _rateTimeout = timeout;
+                _rateRxBytes = rxBytes;
+                _rateRxFrames = rxFrames;
+                _rateAt = Time.unscaledTime;
                 _rateReady = true;
                 GatewayRateText = "网关每秒 采样中";
                 return;
             }
+
+            var elapsed = Mathf.Max(0.001f, Time.unscaledTime - _rateAt);
+            var rxKBps = (rxBytes - _rateRxBytes) / 1024f / elapsed;
+            var rxFps = (rxFrames - _rateRxFrames) / elapsed;
+            var rxMbps = rxKBps * 8f * 1024f / 1000000f;
+            _rateRxBytes = rxBytes;
+            _rateRxFrames = rxFrames;
+            _rateAt = Time.unscaledTime;
+            if (rxMbps > MaxRxMbps)
+                MaxRxMbps = rxMbps;
 
             _gc0 = gc0;
             _gc1 = gc1;
@@ -825,6 +858,8 @@ namespace GameMesh.LoadTest
                 "  匹配 " + (matched - _rateMatched) +
                 "  晚到 " + (late - _rateLate) +
                 "  超时 " + (timeout - _rateTimeout) +
+                "    下行 " + rxKBps.ToString("F0") + "KB/s (" + rxMbps.ToString("F1") + "Mbps 峰值 " +
+                MaxRxMbps.ToString("F1") + ") 帧 " + rxFps.ToString("F0") + "/s" +
                 "    GC " + d0 + "/" + d1 + "/" + d2 +
                 (parts.Count > 0 ? "    " + string.Join(" ", parts.ToArray()) : "");
             _rateLate = late;

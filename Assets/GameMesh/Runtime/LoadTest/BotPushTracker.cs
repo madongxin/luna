@@ -117,7 +117,8 @@ namespace GameMesh.LoadTest
                 MapInstanceId = snap.MapInstanceId;
             if (snap.OwnerEpoch != 0)
                 OwnerEpoch = snap.OwnerEpoch;
-            LastAppliedServerSeq = snap.BaselineServerSeq;
+            if (snap.BaselineServerSeq > LastAppliedServerSeq)
+                LastAppliedServerSeq = snap.BaselineServerSeq;
             HasGap = false;
             Healthy = true;
             return true;

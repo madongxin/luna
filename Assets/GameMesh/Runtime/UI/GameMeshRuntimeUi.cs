@@ -474,8 +474,8 @@ namespace GameMesh.UI
                 MoveStepLimit.VisibleOthers + " 人，自己不算。",
                 _hint);
             GUILayout.Label(
-                "移动只在出生点周围 " + runner.Movement.SafeRadius.ToString("0") +
-                "m 内。Hz 只决定多久发一次，服务器不按 2/5/10Hz 拒包。一步不超过 10 米/秒乘 client_time_ms 的间隔。权威确认只表示坐标已提交，别人大约每 " +
+                "每个机器人从出生点走向随机方向 " + runner.Movement.OutboundMeters.ToString("0") +
+                "m 的目标，到达后走回出生点，再换一个方向。Hz 只决定多久发一次，服务器不按 2/5/10Hz 拒包。一步不超过 10 米/秒乘 client_time_ms 的间隔。权威确认只表示坐标已提交，别人大约每 " +
                 MoveStepLimit.AoiMergeMs + "ms 合并一次位置。8081/8083 各一半。",
                 _hint);
             _loadCount = Field("登录人数", _loadCount);
@@ -524,12 +524,13 @@ namespace GameMesh.UI
             GUILayout.Label(
                 "移动  计划 " + move.Planned +
                 "  入队 " + move.QueueAccepted +
-                "  写出 " + move.WriteCompleted +
+                "  写出完成 " + runner.PipeWriteCompleted() +
                 "  匹配 " + move.RspMatched +
                 "  权威确认 " + move.AckOk +
                 "  拒绝 " + move.Rejected +
+                "  写出前过期 " + move.ExpiredBeforeWrite +
+                "  写出后未知 " + move.UnknownOutcome +
                 "  超时 " + move.Timeout +
-                "  写出前超时 " + move.TimeoutBeforeWrite +
                 "  忙跳过 " + move.SkippedBusy +
                 "  未就绪 " + move.SkippedNotReady +
                 "  过载 " + move.Overloaded,

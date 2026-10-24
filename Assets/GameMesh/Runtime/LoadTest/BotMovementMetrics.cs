@@ -13,6 +13,8 @@ namespace GameMesh.LoadTest
         public int RspMatched;
         public int LateRsp;
         public int TimeoutBeforeWrite;
+        public int ExpiredBeforeWrite;
+        public int UnknownOutcome;
         public int Cancelled;
         public int AckOk;
         public int Rejected;
@@ -128,6 +130,8 @@ namespace GameMesh.LoadTest
             RspMatched += other.RspMatched;
             LateRsp += other.LateRsp;
             TimeoutBeforeWrite += other.TimeoutBeforeWrite;
+            ExpiredBeforeWrite += other.ExpiredBeforeWrite;
+            UnknownOutcome += other.UnknownOutcome;
             Cancelled += other.Cancelled;
             AckOk += other.AckOk;
             Rejected += other.Rejected;
@@ -161,6 +165,8 @@ namespace GameMesh.LoadTest
             sb.Append("  \"rsp_matched\": ").Append(RspMatched).Append(",\n");
             sb.Append("  \"late_rsp\": ").Append(LateRsp).Append(",\n");
             sb.Append("  \"timeout_before_write\": ").Append(TimeoutBeforeWrite).Append(",\n");
+            sb.Append("  \"expired_before_write\": ").Append(ExpiredBeforeWrite).Append(",\n");
+            sb.Append("  \"unknown_after_write\": ").Append(UnknownOutcome).Append(",\n");
             sb.Append("  \"cancel\": ").Append(Cancelled).Append(",\n");
             sb.Append("  \"move_ack_ok\": ").Append(AckOk).Append(",\n");
             sb.Append("  \"move_rejected\": ").Append(Rejected).Append(",\n");

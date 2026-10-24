@@ -134,7 +134,18 @@ namespace GameMesh.Aoi
             {
                 if (delta.Entity.StateSeq != 0 && existing.StateSeq != 0 && delta.Entity.StateSeq <= existing.StateSeq)
                     return false;
+                // A MOVE may omit name/hp/max_hp to save bandwidth; keep what ENTER gave us.
+                var name = existing.Name;
+                var hp = existing.Hp;
+                var maxHp = existing.MaxHp;
                 Copy(delta.Entity, existing, delta.ServerTimeMs);
+                if (string.IsNullOrEmpty(existing.Name))
+                    existing.Name = name;
+                if (delta.Entity.Hp == 0 && delta.Entity.MaxHp == 0)
+                {
+                    existing.Hp = hp;
+                    existing.MaxHp = maxHp;
+                }
                 existing.LastLocalMs = LocalNowMs;
                 return true;
             }
