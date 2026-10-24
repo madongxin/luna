@@ -616,6 +616,14 @@ namespace GameMesh.Player
         float _targetYaw;
         float _delay;
         long _lastServerTimeMs;
+        double _clockOffset = double.NaN;
+        float _lateSec;
+        float _gapSec;
+        float _lastSampleTime;
+        ulong _lastSampleSeq;
+        string _labelName;
+        float _labelHp = -1f;
+        float _labelMaxHp = -1f;
         TextMesh _label;
         Animator _anim;
         int _speedId;
@@ -814,8 +822,8 @@ namespace GameMesh.Player
         public void Apply(RemoteEntityState state)
         {
             CancelFade();
-            // Order by server clock when present; timeline for playback stays on local receive time
-            // so we never mix two clocks (that rubber-bands and looks like twitching).
+            // Order by server clock when present. Playback uses one local timeline; server times are
+            // mapped onto it with a single offset (SampleTime), never mixed raw.
             if (state.ServerTimeMs != 0 && _lastServerTimeMs != 0 &&
                 state.ServerTimeMs + 5 < _lastServerTimeMs)
                 return;
@@ -827,16 +835,17 @@ namespace GameMesh.Player
             var err = Vector3.Distance(new Vector3(transform.position.x, 0f, transform.position.z),
                 new Vector3(next.x, 0f, next.z));
             var now = Time.unscaledTime;
+            var sampleTime = SampleTime(state, now);
             var accepted = false;
             if (err > 30f)
             {
                 transform.position = next;
                 _velocity = Vector3.zero;
-                _poses.Snap(next.x, next.y, next.z, state.Yaw, now, state.StateSeq);
+                _poses.Snap(next.x, next.y, next.z, state.Yaw, sampleTime, state.StateSeq);
                 accepted = true;
             }
             else
-                accepted = _poses.Push(next.x, next.y, next.z, state.Yaw, now, state.StateSeq);
+                accepted = _poses.Push(next.x, next.y, next.z, state.Yaw, sampleTime, state.StateSeq);
 
             // Only move the follow target when a new sample is accepted; SyncRemotes runs every frame.
             if (accepted)
@@ -845,8 +854,51 @@ namespace GameMesh.Player
                 _targetYaw = state.Yaw;
             }
 
-            if (_label != null)
+            if (_label != null && (state.Name != _labelName || state.Hp != _labelHp || state.MaxHp != _labelMaxHp))
+            {
+                _labelName = state.Name;
+                _labelHp = state.Hp;
+                _labelMaxHp = state.MaxHp;
                 _label.text = $"{state.Name} {state.Hp:0}/{state.MaxHp:0}";
+            }
+        }
+
+        // Places a sample on the local timeline by its server move time, so watcher-side
+        // throttling and bursty delivery do not change the apparent walking speed.
+        float SampleTime(RemoteEntityState state, float now)
+        {
+            if (state.StateSeq != 0 && state.StateSeq <= _lastSampleSeq)
+                return _lastSampleTime;
+            var t = now;
+            if (state.ServerTimeMs > 0)
+            {
+                var serverSec = state.ServerTimeMs / 1000.0;
+                var offset = now - serverSec;
+                if (double.IsNaN(_clockOffset) || offset < _clockOffset)
+                    _clockOffset = offset;
+                else
+                    _clockOffset += System.Math.Min(offset - _clockOffset, 0.002);
+                t = Mathf.Min(now, (float)(serverSec + _clockOffset));
+            }
+
+            if (_lastSampleSeq != 0 || _lastSampleTime > 0f)
+            {
+                if (t <= _lastSampleTime)
+                    t = _lastSampleTime + 0.001f;
+                _gapSec = Mathf.Max(_gapSec * 0.97f, Mathf.Min(1.5f, t - _lastSampleTime));
+            }
+
+            _lateSec = Mathf.Max(_lateSec * 0.97f, now - t);
+            _lastSampleTime = t;
+            _lastSampleSeq = state.StateSeq;
+            return t;
+        }
+
+        // Interpolation needs the next sample before playback reaches the current one:
+        // delay >= update gap + delivery lateness.
+        float PlaybackDelay()
+        {
+            return Mathf.Clamp(_gapSec + _lateSec + 0.05f, _delay, 1.2f);
         }
 
         void SetVisualAlpha(float alpha)
@@ -879,7 +931,7 @@ namespace GameMesh.Player
             }
 
             var pos = transform.position;
-            if (_poses.TrySample(Time.unscaledTime, _delay, out var sx, out var sy, out var sz, out var syaw))
+            if (_poses.TrySample(Time.unscaledTime, PlaybackDelay(), out var sx, out var sy, out var sz, out var syaw))
             {
                 _target = new Vector3(sx, sy, sz);
                 _targetYaw = syaw;
@@ -906,7 +958,12 @@ namespace GameMesh.Player
             transform.position = next;
             if (planar > 0.03f || _velocity.sqrMagnitude > 0.01f)
             {
-                var look = Quaternion.Euler(0f, _targetYaw, 0f);
+                // Same rule as the local third-person controller: a walking body faces where it walks.
+                var flat = new Vector3(_velocity.x, 0f, _velocity.z);
+                var faceYaw = flat.sqrMagnitude > 0.25f
+                    ? Mathf.Atan2(flat.x, flat.z) * Mathf.Rad2Deg
+                    : _targetYaw;
+                var look = Quaternion.Euler(0f, faceYaw, 0f);
                 transform.rotation = Quaternion.Slerp(transform.rotation, look,
                     1f - Mathf.Exp(-Time.deltaTime * 8f));
             }

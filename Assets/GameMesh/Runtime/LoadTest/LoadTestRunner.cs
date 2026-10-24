@@ -12,6 +12,79 @@ using UnityEngine;
 
 namespace GameMesh.LoadTest
 {
+    /// <summary>
+    /// Client-side stall meter. A dedicated thread that oversleeps means the whole process
+    /// stopped (GC or CPU); a slow pool probe means callbacks wait for a pool thread.
+    /// Either one delays every bot RPC regardless of server speed.
+    /// </summary>
+    static class ProcessStallProbe
+    {
+        const int TickMs = 20;
+        static Thread _thread;
+        static long _stallMax;
+        static long _poolMax;
+        static long _poolQueuedAt;
+
+        public static void EnsureStarted()
+        {
+            if (_thread != null)
+                return;
+            _thread = new Thread(Run) { IsBackground = true, Name = "GameMesh stall probe" };
+            _thread.Start();
+        }
+
+        public static void TakeWindow(out long stallMs, out long poolMs)
+        {
+            stallMs = Interlocked.Exchange(ref _stallMax, 0);
+            poolMs = Interlocked.Exchange(ref _poolMax, 0);
+            var queuedAt = Interlocked.Read(ref _poolQueuedAt);
+            if (queuedAt != 0)
+            {
+                var waiting = System.Diagnostics.Stopwatch.GetTimestamp() - queuedAt;
+                var ms = waiting * 1000L / System.Diagnostics.Stopwatch.Frequency;
+                if (ms > poolMs)
+                    poolMs = ms;
+            }
+        }
+
+        static void Run()
+        {
+            var clock = System.Diagnostics.Stopwatch.StartNew();
+            var nextPoolProbe = 0L;
+            while (true)
+            {
+                var before = clock.ElapsedMilliseconds;
+                Thread.Sleep(TickMs);
+                var over = clock.ElapsedMilliseconds - before - TickMs;
+                Raise(ref _stallMax, over);
+                var now = clock.ElapsedMilliseconds;
+                if (now >= nextPoolProbe && Interlocked.Read(ref _poolQueuedAt) == 0)
+                {
+                    nextPoolProbe = now + 200;
+                    Interlocked.Exchange(ref _poolQueuedAt, System.Diagnostics.Stopwatch.GetTimestamp());
+                    ThreadPool.QueueUserWorkItem(_ =>
+                    {
+                        var queuedAt = Interlocked.Exchange(ref _poolQueuedAt, 0);
+                        if (queuedAt == 0)
+                            return;
+                        var waited = System.Diagnostics.Stopwatch.GetTimestamp() - queuedAt;
+                        Raise(ref _poolMax, waited * 1000L / System.Diagnostics.Stopwatch.Frequency);
+                    });
+                }
+            }
+        }
+
+        static void Raise(ref long slot, long value)
+        {
+            long cur;
+            while (value > (cur = Interlocked.Read(ref slot)))
+            {
+                if (Interlocked.CompareExchange(ref slot, value, cur) == cur)
+                    return;
+            }
+        }
+    }
+
     public sealed class GameMeshLoadTestRunner : MonoBehaviour
     {
         public static GameMeshLoadTestRunner Instance { get; private set; }
@@ -73,6 +146,7 @@ namespace GameMesh.LoadTest
         void Awake()
         {
             Instance = this;
+            ProcessStallProbe.EnsureStarted();
         }
 
         void AbortSweep()
@@ -106,6 +180,9 @@ namespace GameMesh.LoadTest
         long _rateRxFrames;
         float _rateAt;
         public float MaxRxMbps { get; private set; }
+        public int MaxStallMs { get; private set; }
+        public int MaxPoolDelayMs { get; private set; }
+        public string StallText { get; private set; } = "";
         public string GatewayRateText { get; private set; } = "网关每秒 尚无采样";
         public int MaxFrameMs { get; private set; }
         public int MaxDispatcherBacklog { get; private set; }
@@ -129,7 +206,8 @@ namespace GameMesh.LoadTest
             return GatewayRateText +
                    "    帧峰值 " + MaxFrameMs + "ms" +
                    "    主线程队列 " + MaxDispatcherBacklog +
-                   "    读循环峰值 " + MaxReadLoopLagMs + "ms";
+                   "    读循环峰值 " + MaxReadLoopLagMs + "ms" +
+                   (string.IsNullOrEmpty(StallText) ? "" : "\n" + StallText);
         }
 
         void Update()
@@ -845,6 +923,17 @@ namespace GameMesh.LoadTest
             _rateAt = Time.unscaledTime;
             if (rxMbps > MaxRxMbps)
                 MaxRxMbps = rxMbps;
+            ProcessStallProbe.TakeWindow(out var stallMs, out var poolMs);
+            if (stallMs > MaxStallMs)
+                MaxStallMs = (int)stallMs;
+            if (poolMs > MaxPoolDelayMs)
+                MaxPoolDelayMs = (int)poolMs;
+            int poolWorkers, poolIo, poolMaxWorkers, poolMaxIo;
+            ThreadPool.GetAvailableThreads(out poolWorkers, out poolIo);
+            ThreadPool.GetMaxThreads(out poolMaxWorkers, out poolMaxIo);
+            StallText = "进程停顿 " + stallMs + "ms(峰值 " + MaxStallMs + ")  线程池排队 " + poolMs +
+                        "ms(峰值 " + MaxPoolDelayMs + ")  池占用 " + (poolMaxWorkers - poolWorkers) + "/" +
+                        (poolMaxIo - poolIo);
 
             _gc0 = gc0;
             _gc1 = gc1;
