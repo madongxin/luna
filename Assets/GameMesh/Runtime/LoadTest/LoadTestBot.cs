@@ -44,8 +44,10 @@ namespace GameMesh.LoadTest
         ulong _authorityStateSeq;
         int _poseUncertain;
         int _authorityBusy;
+        int _moveRecoveryBusy;
         long _moveHoldUntilMs;
         long _nextAuthorityAtMs;
+        Vector3 _uncertainTarget;
         static readonly SemaphoreSlim AuthorityGate = new SemaphoreSlim(8, 8);
         static int _lineRefreshTick;
         static string _cachedClientVersion = "luna";
@@ -1038,19 +1040,38 @@ namespace GameMesh.LoadTest
             Task inflight = Task.CompletedTask;
             while (!_stopMoves && !ct.IsCancellationRequested && gen == _loopGen)
             {
+                var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                if (PoseUncertain && nowMs >= Interlocked.Read(ref _nextAuthorityAtMs))
+                {
+                    // Never switch a timed-out Move to full snapshots. Under pressure snapshots
+                    // are larger and were timing out too, leaving the bot permanently frozen.
+                    // Repeating the exact target is idempotent and stays on the priority MoveRsp path.
+                    if (Volatile.Read(ref _moveRecoveryBusy) == 0)
+                        _ = RetryUnknownMoveAsync(planner, _clock, ct);
+                }
                 var queueBlocked = _conn.MoveBackpressured;
-                var ready = InWorld && Volatile.Read(ref _resumeBusy) == 0 &&
-                            !queueBlocked &&
-                            _conn.State == ConnectionState.InWorld && _mapInstanceId != 0;
+                var sessionReady = InWorld && Volatile.Read(ref _resumeBusy) == 0 &&
+                                   _conn.State == ConnectionState.InWorld && _mapInstanceId != 0;
+                var poseReady = !PoseUncertain;
+                var holdReady = nowMs >= Interlocked.Read(ref _moveHoldUntilMs);
+                var ready = sessionReady && poseReady && holdReady && !queueBlocked;
                 var tick = _clock.Evaluate(ready, inflight.IsCompleted ? 0 : 1);
                 if (queueBlocked && tick.Kind == BotMoveTickKind.SkipNotReady && _clock.Metrics != null)
                 {
                     _clock.Metrics.SkippedNotReady--;
                     _clock.Metrics.SkippedBusy++;
                 }
+                else if (tick.Kind == BotMoveTickKind.SkipNotReady && _clock.Metrics != null)
+                {
+                    if (!sessionReady)
+                        _clock.Metrics.SkippedSessionNotReady++;
+                    else if (!poseReady)
+                        _clock.Metrics.SkippedPoseUncertain++;
+                    else if (!holdReady)
+                        _clock.Metrics.SkippedRecoveryHold++;
+                }
                 if (tick.Kind == BotMoveTickKind.Send)
                 {
-                    var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     var dt = _lastClientTimeMs <= 0
                         ? 1f / settings.TargetHz
                         : (nowMs - _lastClientTimeMs) / 1000f;
@@ -1076,9 +1097,8 @@ namespace GameMesh.LoadTest
                         try
                         {
                             var requestTask = StartMoveRequest(plan.Position, nowMs, ct);
-                            _pos = plan.Position;
                             inflight = requestTask;
-                            _ = FinishMoveStepAsync(requestTask, planner, _clock, ct);
+                            _ = FinishMoveStepAsync(requestTask, plan.Position, planner, _clock, ct);
                         }
                         catch (Exception ex)
                         {
@@ -1120,8 +1140,8 @@ namespace GameMesh.LoadTest
             return _conn.RequestAsync(request, TimeSpan.FromSeconds(2), ct);
         }
 
-        async Task FinishMoveStepAsync(Task<GameResponse> requestTask, BotMovementPlanner planner,
-            BotMovementClock clock, CancellationToken ct)
+        async Task FinishMoveStepAsync(Task<GameResponse> requestTask, Vector3 sent,
+            BotMovementPlanner planner, BotMovementClock clock, CancellationToken ct)
         {
             var metrics = clock.Metrics;
             var started = Environment.TickCount;
@@ -1133,11 +1153,14 @@ namespace GameMesh.LoadTest
                     metrics.NoteLatency(elapsed);
                 var move = rsp != null ? rsp.Move : null;
                 var adopted = false;
-                if (move != null && move.Position != null)
+                var fresh = move != null &&
+                            (move.StateSeq == 0 || _authorityStateSeq == 0 ||
+                             move.StateSeq >= _authorityStateSeq);
+                if (fresh && move.Position != null)
                 {
                     var authority = ProtocolMapper.ToUnity(move.Position);
-                    var dx = authority.x - _pos.x;
-                    var dz = authority.z - _pos.z;
+                    var dx = authority.x - sent.x;
+                    var dz = authority.z - sent.z;
                     var dist = Mathf.Sqrt(dx * dx + dz * dz);
                     if (dist > 0.5f)
                     {
@@ -1148,10 +1171,15 @@ namespace GameMesh.LoadTest
                     _pos = authority;
                     _yaw = move.Yaw;
                     adopted = true;
+                    if (PoseUncertain)
+                    {
+                        _unknownStreak = 0;
+                        Volatile.Write(ref _poseUncertain, 0);
+                    }
                 }
 
                 metrics.RspMatched++;
-                if (move != null && move.StateSeq > _authorityStateSeq)
+                if (fresh && move.StateSeq > _authorityStateSeq)
                     _authorityStateSeq = move.StateSeq;
                 if (rsp != null && rsp.Ok)
                 {
@@ -1160,7 +1188,8 @@ namespace GameMesh.LoadTest
                     metrics.AckOk++;
                     _moveTimeoutStreak = 0;
                     _unknownStreak = 0;
-                    Volatile.Write(ref _poseUncertain, 0);
+                    if (adopted)
+                        Volatile.Write(ref _poseUncertain, 0);
                     return;
                 }
 
@@ -1197,7 +1226,6 @@ namespace GameMesh.LoadTest
             }
             catch (Exception ex)
             {
-                planner.NoteRejected();
                 var mesh = ex as GameMeshException;
                 if (mesh != null && mesh.ErrorCode == GameMeshErrorCode.ClientCancelled)
                 {
@@ -1215,16 +1243,55 @@ namespace GameMesh.LoadTest
 
                 if (mesh != null && mesh.ErrorCode == GameMeshErrorCode.ClientTimeout)
                 {
-                    // The server may already have this step. Keep walking from the
-                    // last confirmed pose. A later MoveRsp with a newer state_seq
-                    // still corrects it. Stopping here never reaches another sample.
+                    // The server may have accepted the step, so neither the old pose nor the sent
+                    // target is authoritative. Stop movement until a late MoveRsp or snapshot
+                    // supplies an authoritative self pose.
                     metrics.UnknownOutcome++;
                     _unknownStreak++;
-                    Status = "写出后未知，继续移动 :" + GatewayPort;
+                    _uncertainTarget = sent;
+                    Volatile.Write(ref _poseUncertain, 1);
+                    // First retry this exact target. If the timed-out request was accepted this is
+                    // a zero-distance idempotent confirmation; otherwise it performs the original
+                    // intended step. A full snapshot is reserved for repeated failures.
+                    var retryShift = Math.Min(3, Math.Max(0, _unknownStreak - 1));
+                    var retryMs = Math.Min(5000, 500 << retryShift);
+                    Interlocked.Exchange(ref _nextAuthorityAtMs,
+                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + retryMs + (_index % 20) * 50);
+                    Status = "写出后未知，等待重试确认 :" + GatewayPort;
                     return;
                 }
 
                 metrics.Rejected++;
+                planner.NoteRejected();
+            }
+        }
+
+        async Task RetryUnknownMoveAsync(BotMovementPlanner planner, BotMovementClock clock,
+            CancellationToken ct)
+        {
+            if (Interlocked.CompareExchange(ref _moveRecoveryBusy, 1, 0) != 0)
+                return;
+            try
+            {
+                if (!PoseUncertain || !InWorld || _conn.State != ConnectionState.InWorld)
+                    return;
+                var target = _uncertainTarget;
+                var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var requestTask = StartMoveRequest(target, nowMs, ct);
+                await FinishMoveStepAsync(requestTask, target, planner, clock, ct).ConfigureAwait(false);
+            }
+            catch (TaskCanceledException)
+            {
+            }
+            catch (Exception ex)
+            {
+                NoteMoveSendFailed(ex, planner, clock);
+                Interlocked.Exchange(ref _nextAuthorityAtMs,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 750 + (_index % 20) * 100);
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _moveRecoveryBusy, 0);
             }
         }
 
@@ -1262,7 +1329,8 @@ namespace GameMesh.LoadTest
                 return;
             if (Interlocked.CompareExchange(ref _authorityBusy, 1, 0) != 0)
                 return;
-            Interlocked.Exchange(ref _nextAuthorityAtMs, nowMs + 10000 + (_index % 20) * 250);
+            Interlocked.Exchange(ref _nextAuthorityAtMs,
+                nowMs + (PoseUncertain ? 15000 : 10000) + (_index % 20) * 250);
             var acquired = false;
             try
             {
@@ -1270,6 +1338,9 @@ namespace GameMesh.LoadTest
                 if (!await AuthorityGate.WaitAsync(TimeSpan.FromMilliseconds(250), ct).ConfigureAwait(false))
                 {
                     _moveHoldUntilMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 2000 + (_index % 20) * 50;
+                    if (PoseUncertain)
+                        Interlocked.Exchange(ref _nextAuthorityAtMs,
+                            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 750 + (_index % 20) * 100);
                     return;
                 }
                 acquired = true;
@@ -1291,8 +1362,16 @@ namespace GameMesh.LoadTest
                     return;
                 }
 
-                // This snapshot only repairs the remote AOI cursor. Self pose comes from MoveRsp;
-                // the snapshot pose lags in-flight moves and would pull the bot back.
+                // During a normal AOI repair, self still comes from MoveRsp. After a Move timeout,
+                // neither the old nor sent pose is authoritative, so the snapshot self unblocks
+                // movement from a server-confirmed position.
+                if (PoseUncertain)
+                {
+                    _pos = ProtocolMapper.ToUnity(snap.Self.Position);
+                    _yaw = snap.Self.Yaw;
+                    Volatile.Write(ref _poseUncertain, 0);
+                    _unknownStreak = 0;
+                }
                 if (snap.MapInstanceId != 0)
                     _mapInstanceId = snap.MapInstanceId;
                 if (snap.MapTemplateId != 0)

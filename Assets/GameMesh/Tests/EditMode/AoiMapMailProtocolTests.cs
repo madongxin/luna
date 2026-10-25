@@ -324,6 +324,19 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void RemotePoseBuffer_ExtrapolatesBrieflyButCapsVisualSpeed()
+        {
+            var buffer = new RemotePoseBuffer();
+            Assert.IsTrue(buffer.Push(0, 0, 0, 0, 1f, 1));
+            Assert.IsTrue(buffer.Push(10, 0, 0, 90, 1.1f, 2));
+            Assert.IsTrue(buffer.TrySample(1.35f, 0f, out var x, out _, out _, out _));
+            // Raw samples imply 100 m/s; render-only prediction is capped at 6 m/s for 0.25 s.
+            Assert.AreEqual(11.5f, x, 0.01f);
+            Assert.IsTrue(buffer.TrySample(2f, 0f, out x, out _, out _, out _));
+            Assert.AreEqual(11.5f, x, 0.01f);
+        }
+
+        [Test]
         public void HeartbeatClock_TimesOutWithoutReply()
         {
             var clock = new HeartbeatClock();

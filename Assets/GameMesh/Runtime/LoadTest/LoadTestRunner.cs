@@ -335,9 +335,10 @@ namespace GameMesh.LoadTest
                 _phase = "集体登录 " + count + "  端口 " + portA + "/" + portB;
 
                 LoadTestSessionLedger.CachePathOnMainThread();
-                var dispatcher = client != null
-                    ? GameMeshMainThreadDispatcher.Ensure(client.gameObject)
-                    : null;
+                // Load bots do not touch Unity objects from push callbacks. Keeping hundreds of
+                // bot AOI callbacks on the Unity dispatcher made rendering pay for load generation.
+                // The local playable client still uses GameMeshMainThreadDispatcher.
+                var dispatcher = new ImmediateDispatcher();
                 var stamp = DateTime.Now.ToString("HHmmssfff");
                 var gate = new SemaphoreSlim(20);
                 var tasks = new List<Task>(count);
@@ -987,11 +988,14 @@ namespace GameMesh.LoadTest
             var migrating = 0;
             var disconnected = 0;
             var idle = 0;
+            var poseUncertain = 0;
             for (var i = 0; i < _bots.Count; i++)
             {
                 var bot = _bots[i];
                 if (bot == null)
                     continue;
+                if (bot.PoseUncertain)
+                    poseUncertain++;
                 switch (bot.Presence)
                 {
                     case "in_world": inWorld++; break;
@@ -1004,7 +1008,7 @@ namespace GameMesh.LoadTest
 
             return "在线 " + inWorld + "  进入中 " + entering +
                    "  迁移 " + migrating + "  断开 " + disconnected +
-                   "  未开始 " + idle;
+                   "  未开始 " + idle + "  权威待定 " + poseUncertain;
         }
 
         public string ExportMovementMetrics()
@@ -1019,9 +1023,11 @@ namespace GameMesh.LoadTest
                 File.WriteAllText(jsonPath, sum.ToJson("client-" + stamp));
                 var csvPath = Path.Combine(dir, "movement-metrics-" + stamp + ".csv");
                 File.WriteAllText(csvPath,
-                    "move_planned,move_sent,move_ack_ok,move_rejected,move_timeout,move_skipped_busy,move_skipped_not_ready,move_paused,path_rejected,corrections,actual_send_hz,actual_success_hz,p50,p95,p99,scheduler_lag_ms,reject_too_fast,reject_bounds,reject_unwalkable,reject_other\n" +
+                    "move_planned,move_sent,move_ack_ok,move_rejected,move_timeout,move_skipped_busy,move_skipped_not_ready,move_skipped_pose_uncertain,move_skipped_session_not_ready,move_skipped_recovery_hold,move_paused,path_rejected,corrections,actual_send_hz,actual_success_hz,p50,p95,p99,scheduler_lag_ms,reject_too_fast,reject_bounds,reject_unwalkable,reject_other\n" +
                     sum.Planned + "," + sum.Sent + "," + sum.AckOk + "," + sum.Rejected + "," +
                     sum.Timeout + "," + sum.SkippedBusy + "," + sum.SkippedNotReady + "," +
+                    sum.SkippedPoseUncertain + "," + sum.SkippedSessionNotReady + "," +
+                    sum.SkippedRecoveryHold + "," +
                     sum.Paused + "," + sum.PathRejected + "," + sum.Corrections + "," +
                     sum.ActualSendHz.ToString("0.###") + "," + sum.ActualSuccessHz.ToString("0.###") + "," +
                     sum.LatencyPercentile(50) + "," + sum.LatencyPercentile(95) + "," +

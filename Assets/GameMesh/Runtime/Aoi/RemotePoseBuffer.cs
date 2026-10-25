@@ -5,8 +5,9 @@ namespace GameMesh.Aoi
     public sealed class RemotePoseBuffer
     {
         public const int Depth = 8;
-        // No extrapolation: overshoot-then-correct is what looks like twitching.
-        const float MaxExtrapolateSec = 0f;
+        // Render-only prediction bridges one late AOI sample. It never changes bot authority.
+        const float MaxExtrapolateSec = 0.25f;
+        const float MaxVisualSpeed = 6f;
 
         struct Sample
         {
@@ -75,10 +76,19 @@ namespace GameMesh.Aoi
                 var ahead = Math.Min(t - b.Time, MaxExtrapolateSec);
                 if (span > 0.0001f && ahead > 0f)
                 {
+                    var vx = (b.X - a.X) / span;
+                    var vz = (b.Z - a.Z) / span;
+                    var speed = (float)Math.Sqrt(vx * vx + vz * vz);
+                    if (speed > MaxVisualSpeed)
+                    {
+                        var scale = MaxVisualSpeed / speed;
+                        vx *= scale;
+                        vz *= scale;
+                    }
+                    x = b.X + vx * ahead;
+                    y = b.Y;
+                    z = b.Z + vz * ahead;
                     var u = ahead / span;
-                    x = b.X + (b.X - a.X) * u;
-                    y = b.Y + (b.Y - a.Y) * u;
-                    z = b.Z + (b.Z - a.Z) * u;
                     yaw = LerpAngle(b.Yaw, b.Yaw + (b.Yaw - a.Yaw), Math.Min(1f, u));
                     return true;
                 }

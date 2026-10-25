@@ -27,6 +27,9 @@ namespace GameMesh.LoadTest
         public int PoseRefresh;
         public int SkippedBusy;
         public int SkippedNotReady;
+        public int SkippedPoseUncertain;
+        public int SkippedSessionNotReady;
+        public int SkippedRecoveryHold;
         public int Paused;
         public int PathRejected;
         public int Corrections;
@@ -144,12 +147,35 @@ namespace GameMesh.LoadTest
             PoseRefresh += other.PoseRefresh;
             SkippedBusy += other.SkippedBusy;
             SkippedNotReady += other.SkippedNotReady;
+            SkippedPoseUncertain += other.SkippedPoseUncertain;
+            SkippedSessionNotReady += other.SkippedSessionNotReady;
+            SkippedRecoveryHold += other.SkippedRecoveryHold;
             Paused += other.Paused;
             PathRejected += other.PathRejected;
             Corrections += other.Corrections;
             CorrectionDistanceSum += other.CorrectionDistanceSum;
             if (other.SchedulerLagMs > SchedulerLagMs)
                 SchedulerLagMs = other.SchedulerLagMs;
+            if (other.SampleEndedMs > other.SampleStartedMs)
+            {
+                if (SampleEndedMs <= SampleStartedMs)
+                {
+                    SampleStartedMs = other.SampleStartedMs;
+                    SampleEndedMs = other.SampleEndedMs;
+                }
+                else
+                {
+                    if (other.SampleStartedMs < SampleStartedMs)
+                        SampleStartedMs = other.SampleStartedMs;
+                    if (other.SampleEndedMs > SampleEndedMs)
+                        SampleEndedMs = other.SampleEndedMs;
+                }
+            }
+            var latencyStart = other._latencyCount == other._latency.Length
+                ? other._latencyCursor
+                : 0;
+            for (var i = 0; i < other._latencyCount; i++)
+                NoteLatency(other._latency[(latencyStart + i) % other._latency.Length]);
         }
 
         public string ToJson(string runId)
@@ -179,6 +205,9 @@ namespace GameMesh.LoadTest
             sb.Append("  \"pose_refresh\": ").Append(PoseRefresh).Append(",\n");
             sb.Append("  \"move_skipped_busy\": ").Append(SkippedBusy).Append(",\n");
             sb.Append("  \"move_skipped_not_ready\": ").Append(SkippedNotReady).Append(",\n");
+            sb.Append("  \"move_skipped_pose_uncertain\": ").Append(SkippedPoseUncertain).Append(",\n");
+            sb.Append("  \"move_skipped_session_not_ready\": ").Append(SkippedSessionNotReady).Append(",\n");
+            sb.Append("  \"move_skipped_recovery_hold\": ").Append(SkippedRecoveryHold).Append(",\n");
             sb.Append("  \"move_paused\": ").Append(Paused).Append(",\n");
             sb.Append("  \"path_rejected\": ").Append(PathRejected).Append(",\n");
             sb.Append("  \"corrections\": ").Append(Corrections).Append(",\n");

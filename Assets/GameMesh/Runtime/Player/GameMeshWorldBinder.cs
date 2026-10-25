@@ -24,7 +24,6 @@ namespace GameMesh.Player
         readonly System.Collections.Generic.List<ulong> _deadRemoteIds =
             new System.Collections.Generic.List<ulong>();
         float _nextAoiSnapshotAt;
-        int _modelBudget;
         int _holdSpawnFrames;
         Vector3 _goodPose;
         bool _hasGoodPose;
@@ -67,15 +66,6 @@ namespace GameMesh.Player
             }
 
             return best < float.MaxValue;
-        }
-
-        static float PlanarDistance(Vector3 local, RemoteEntityState state)
-        {
-            if (state == null)
-                return float.MaxValue;
-            var dx = local.x - state.X;
-            var dz = local.z - state.Z;
-            return Mathf.Sqrt(dx * dx + dz * dz);
         }
 
         void OnEnable()
@@ -511,22 +501,17 @@ namespace GameMesh.Player
                 : client.Session.PlayerId;
             var seen = _seenRemoteIds;
             seen.Clear();
-            var localPos = _local != null ? _local.position : Vector3.zero;
-            _modelBudget = 32;
             foreach (var kv in client.Aoi.Entities)
             {
                 if (localId != 0 && kv.Key == localId)
                     continue;
                 seen.Add(kv.Key);
-                var near = _local == null || PlanarDistance(localPos, kv.Value) < 48f;
                 if (!_views.TryGetValue(kv.Key, out var view) || view == null)
                 {
                     try
                     {
                         view = RemotePlayerView.Spawn(kv.Value, client.Config.interpolationDelayMs,
-                            attachModel: near && _modelBudget > 0);
-                        if (view != null && view.HasModel)
-                            _modelBudget--;
+                            attachModel: true);
                     }
                     catch (System.Exception ex)
                     {
@@ -536,10 +521,9 @@ namespace GameMesh.Player
 
                     _views[kv.Key] = view;
                 }
-                else if (!view.HasModel && near && _modelBudget > 0)
+                else if (!view.HasModel)
                 {
-                    if (view.TryAttachModel())
-                        _modelBudget--;
+                    view.TryAttachModel();
                 }
 
                 view.Apply(kv.Value);
@@ -626,6 +610,9 @@ namespace GameMesh.Player
         float _labelMaxHp = -1f;
         TextMesh _label;
         Animator _anim;
+        Transform _model;
+        Renderer[] _modelRenderers;
+        float _nextGroundAlignAt;
         int _speedId;
         int _groundedId;
         int _motionSpeedId;
@@ -694,7 +681,9 @@ namespace GameMesh.Player
 
                 TintRenderers(visual, _color);
                 RemovePrimitiveVisuals();
-                HasModel = visual.GetComponentInChildren<Renderer>(true) != null;
+                _model = visual.transform;
+                _modelRenderers = visual.GetComponentsInChildren<Renderer>(true);
+                HasModel = _modelRenderers.Length != 0;
                 return HasModel;
             }
             catch (System.Exception ex)
@@ -822,6 +811,24 @@ namespace GameMesh.Player
         public void Apply(RemoteEntityState state)
         {
             CancelFade();
+            UpdateLabel(state);
+            // SyncRemotes visits every entity every frame. Do no terrain or pose work until
+            // this entity actually has a newer authoritative sample.
+            var sameSeqCorrection = false;
+            if (state.StateSeq != 0 && _lastSampleSeq != 0)
+            {
+                if (state.StateSeq < _lastSampleSeq)
+                    return;
+                if (state.StateSeq == _lastSampleSeq)
+                {
+                    sameSeqCorrection =
+                        Mathf.Abs(state.X - _target.x) > 0.01f ||
+                        Mathf.Abs(state.Z - _target.z) > 0.01f ||
+                        Mathf.Abs(Mathf.DeltaAngle(state.Yaw, _targetYaw)) > 0.5f;
+                    if (!sameSeqCorrection)
+                        return;
+                }
+            }
             // Order by server clock when present. Playback uses one local timeline; server times are
             // mapped onto it with a single offset (SampleTime), never mixed raw.
             if (state.ServerTimeMs != 0 && _lastServerTimeMs != 0 &&
@@ -837,9 +844,8 @@ namespace GameMesh.Player
             var now = Time.unscaledTime;
             var sampleTime = SampleTime(state, now);
             var accepted = false;
-            if (err > 30f)
+            if (err > 30f || sameSeqCorrection)
             {
-                transform.position = next;
                 _velocity = Vector3.zero;
                 _poses.Snap(next.x, next.y, next.z, state.Yaw, sampleTime, state.StateSeq);
                 accepted = true;
@@ -854,7 +860,12 @@ namespace GameMesh.Player
                 _targetYaw = state.Yaw;
             }
 
-            if (_label != null && (state.Name != _labelName || state.Hp != _labelHp || state.MaxHp != _labelMaxHp))
+        }
+
+        void UpdateLabel(RemoteEntityState state)
+        {
+            if (_label != null &&
+                (state.Name != _labelName || state.Hp != _labelHp || state.MaxHp != _labelMaxHp))
             {
                 _labelName = state.Name;
                 _labelHp = state.Hp;
@@ -937,7 +948,9 @@ namespace GameMesh.Player
                 _targetYaw = syaw;
             }
 
-            var desiredY = GroundY(_target.x, _target.z, _target.y);
+            // GroundY was already resolved when the authoritative sample arrived.
+            // Sampling terrain once per remote per rendered frame was a major load-test hot path.
+            var desiredY = _target.y;
             var desired = new Vector3(_target.x, desiredY, _target.z);
             var planar = Vector3.Distance(new Vector3(pos.x, 0f, pos.z),
                 new Vector3(desired.x, 0f, desired.z));
@@ -945,8 +958,11 @@ namespace GameMesh.Player
             Vector3 next;
             if (planar > 30f)
             {
-                next = desired;
-                _velocity = Vector3.zero;
+                // A long-delayed AOI update may be tens of metres ahead. Teleporting here made
+                // robots flash to the new point with zero animation speed. Catch up visibly.
+                var dt = Mathf.Max(0.001f, Time.deltaTime);
+                next = Vector3.MoveTowards(pos, desired, 12f * dt);
+                _velocity = (next - pos) / dt;
             }
             else
             {
@@ -980,29 +996,41 @@ namespace GameMesh.Player
                 _anim.SetFloat(_motionSpeedId, _animSpeed > 0.2f ? 1f : 0f);
             }
 
-            AlignModelToGround();
+            if (Time.unscaledTime >= _nextGroundAlignAt)
+            {
+                _nextGroundAlignAt = Time.unscaledTime + 0.5f;
+                AlignModelToGround();
+            }
 
             if (_label == null)
                 return;
-            var cam = Camera.main;
+            var cam = MainCameraThisFrame();
             if (cam != null)
                 _label.transform.rotation = Quaternion.LookRotation(
                     _label.transform.position - cam.transform.position);
         }
 
+        static Camera _frameCamera;
+        static int _cameraFrame = -1;
+
+        static Camera MainCameraThisFrame()
+        {
+            if (_cameraFrame == Time.frameCount)
+                return _frameCamera;
+            _cameraFrame = Time.frameCount;
+            _frameCamera = Camera.main;
+            return _frameCamera;
+        }
+
         void AlignModelToGround()
         {
-            var model = transform.Find("Model");
-            if (model == null)
-                return;
-            var renderers = model.GetComponentsInChildren<Renderer>(true);
-            if (renderers.Length == 0)
+            if (_model == null || _modelRenderers == null || _modelRenderers.Length == 0)
                 return;
             var any = false;
             var bounds = new Bounds();
-            for (var i = 0; i < renderers.Length; i++)
+            for (var i = 0; i < _modelRenderers.Length; i++)
             {
-                var renderer = renderers[i];
+                var renderer = _modelRenderers[i];
                 if (renderer == null || !renderer.enabled)
                     continue;
                 if (!any)
@@ -1020,9 +1048,9 @@ namespace GameMesh.Player
             var extra = ground - bounds.min.y + 0.04f;
             if (extra > -0.12f && extra < 0.06f)
                 return;
-            var local = model.localPosition;
+            var local = _model.localPosition;
             local.y = Mathf.Clamp(local.y + extra * 0.55f, 0f, 1.6f);
-            model.localPosition = local;
+            _model.localPosition = local;
             if (_label != null)
                 _label.transform.localPosition = new Vector3(0f, Mathf.Max(2.15f, local.y + 1.9f), 0f);
         }

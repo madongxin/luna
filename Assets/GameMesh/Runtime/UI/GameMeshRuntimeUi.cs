@@ -533,6 +533,9 @@ namespace GameMesh.UI
                 "  超时 " + move.Timeout +
                 "  忙跳过 " + move.SkippedBusy +
                 "  未就绪 " + move.SkippedNotReady +
+                "(权威待定 " + move.SkippedPoseUncertain +
+                " 会话 " + move.SkippedSessionNotReady +
+                " 恢复等待 " + move.SkippedRecoveryHold + ")" +
                 "  过载 " + move.Overloaded,
                 _hint);
             GUILayout.Label(runner.GatewayRateLine(), _hint);
