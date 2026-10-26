@@ -95,6 +95,45 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void RequestAsync_ReportsExactFrameWriteCompletion()
+        {
+            using (var server = new FakeGatewayServer())
+            {
+                var dispatcher = new QueueDispatcher();
+                var conn = new GameConnection(dispatcher);
+                ulong writtenSeq = 0;
+                string writtenType = null;
+                long writtenAtMs = 0;
+                conn.FrameWriteCompleted += (seq, type, atMs) =>
+                {
+                    writtenSeq = seq;
+                    writtenType = type;
+                    writtenAtMs = atMs;
+                };
+                try
+                {
+                    conn.ConnectAsync("127.0.0.1", server.Port, CancellationToken.None)
+                        .GetAwaiter().GetResult();
+                    var request = new GameRequest { MapPing = new MapPingReq() };
+                    var pending = conn.RequestAsync(request, TimeSpan.FromSeconds(3),
+                        CancellationToken.None);
+                    SpinPump(dispatcher,
+                        () => pending.IsCompleted && Volatile.Read(ref writtenAtMs) > 0, 3000);
+                    pending.GetAwaiter().GetResult();
+                    Assert.AreEqual(request.Seq, writtenSeq);
+                    Assert.AreEqual(GameRequest.BodyOneofCase.MapPing.ToString(), writtenType);
+                    Assert.Greater(writtenAtMs, 0);
+                }
+                finally
+                {
+                    conn.DisconnectAsync(DisconnectReason.ClientRequest, CancellationToken.None)
+                        .GetAwaiter().GetResult();
+                    conn.DisposeAsync().GetAwaiter().GetResult();
+                }
+            }
+        }
+
+        [Test]
         public void Push_DoesNotCompleteRequest()
         {
             using (var server = new FakeGatewayServer())

@@ -522,22 +522,25 @@ namespace GameMesh.UI
                 GUILayout.Label(_loadMoveError, _statusErr);
             var move = runner.SumMovement();
             GUILayout.Label(
-                "移动  计划 " + move.Planned +
+                "移动  调度时隙 " + move.Planned +
                 "  入队 " + move.QueueAccepted +
-                "  写出完成 " + runner.PipeWriteCompleted() +
+                "  发出(socket) " + move.WriteCompleted +
                 "  匹配 " + move.RspMatched +
                 "  权威确认 " + move.AckOk +
                 "  拒绝 " + move.Rejected +
                 "  写出前过期 " + move.ExpiredBeforeWrite +
-                "  写出后未知 " + move.UnknownOutcome +
-                "  超时 " + move.Timeout +
+                "  写入中超时 " + move.TimeoutBeforeWrite +
+                "  发出后2秒未确认 " + move.UnknownOutcome +
+                "  超时累计 " + move.Timeout +
                 "  忙跳过 " + move.SkippedBusy +
                 "  未就绪 " + move.SkippedNotReady +
+                "  规划无位移 " + (move.Paused + move.PathRejected) +
                 "(权威待定 " + move.SkippedPoseUncertain +
                 " 会话 " + move.SkippedSessionNotReady +
                 " 恢复等待 " + move.SkippedRecoveryHold + ")" +
                 "  过载 " + move.Overloaded,
                 _hint);
+            GUILayout.Label(runner.MovementLiveSummary(), _hint);
             GUILayout.Label(runner.GatewayRateLine(), _hint);
             GUILayout.Label(runner.PresenceSummary(), _hint);
             GUILayout.Label(runner.LineSpread(), _hint);

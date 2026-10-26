@@ -56,6 +56,11 @@ namespace GameMesh.Network
 
         public event Action<GameResponse> PushReceived;
         public event Action<GameResponse> LateResponse;
+        /// <summary>
+        /// Fired after one complete framed request has left the client application queue and
+        /// NetworkStream.WriteAsync completed. This is not a server acknowledgement.
+        /// </summary>
+        public event Action<ulong, string, long> FrameWriteCompleted;
         long _queueHeadMs;
 
         public int SendQueueDepth => Volatile.Read(ref _queued);
@@ -368,6 +373,14 @@ namespace GameMesh.Network
                     await WriteExactAsync(stream, item.Frame, ct).ConfigureAwait(false);
                     _pending.MarkWriteCompleted(item.Slot);
                     _pending.NoteBytesSent();
+                    try
+                    {
+                        FrameWriteCompleted?.Invoke(item.Seq, item.Type, MonoMs());
+                    }
+                    catch (Exception ex)
+                    {
+                        GameMeshLog.Warn("write observer failed " + Redact(ex.Message));
+                    }
                     if (!Quiet)
                         GameMeshLog.Debug($"send seq={item.Seq} type={item.Type}");
                 }

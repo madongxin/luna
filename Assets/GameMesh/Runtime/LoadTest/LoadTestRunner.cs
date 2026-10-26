@@ -201,6 +201,36 @@ namespace GameMesh.LoadTest
             return n;
         }
 
+        public string MovementLiveSummary()
+        {
+            var authorityWaiting = 0;
+            var authorityOldestMs = 0;
+            var clientQueued = 0;
+            long clientQueueOldestMs = 0;
+            for (var i = 0; i < _bots.Count; i++)
+            {
+                var bot = _bots[i];
+                if (bot == null)
+                    continue;
+                if (bot.AwaitingMoveAuthority)
+                {
+                    authorityWaiting++;
+                    var age = bot.CurrentAuthorityWaitMs;
+                    if (age > authorityOldestMs)
+                        authorityOldestMs = age;
+                }
+
+                clientQueued += bot.ClientSendQueueDepth;
+                var queueAge = bot.ClientSendQueueOldestMs;
+                if (queueAge > clientQueueOldestMs)
+                    clientQueueOldestMs = queueAge;
+            }
+
+            return "当前待权威 " + authorityWaiting + "  最长 " + authorityOldestMs +
+                   "ms    客户端发送队列 " + clientQueued + "  最老 " +
+                   clientQueueOldestMs + "ms";
+        }
+
         public string GatewayRateLine()
         {
             return GatewayRateText +

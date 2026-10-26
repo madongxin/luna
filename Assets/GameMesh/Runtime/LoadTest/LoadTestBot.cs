@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading;
@@ -47,7 +48,15 @@ namespace GameMesh.LoadTest
         int _moveRecoveryBusy;
         long _moveHoldUntilMs;
         long _nextAuthorityAtMs;
+        long _uncertainRequestSeq;
+        long _lastAuthorityRequestSeq;
+        long _currentAuthorityRequestSeq;
+        long _currentAuthoritySentAtMs;
         Vector3 _uncertainTarget;
+        readonly ConcurrentDictionary<ulong, long> _moveWrittenAtMs =
+            new ConcurrentDictionary<ulong, long>();
+        readonly ConcurrentDictionary<ulong, Vector3> _timedOutBeforeWriteCompleted =
+            new ConcurrentDictionary<ulong, Vector3>();
         static readonly SemaphoreSlim AuthorityGate = new SemaphoreSlim(8, 8);
         static int _lineRefreshTick;
         static string _cachedClientVersion = "luna";
@@ -67,6 +76,20 @@ namespace GameMesh.LoadTest
         public uint LineNo => _lastEnterLine;
         public string GameLogicInstanceId { get; private set; } = "";
         public bool PoseUncertain => Volatile.Read(ref _poseUncertain) != 0;
+        public int CurrentAuthorityWaitMs
+        {
+            get
+            {
+                var since = Interlocked.Read(ref _currentAuthoritySentAtMs);
+                if (since <= 0)
+                    return 0;
+                var elapsed = MonotonicMs() - since;
+                return elapsed <= 0 ? 0 : (int)Math.Min(int.MaxValue, elapsed);
+            }
+        }
+        public bool AwaitingMoveAuthority => Interlocked.Read(ref _currentAuthoritySentAtMs) > 0;
+        public int ClientSendQueueDepth => _conn.SendQueueDepth;
+        public long ClientSendQueueOldestMs => _conn.OldestQueueAgeMs;
         public RpcPipeMetrics PipeMetrics => _conn.PipeMetrics;
         public int VisibleEntities => _push.VisibleCount;
         public bool PushHealthy => _push.Healthy;
@@ -109,7 +132,14 @@ namespace GameMesh.LoadTest
             _conn = new GameConnection(dispatcher ?? new ImmediateDispatcher()) { Quiet = true };
             _conn.PushReceived += OnPush;
             _conn.LateResponse += OnLateMove;
+            _conn.FrameWriteCompleted += OnFrameWriteCompleted;
             CacheUnityInfoOnMainThread();
+        }
+
+        static long MonotonicMs()
+        {
+            return System.Diagnostics.Stopwatch.GetTimestamp() * 1000L /
+                   System.Diagnostics.Stopwatch.Frequency;
         }
 
         static void CacheUnityInfoOnMainThread()
@@ -1096,9 +1126,11 @@ namespace GameMesh.LoadTest
                         // 名额跟着请求本身释放。统计回调若排在线程池后面，不能继续把机器人算成忙。
                         try
                         {
-                            var requestTask = StartMoveRequest(plan.Position, nowMs, ct);
+                            var requestTask = StartMoveRequest(plan.Position, nowMs, ct,
+                                out var requestSeq);
                             inflight = requestTask;
-                            _ = FinishMoveStepAsync(requestTask, plan.Position, planner, _clock, ct);
+                            _ = FinishMoveStepAsync(requestTask, requestSeq, plan.Position,
+                                planner, _clock, ct);
                         }
                         catch (Exception ex)
                         {
@@ -1113,15 +1145,10 @@ namespace GameMesh.LoadTest
             }
         }
 
-        Task<GameResponse> StartMoveRequest(Vector3 next, long clientTimeMs, CancellationToken ct)
+        Task<GameResponse> StartMoveRequest(Vector3 next, long clientTimeMs, CancellationToken ct,
+            out ulong requestSeq)
         {
             var metrics = _clock != null ? _clock.Metrics : null;
-            if (metrics != null)
-            {
-                metrics.Sent++;
-                metrics.QueueAccepted++;
-            }
-
             var request = new GameRequest
             {
                 Move = new MoveReq
@@ -1137,20 +1164,21 @@ namespace GameMesh.LoadTest
                 throw new GameMeshException(GameMeshErrorCode.ClientIllegalState, "hello required");
             if (!string.IsNullOrEmpty(_token))
                 request.SessionToken = _token;
-            return _conn.RequestAsync(request, TimeSpan.FromSeconds(2), ct);
+            var task = _conn.RequestAsync(request, TimeSpan.FromSeconds(2), ct);
+            requestSeq = request.Seq;
+            if (metrics != null)
+                Interlocked.Increment(ref metrics.QueueAccepted);
+            return task;
         }
 
-        async Task FinishMoveStepAsync(Task<GameResponse> requestTask, Vector3 sent,
+        async Task FinishMoveStepAsync(Task<GameResponse> requestTask, ulong requestSeq, Vector3 sent,
             BotMovementPlanner planner, BotMovementClock clock, CancellationToken ct)
         {
             var metrics = clock.Metrics;
-            var started = Environment.TickCount;
             try
             {
                 var rsp = await requestTask.ConfigureAwait(false);
-                var elapsed = unchecked(Environment.TickCount - started);
-                if (elapsed > 0 && elapsed < 60000)
-                    metrics.NoteLatency(elapsed);
+                NoteMoveResponse(requestSeq, rsp != null && rsp.Ok, metrics);
                 var move = rsp != null ? rsp.Move : null;
                 var adopted = false;
                 var fresh = move != null &&
@@ -1238,32 +1266,173 @@ namespace GameMesh.LoadTest
                      (mesh.ErrorCode == GameMeshErrorCode.ClientTimeout && mesh.WritePhase == 0)))
                 {
                     metrics.ExpiredBeforeWrite++;
+                    metrics.Timeout++;
+                    ForgetMoveRequest(requestSeq);
                     return;
                 }
 
                 if (mesh != null && mesh.ErrorCode == GameMeshErrorCode.ClientTimeout)
                 {
-                    // The server may have accepted the step, so neither the old pose nor the sent
-                    // target is authoritative. Stop movement until a late MoveRsp or snapshot
-                    // supplies an authoritative self pose.
-                    metrics.UnknownOutcome++;
-                    _unknownStreak++;
-                    _uncertainTarget = sent;
-                    Volatile.Write(ref _poseUncertain, 1);
-                    // First retry this exact target. If the timed-out request was accepted this is
-                    // a zero-distance idempotent confirmation; otherwise it performs the original
-                    // intended step. A full snapshot is reserved for repeated failures.
-                    var retryShift = Math.Min(3, Math.Max(0, _unknownStreak - 1));
-                    var retryMs = Math.Min(5000, 500 << retryShift);
-                    Interlocked.Exchange(ref _nextAuthorityAtMs,
-                        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + retryMs + (_index % 20) * 50);
-                    Status = "写出后未知，等待重试确认 :" + GatewayPort;
+                    metrics.Timeout++;
+                    if (mesh.WritePhase >= RpcPendingTable.Slot.PhaseWriteCompleted)
+                        WaitForMoveAuthorityBudget(requestSeq, sent, metrics);
+                    else
+                    {
+                        // WriteAsync has started but has not completed. Do not report this as a
+                        // server reply loss. If it later completes, the write observer starts the
+                        // authority wait and marks this exact move uncertain.
+                        metrics.TimeoutBeforeWrite++;
+                        _timedOutBeforeWriteCompleted[requestSeq] = sent;
+                    }
                     return;
                 }
 
                 metrics.Rejected++;
+                ForgetMoveRequest(requestSeq);
                 planner.NoteRejected();
             }
+        }
+
+        void OnFrameWriteCompleted(ulong requestSeq, string type, long writtenAtMs)
+        {
+            if (!string.Equals(type, GameRequest.BodyOneofCase.Move.ToString(),
+                    StringComparison.Ordinal))
+                return;
+
+            var metrics = _clock != null ? _clock.Metrics : null;
+            if (metrics != null)
+            {
+                Interlocked.Increment(ref metrics.Sent);
+                Interlocked.Increment(ref metrics.WriteCompleted);
+            }
+
+            // Never resurrect a wait that a very fast receive already confirmed.
+            if ((ulong)Math.Max(0, Interlocked.Read(ref _lastAuthorityRequestSeq)) >= requestSeq)
+            {
+                ForgetMoveRequest(requestSeq);
+                return;
+            }
+
+            _moveWrittenAtMs[requestSeq] = writtenAtMs;
+            Interlocked.Exchange(ref _currentAuthorityRequestSeq, (long)requestSeq);
+            Interlocked.Exchange(ref _currentAuthoritySentAtMs, writtenAtMs);
+
+            if (_timedOutBeforeWriteCompleted.TryRemove(requestSeq, out var target) && metrics != null)
+                WaitForMoveAuthorityBudget(requestSeq, target, metrics);
+        }
+
+        void NoteMoveResponse(ulong requestSeq, bool authorityConfirmed, BotMovementMetrics metrics)
+        {
+            if (_moveWrittenAtMs.TryRemove(requestSeq, out var writtenAtMs) && authorityConfirmed &&
+                metrics != null)
+            {
+                var elapsed = MonotonicMs() - writtenAtMs;
+                if (elapsed >= 0 && elapsed < 60000)
+                    metrics.NoteLatency((int)elapsed);
+            }
+
+            _timedOutBeforeWriteCompleted.TryRemove(requestSeq, out _);
+            if (Interlocked.Read(ref _currentAuthorityRequestSeq) == (long)requestSeq)
+            {
+                Interlocked.Exchange(ref _currentAuthoritySentAtMs, 0);
+                Interlocked.CompareExchange(ref _currentAuthorityRequestSeq, 0, (long)requestSeq);
+            }
+
+            if (!authorityConfirmed)
+                return;
+
+            long previous;
+            do
+            {
+                previous = Interlocked.Read(ref _lastAuthorityRequestSeq);
+                if (previous >= (long)requestSeq)
+                    break;
+            }
+            while (Interlocked.CompareExchange(ref _lastAuthorityRequestSeq,
+                       (long)requestSeq, previous) != previous);
+
+            var uncertainSeq = Interlocked.Read(ref _uncertainRequestSeq);
+            if (uncertainSeq != 0 && (long)requestSeq >= uncertainSeq)
+            {
+                Interlocked.Exchange(ref _uncertainRequestSeq, 0);
+                Volatile.Write(ref _poseUncertain, 0);
+                _unknownStreak = 0;
+            }
+        }
+
+        void ForgetMoveRequest(ulong requestSeq)
+        {
+            _moveWrittenAtMs.TryRemove(requestSeq, out _);
+            _timedOutBeforeWriteCompleted.TryRemove(requestSeq, out _);
+            if (Interlocked.Read(ref _currentAuthorityRequestSeq) != (long)requestSeq)
+                return;
+            Interlocked.Exchange(ref _currentAuthoritySentAtMs, 0);
+            Interlocked.CompareExchange(ref _currentAuthorityRequestSeq, 0, (long)requestSeq);
+        }
+
+        void MarkMoveAuthorityUncertain(ulong requestSeq, Vector3 sent,
+            BotMovementMetrics metrics)
+        {
+            if ((ulong)Math.Max(0, Interlocked.Read(ref _lastAuthorityRequestSeq)) >= requestSeq)
+                return;
+
+            Interlocked.Increment(ref metrics.UnknownOutcome);
+            _unknownStreak++;
+            _uncertainTarget = sent;
+            Interlocked.Exchange(ref _uncertainRequestSeq, (long)requestSeq);
+            Volatile.Write(ref _poseUncertain, 1);
+
+            // Close the timeout/late-response race. Whichever side observes the matching
+            // authority last leaves the bot ready, never permanently uncertain.
+            if ((ulong)Math.Max(0, Interlocked.Read(ref _lastAuthorityRequestSeq)) >= requestSeq)
+            {
+                Interlocked.Exchange(ref _uncertainRequestSeq, 0);
+                Volatile.Write(ref _poseUncertain, 0);
+                _unknownStreak = 0;
+                return;
+            }
+
+            var retryShift = Math.Min(3, Math.Max(0, _unknownStreak - 1));
+            var retryMs = Math.Min(5000, 500 << retryShift);
+            Interlocked.Exchange(ref _nextAuthorityAtMs,
+                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + retryMs + (_index % 20) * 50);
+            Status = "Move超过2秒未确认，等待同目标重试 :" + GatewayPort;
+        }
+
+        void WaitForMoveAuthorityBudget(ulong requestSeq, Vector3 sent,
+            BotMovementMetrics metrics)
+        {
+            if (!_moveWrittenAtMs.TryGetValue(requestSeq, out var writtenAtMs))
+            {
+                _timedOutBeforeWriteCompleted[requestSeq] = sent;
+                return;
+            }
+
+            var remaining = 2000 - (MonotonicMs() - writtenAtMs);
+            if (remaining <= 0)
+            {
+                MarkMoveAuthorityUncertain(requestSeq, sent, metrics);
+                return;
+            }
+
+            _ = MarkMoveUncertainAfterBudgetAsync(requestSeq, sent, metrics, (int)remaining);
+        }
+
+        async Task MarkMoveUncertainAfterBudgetAsync(ulong requestSeq, Vector3 sent,
+            BotMovementMetrics metrics, int delayMs)
+        {
+            try
+            {
+                await Task.Delay(Math.Max(1, delayMs), _life.Token).ConfigureAwait(false);
+            }
+            catch (TaskCanceledException)
+            {
+                return;
+            }
+
+            if (!_moveWrittenAtMs.ContainsKey(requestSeq))
+                return;
+            MarkMoveAuthorityUncertain(requestSeq, sent, metrics);
         }
 
         async Task RetryUnknownMoveAsync(BotMovementPlanner planner, BotMovementClock clock,
@@ -1277,8 +1446,9 @@ namespace GameMesh.LoadTest
                     return;
                 var target = _uncertainTarget;
                 var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                var requestTask = StartMoveRequest(target, nowMs, ct);
-                await FinishMoveStepAsync(requestTask, target, planner, clock, ct).ConfigureAwait(false);
+                var requestTask = StartMoveRequest(target, nowMs, ct, out var requestSeq);
+                await FinishMoveStepAsync(requestTask, requestSeq, target, planner, clock, ct)
+                    .ConfigureAwait(false);
             }
             catch (TaskCanceledException)
             {
@@ -1337,7 +1507,6 @@ namespace GameMesh.LoadTest
                 await Task.Delay((_index % 30) * 40, ct).ConfigureAwait(false);
                 if (!await AuthorityGate.WaitAsync(TimeSpan.FromMilliseconds(250), ct).ConfigureAwait(false))
                 {
-                    _moveHoldUntilMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 2000 + (_index % 20) * 50;
                     if (PoseUncertain)
                         Interlocked.Exchange(ref _nextAuthorityAtMs,
                             DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 750 + (_index % 20) * 100);
@@ -1358,7 +1527,6 @@ namespace GameMesh.LoadTest
                     string.Equals(snap.RecoveryReason, "NOT_READY", StringComparison.OrdinalIgnoreCase))
                 {
                     Status = "权威刷新失败 :" + GatewayPort;
-                    _moveHoldUntilMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 4000;
                     return;
                 }
 
@@ -1392,7 +1560,6 @@ namespace GameMesh.LoadTest
             catch (Exception ex)
             {
                 Status = "权威刷新失败 :" + GatewayPort;
-                _moveHoldUntilMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 4000;
                 LoadTestLog.Timeout("snapshot", "bot#" + _index + " " + GameMeshLog.Redact(ex.Message));
             }
             finally
@@ -1434,6 +1601,7 @@ namespace GameMesh.LoadTest
             var move = rsp != null ? rsp.Move : null;
             if (move == null || !rsp.Ok || move.Position == null)
                 return;
+            NoteMoveResponse(rsp.Seq, true, _clock != null ? _clock.Metrics : null);
             if (!MoveRecovery.TryAdoptLate(_authorityStateSeq, move.StateSeq, _conn.Generation, _conn.Generation,
                     _mapInstanceId, _mapInstanceId))
                 return;
