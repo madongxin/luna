@@ -44,12 +44,12 @@ namespace GameMesh.LoadTest
         int _unknownStreak;
         ulong _authorityStateSeq;
         int _poseUncertain;
-        int _authorityBusy;
         int _moveRecoveryBusy;
         long _moveHoldUntilMs;
         long _nextAuthorityAtMs;
         long _uncertainRequestSeq;
         long _lastAuthorityRequestSeq;
+        long _lastResolvedMoveRequestSeq;
         long _currentAuthorityRequestSeq;
         long _currentAuthoritySentAtMs;
         Vector3 _uncertainTarget;
@@ -57,13 +57,13 @@ namespace GameMesh.LoadTest
             new ConcurrentDictionary<ulong, long>();
         readonly ConcurrentDictionary<ulong, Vector3> _timedOutBeforeWriteCompleted =
             new ConcurrentDictionary<ulong, Vector3>();
-        static readonly SemaphoreSlim AuthorityGate = new SemaphoreSlim(8, 8);
         static int _lineRefreshTick;
         static string _cachedClientVersion = "luna";
         static string _cachedPlatform = "Unknown";
         static bool _unityInfoCached;
         Task _heartbeatTask = Task.CompletedTask;
         Task _moveTask = Task.CompletedTask;
+        Task _recoveryTask = Task.CompletedTask;
         BotMovementClock _clock;
         readonly BotPushTracker _push = new BotPushTracker();
 
@@ -140,6 +140,18 @@ namespace GameMesh.LoadTest
         {
             return System.Diagnostics.Stopwatch.GetTimestamp() * 1000L /
                    System.Diagnostics.Stopwatch.Frequency;
+        }
+
+        static void AtomicMax(ref long target, long value)
+        {
+            long previous;
+            do
+            {
+                previous = Interlocked.Read(ref target);
+                if (previous >= value)
+                    return;
+            }
+            while (Interlocked.CompareExchange(ref target, value, previous) != previous);
         }
 
         static void CacheUnityInfoOnMainThread()
@@ -1077,7 +1089,7 @@ namespace GameMesh.LoadTest
                     // are larger and were timing out too, leaving the bot permanently frozen.
                     // Repeating the exact target is idempotent and stays on the priority MoveRsp path.
                     if (Volatile.Read(ref _moveRecoveryBusy) == 0)
-                        _ = RetryUnknownMoveAsync(planner, _clock, ct);
+                        _recoveryTask = RetryUnknownMoveAsync(planner, _clock, ct);
                 }
                 var queueBlocked = _conn.MoveBackpressured;
                 var sessionReady = InWorld && Volatile.Read(ref _resumeBusy) == 0 &&
@@ -1085,7 +1097,13 @@ namespace GameMesh.LoadTest
                 var poseReady = !PoseUncertain;
                 var holdReady = nowMs >= Interlocked.Read(ref _moveHoldUntilMs);
                 var ready = sessionReady && poseReady && holdReady && !queueBlocked;
-                var tick = _clock.Evaluate(ready, inflight.IsCompleted ? 0 : 1);
+                // RequestAsync completion is not the end of this step. A written Move still owns
+                // the single send slot until its MoveRsp arrives or its own 2-second budget expires.
+                var slotOccupied = !inflight.IsCompleted || !_recoveryTask.IsCompleted ||
+                                   AwaitingMoveAuthority
+                    ? 1
+                    : 0;
+                var tick = _clock.Evaluate(ready, slotOccupied);
                 if (queueBlocked && tick.Kind == BotMoveTickKind.SkipNotReady && _clock.Metrics != null)
                 {
                     _clock.Metrics.SkippedNotReady--;
@@ -1283,6 +1301,10 @@ namespace GameMesh.LoadTest
                         // authority wait and marks this exact move uncertain.
                         metrics.TimeoutBeforeWrite++;
                         _timedOutBeforeWriteCompleted[requestSeq] = sent;
+                        // The write observer may have won the race just before this continuation.
+                        if (_moveWrittenAtMs.ContainsKey(requestSeq) &&
+                            _timedOutBeforeWriteCompleted.TryRemove(requestSeq, out var writtenTarget))
+                            WaitForMoveAuthorityBudget(requestSeq, writtenTarget, metrics);
                     }
                     return;
                 }
@@ -1307,7 +1329,7 @@ namespace GameMesh.LoadTest
             }
 
             // Never resurrect a wait that a very fast receive already confirmed.
-            if ((ulong)Math.Max(0, Interlocked.Read(ref _lastAuthorityRequestSeq)) >= requestSeq)
+            if ((ulong)Math.Max(0, Interlocked.Read(ref _lastResolvedMoveRequestSeq)) >= requestSeq)
             {
                 ForgetMoveRequest(requestSeq);
                 return;
@@ -1321,10 +1343,12 @@ namespace GameMesh.LoadTest
                 WaitForMoveAuthorityBudget(requestSeq, target, metrics);
         }
 
-        void NoteMoveResponse(ulong requestSeq, bool authorityConfirmed, BotMovementMetrics metrics)
+        void NoteMoveResponse(ulong requestSeq, bool authorityConfirmed, BotMovementMetrics metrics,
+            bool recordLatency = true)
         {
-            if (_moveWrittenAtMs.TryRemove(requestSeq, out var writtenAtMs) && authorityConfirmed &&
-                metrics != null)
+            AtomicMax(ref _lastResolvedMoveRequestSeq, (long)requestSeq);
+            if (_moveWrittenAtMs.TryRemove(requestSeq, out var writtenAtMs) &&
+                recordLatency && authorityConfirmed && metrics != null)
             {
                 var elapsed = MonotonicMs() - writtenAtMs;
                 if (elapsed >= 0 && elapsed < 60000)
@@ -1341,15 +1365,7 @@ namespace GameMesh.LoadTest
             if (!authorityConfirmed)
                 return;
 
-            long previous;
-            do
-            {
-                previous = Interlocked.Read(ref _lastAuthorityRequestSeq);
-                if (previous >= (long)requestSeq)
-                    break;
-            }
-            while (Interlocked.CompareExchange(ref _lastAuthorityRequestSeq,
-                       (long)requestSeq, previous) != previous);
+            AtomicMax(ref _lastAuthorityRequestSeq, (long)requestSeq);
 
             var uncertainSeq = Interlocked.Read(ref _uncertainRequestSeq);
             if (uncertainSeq != 0 && (long)requestSeq >= uncertainSeq)
@@ -1379,6 +1395,9 @@ namespace GameMesh.LoadTest
             Interlocked.Increment(ref metrics.UnknownOutcome);
             _unknownStreak++;
             _uncertainTarget = sent;
+            // The request has now left RpcPendingTable. It is a timed-out outcome, not a
+            // centuries-old "currently waiting" sample. A retry gets its own fresh timer.
+            ForgetMoveRequest(requestSeq);
             Interlocked.Exchange(ref _uncertainRequestSeq, (long)requestSeq);
             Volatile.Write(ref _poseUncertain, 1);
 
@@ -1492,84 +1511,6 @@ namespace GameMesh.LoadTest
                 planner.NoteRejected();
         }
 
-        async Task RefreshAuthorityAsync(CancellationToken ct)
-        {
-            var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            if (nowMs < Interlocked.Read(ref _nextAuthorityAtMs))
-                return;
-            if (Interlocked.CompareExchange(ref _authorityBusy, 1, 0) != 0)
-                return;
-            Interlocked.Exchange(ref _nextAuthorityAtMs,
-                nowMs + (PoseUncertain ? 15000 : 10000) + (_index % 20) * 250);
-            var acquired = false;
-            try
-            {
-                await Task.Delay((_index % 30) * 40, ct).ConfigureAwait(false);
-                if (!await AuthorityGate.WaitAsync(TimeSpan.FromMilliseconds(250), ct).ConfigureAwait(false))
-                {
-                    if (PoseUncertain)
-                        Interlocked.Exchange(ref _nextAuthorityAtMs,
-                            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 750 + (_index % 20) * 100);
-                    return;
-                }
-                acquired = true;
-                var rsp = await SendAsync(new GameRequest
-                {
-                    WorldSnapshot = new WorldSnapshotReq
-                    {
-                        PlayerId = _playerId,
-                        LastAppliedServerSeq = _lastServerSeq
-                    }
-                }, TimeSpan.FromSeconds(12), ct).ConfigureAwait(false);
-                var snap = rsp != null ? rsp.FullSnapshot : null;
-                if (snap == null || !snap.Ok || snap.Self == null || snap.Self.Position == null ||
-                    string.Equals(snap.RecoveryReason, "NOT_ON_MAP", StringComparison.OrdinalIgnoreCase) ||
-                    string.Equals(snap.RecoveryReason, "NOT_READY", StringComparison.OrdinalIgnoreCase))
-                {
-                    Status = "权威刷新失败 :" + GatewayPort;
-                    return;
-                }
-
-                // During a normal AOI repair, self still comes from MoveRsp. After a Move timeout,
-                // neither the old nor sent pose is authoritative, so the snapshot self unblocks
-                // movement from a server-confirmed position.
-                if (PoseUncertain)
-                {
-                    _pos = ProtocolMapper.ToUnity(snap.Self.Position);
-                    _yaw = snap.Self.Yaw;
-                    Volatile.Write(ref _poseUncertain, 0);
-                    _unknownStreak = 0;
-                }
-                if (snap.MapInstanceId != 0)
-                    _mapInstanceId = snap.MapInstanceId;
-                if (snap.MapTemplateId != 0)
-                    MapTemplateId = snap.MapTemplateId;
-                if (snap.RealmId != 0)
-                    RealmId = snap.RealmId;
-                if (!string.IsNullOrEmpty(snap.GamelogicInstanceId))
-                    GameLogicInstanceId = snap.GamelogicInstanceId;
-                if (_push.ApplySnapshot(snap))
-                    _lastServerSeq = _push.LastAppliedServerSeq;
-                if (_clock != null && _clock.Metrics != null)
-                    _clock.Metrics.PoseRefresh++;
-                Status = "在线 :" + GatewayPort;
-            }
-            catch (TaskCanceledException)
-            {
-            }
-            catch (Exception ex)
-            {
-                Status = "权威刷新失败 :" + GatewayPort;
-                LoadTestLog.Timeout("snapshot", "bot#" + _index + " " + GameMeshLog.Redact(ex.Message));
-            }
-            finally
-            {
-                if (acquired)
-                    AuthorityGate.Release();
-                Interlocked.Exchange(ref _authorityBusy, 0);
-            }
-        }
-
         TimeSpan RpcBudget(int floorMs)
         {
             if (floorMs < 8000)
@@ -1601,7 +1542,7 @@ namespace GameMesh.LoadTest
             var move = rsp != null ? rsp.Move : null;
             if (move == null || !rsp.Ok || move.Position == null)
                 return;
-            NoteMoveResponse(rsp.Seq, true, _clock != null ? _clock.Metrics : null);
+            NoteMoveResponse(rsp.Seq, true, _clock != null ? _clock.Metrics : null, false);
             if (!MoveRecovery.TryAdoptLate(_authorityStateSeq, move.StateSeq, _conn.Generation, _conn.Generation,
                     _mapInstanceId, _mapInstanceId))
                 return;
@@ -1637,8 +1578,8 @@ namespace GameMesh.LoadTest
                 var applied = _push.ObserveServerPush(rsp.ServerPush, inner);
                 if (applied)
                     _lastServerSeq = _push.LastAppliedServerSeq;
-                else if (_push.HasGap && Volatile.Read(ref _authorityBusy) == 0)
-                    _ = RefreshAuthorityAsync(_life.Token);
+                // A gap only affects remote AOI rendering. This bot's own authority comes from
+                // its MoveRsp; never pause Move or fetch a full snapshot to hide a remote gap.
                 return;
             }
 

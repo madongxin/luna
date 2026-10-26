@@ -83,6 +83,27 @@ namespace GameMesh.Network
             return true;
         }
 
+        /// <summary>
+        /// Deterministic deadline sweep used by the connection watchdog. Per-request timer
+        /// callbacks can be delayed for minutes when hundreds of bots create timer pressure.
+        /// </summary>
+        public int ExpireDue(long nowMs, Action<Slot, int> onExpired)
+        {
+            var count = 0;
+            foreach (var pair in _open)
+            {
+                var slot = pair.Value;
+                if (slot == null || slot.DeadlineAtMs <= 0 || nowMs < slot.DeadlineAtMs)
+                    continue;
+                if (!TryTimeout(slot, false, out var phase))
+                    continue;
+                count++;
+                onExpired?.Invoke(slot, phase);
+            }
+
+            return count;
+        }
+
         public SendDecision PrepareSend(Slot slot, long nowMs)
         {
             if (slot == null)

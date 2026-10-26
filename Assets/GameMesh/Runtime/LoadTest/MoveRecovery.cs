@@ -2,11 +2,11 @@ namespace GameMesh.LoadTest
 {
     public static class MoveRecovery
     {
-        public const int SnapshotAfterUnknown = 3;
-
         public static bool NeedsSnapshot(int unknownAfterWrite)
         {
-            return unknownAfterWrite >= SnapshotAfterUnknown;
+            // A full snapshot is not a Move recovery path. Remote AOI gaps and Move timeouts
+            // stay separate; the exact timed-out Move target is retried instead.
+            return false;
         }
 
         public static bool TryAdoptLate(ulong haveStateSeq, ulong gotStateSeq, int haveGeneration, int gotGeneration,

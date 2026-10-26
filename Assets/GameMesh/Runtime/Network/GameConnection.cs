@@ -27,6 +27,7 @@ namespace GameMesh.Network
         CancellationTokenSource _loopCts;
         Task _recvTask = Task.CompletedTask;
         Task _sendTask = Task.CompletedTask;
+        Task _timeoutTask = Task.CompletedTask;
         long _seq;
         int _queued;
         int _generation;
@@ -154,6 +155,7 @@ namespace GameMesh.Network
                     var loopGeneration = _generation;
                     _recvTask = Task.Run(() => ReceiveLoopAsync(loopToken, loopGeneration), loopToken);
                     _sendTask = Task.Run(() => SendLoopAsync(loopToken, loopGeneration), loopToken);
+                    _timeoutTask = Task.Run(() => TimeoutLoopAsync(loopToken, loopGeneration), loopToken);
                 }
 
                 SetState(ConnectionState.Handshaking);
@@ -229,25 +231,20 @@ namespace GameMesh.Network
             _sendQueue.Enqueue(new SendItem(frame, slot, request.Seq, BodyName(request), now));
             _sendSignal.Release();
 
-            var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeoutCts.CancelAfter(timeout);
-            var registration = timeoutCts.Token.Register(() =>
+            // The 2-second RPC deadline is enforced by TimeoutLoopAsync. One CancelAfter timer
+            // per request was delayed by minutes during 305-bot tests and left stale slots open.
+            var registration = ct.Register(() =>
             {
-                if (_pending.TryTimeout(slot, ct.IsCancellationRequested, out var phase))
+                if (_pending.TryTimeout(slot, true, out var phase))
                 {
-                    var code = ct.IsCancellationRequested
-                        ? GameMeshErrorCode.ClientCancelled
-                        : phase == RpcPendingTable.Slot.PhaseIdle
-                            ? GameMeshErrorCode.ClientQueueExpired
-                            : GameMeshErrorCode.ClientTimeout;
                     pending.TrySetException(new GameMeshException(
-                        code, $"seq={request.Seq} {code}", null, phase));
+                        GameMeshErrorCode.ClientCancelled,
+                        $"seq={request.Seq} {GameMeshErrorCode.ClientCancelled}", null, phase));
                 }
             });
             tcs.Task.ContinueWith(_ =>
             {
                 registration.Dispose();
-                timeoutCts.Dispose();
             }, TaskScheduler.Default);
             return tcs.Task;
         }
@@ -304,7 +301,8 @@ namespace GameMesh.Network
 
             try
             {
-                await Task.WhenAll(IgnoreFault(_recvTask), IgnoreFault(_sendTask)).ConfigureAwait(false);
+                await Task.WhenAll(IgnoreFault(_recvTask), IgnoreFault(_sendTask),
+                    IgnoreFault(_timeoutTask)).ConfigureAwait(false);
             }
             catch (OperationCanceledException)
             {
@@ -346,6 +344,29 @@ namespace GameMesh.Network
             else if (request.Seq > LastClientSeq)
                 Interlocked.Exchange(ref _seq, (long)request.Seq);
             return request.Seq;
+        }
+
+        async Task TimeoutLoopAsync(CancellationToken ct, int generation)
+        {
+            try
+            {
+                while (!ct.IsCancellationRequested && generation == _generation)
+                {
+                    _pending.ExpireDue(MonoMs(), (slot, phase) =>
+                    {
+                        var code = phase == RpcPendingTable.Slot.PhaseIdle
+                            ? GameMeshErrorCode.ClientQueueExpired
+                            : GameMeshErrorCode.ClientTimeout;
+                        var call = slot.Tag as PendingCall;
+                        call?.TrySetException(new GameMeshException(
+                            code, $"seq={slot.RequestSeq} {code}", null, phase));
+                    });
+                    await Task.Delay(50, ct).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException)
+            {
+            }
         }
 
         async Task SendLoopAsync(CancellationToken ct, int generation)

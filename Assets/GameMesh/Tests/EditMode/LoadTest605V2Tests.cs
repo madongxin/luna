@@ -286,11 +286,27 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void Pending_DeadlineSweep_RemovesStaleCall()
+        {
+            var table = new RpcPendingTable();
+            Assert.IsTrue(table.TryRegister(1, 10, 0, out var slot));
+            slot.DeadlineAtMs = 2000;
+            var expiredPhase = -1;
+            Assert.AreEqual(0, table.ExpireDue(1999, (_, phase) => expiredPhase = phase));
+            Assert.AreEqual(1, table.Count);
+            Assert.AreEqual(1, table.ExpireDue(2000, (_, phase) => expiredPhase = phase));
+            Assert.AreEqual(RpcPendingTable.Slot.PhaseIdle, expiredPhase);
+            Assert.AreEqual(0, table.Count);
+            Assert.AreEqual(1, table.Metrics.Timeout);
+            Assert.AreEqual(1, table.Metrics.ExpiredBeforeWrite);
+        }
+
+        [Test]
         public void Recovery_BeforeWrite_DoesNotSnapshot()
         {
             Assert.IsFalse(MoveRecovery.NeedsSnapshot(0));
             Assert.IsFalse(MoveRecovery.NeedsSnapshot(2));
-            Assert.IsTrue(MoveRecovery.NeedsSnapshot(3));
+            Assert.IsFalse(MoveRecovery.NeedsSnapshot(3));
         }
 
         [Test]
