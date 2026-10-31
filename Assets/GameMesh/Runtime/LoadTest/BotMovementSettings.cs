@@ -33,6 +33,8 @@ namespace GameMesh.LoadTest
         // Do not wander out to the map AABB.
         public float SafeRadius = 24f;
         public float OutboundMeters = 50f;
+        public float HomeRadiusMeters = 100f;
+        public int BotCount;
         public float WanderMin = 10f;
         public float WanderMax = 24f;
         public float PauseMaxSec = 2f;
@@ -59,6 +61,8 @@ namespace GameMesh.LoadTest
                 CellSize = CellSize,
                 SafeRadius = SafeRadius,
                 OutboundMeters = OutboundMeters,
+                HomeRadiusMeters = HomeRadiusMeters,
+                BotCount = BotCount,
                 WanderMin = WanderMin,
                 WanderMax = WanderMax,
                 PauseMaxSec = PauseMaxSec,
@@ -95,6 +99,10 @@ namespace GameMesh.LoadTest
                 return "map radii must be positive";
             if (OutboundMeters < 1f || OutboundMeters > 200f)
                 return "outbound leg must be 1..200 meters";
+            if (HomeRadiusMeters < 1f || HomeRadiusMeters > 200f)
+                return "home radius must be 1..200 meters";
+            if (BotCount < 0)
+                return "bot count must be >= 0";
             if (WanderMin < 0f || WanderMax < WanderMin || WanderMax > SafeRadius)
                 return "wander range must sit inside the safe radius";
             if (PauseMaxSec < 0f || PauseMaxSec > 5f)

@@ -11,9 +11,9 @@ namespace GameMesh.Map
         public const float ServerMetersPerSec = 10f;
         public const int AoiMergeMs = 200;
         public const int VisibleOthers = 200;
-        public const int SuzhouLineCap = 400;
+        public const int SuzhouLineCap = 300;
         public const int SuzhouMaxLines = 8;
-        public const int SuzhouMaxPlayers = 3200;
+        public const int SuzhouMaxPlayers = 2400;
 
         public static float MaxMeters(float dtSec)
         {

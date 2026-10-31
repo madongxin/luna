@@ -35,6 +35,7 @@ namespace GameMesh.LoadTest
         int _phase;
         bool _rejected;
         bool _returning;
+        int _scatterNudge;
 
         public int WaypointIndex => _waypoint;
 
@@ -112,6 +113,84 @@ namespace GameMesh.LoadTest
                 CrossesCell = CrossesCell(confirmed, next),
                 CrossesInterest = CrossesInterest(confirmed, next)
             };
+        }
+
+        /// <summary>
+        /// Walk to this bot's own home, then pick random points inside HomeRadiusMeters.
+        /// The disk is convex, so a step toward an interior goal stays inside it.
+        /// </summary>
+        public MovePlan NextAroundHome(Vector3 confirmed, float maxStepMeters = -1f)
+        {
+            var maxStep = maxStepMeters >= 0f ? maxStepMeters : _settings.MaxStepMeters;
+            var radius = _settings.HomeRadiusMeters > 0f ? _settings.HomeRadiusMeters : 100f;
+            var outside = Flat(confirmed, _spawn) > radius + 0.5f;
+            if (_rejected || !_hasGoal)
+            {
+                _rejected = false;
+                _goal = outside ? ScatterAim(confirmed) : PointInsideDisk(radius);
+                _hasGoal = true;
+                _waypoint++;
+            }
+
+            if (Flat(confirmed, _goal) <= 0.35f)
+            {
+                _goal = PointInsideDisk(radius);
+                _waypoint++;
+            }
+
+            var next = Step(confirmed, _goal, maxStep);
+            next.y = confirmed.y;
+            if (!outside)
+                next = ClampDisk(next, _spawn, radius);
+            if (Flat(next, confirmed) < 0.02f)
+            {
+                _hasGoal = false;
+                return MovePlan.None("path_rejected", _waypoint);
+            }
+
+            var yaw = Mathf.Atan2(next.x - confirmed.x, next.z - confirmed.z) * Mathf.Rad2Deg;
+            return new MovePlan
+            {
+                Send = true,
+                Position = next,
+                Yaw = yaw,
+                Reason = outside ? "scatter" : "wander",
+                WaypointIndex = _waypoint,
+                CrossesCell = CrossesCell(confirmed, next),
+                CrossesInterest = CrossesInterest(confirmed, next)
+            };
+        }
+
+        Vector3 ScatterAim(Vector3 from)
+        {
+            var dx = _spawn.x - from.x;
+            var dz = _spawn.z - from.z;
+            var len = Mathf.Sqrt(dx * dx + dz * dz);
+            if (len < 0.01f)
+                return _spawn;
+            var ahead = Mathf.Min(80f, len);
+            var side = _scatterNudge * 16f;
+            _scatterNudge = _scatterNudge > 0 ? -_scatterNudge : -_scatterNudge + 1;
+            if (_scatterNudge > 6)
+                _scatterNudge = 0;
+            var px = -dz / len;
+            var pz = dx / len;
+            return new Vector3(
+                from.x + dx / len * ahead + px * side,
+                from.y,
+                from.z + dz / len * ahead + pz * side);
+        }
+
+        Vector3 PointInsideDisk(float radius)
+        {
+            var angle = (float)(_rng.NextDouble() * Mathf.PI * 2.0);
+            var dist = Mathf.Sqrt((float)_rng.NextDouble()) * radius;
+            if (radius > 8f && dist < 8f)
+                dist = 8f;
+            return new Vector3(
+                _spawn.x + Mathf.Cos(angle) * dist,
+                _spawn.y,
+                _spawn.z + Mathf.Sin(angle) * dist);
         }
 
         Vector3 PointOnCircle(Vector3 center, float radius)

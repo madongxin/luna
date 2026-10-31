@@ -1077,6 +1077,8 @@ namespace GameMesh.LoadTest
                 ? settings.ProfileFor(_index)
                 : BotMovementProfile.Idle;
             _clock = new BotMovementClock(settings, _index);
+            var population = settings.BotCount > 0 ? settings.BotCount : 1;
+            _spawn = BotHomeLayout.Pick(_index, population, _pos.y);
             var planner = new BotMovementPlanner(Profile, _index, settings, _spawn);
             var gen = _loopGen;
             Task inflight = Task.CompletedTask;
@@ -1129,7 +1131,7 @@ namespace GameMesh.LoadTest
                     // within 10 m/s of that delta; one second is enough for one step.
                     var stepDt = dt > 1f ? 1f : dt;
                     var maxStep = MoveStepLimit.PlannedMeters(stepDt, settings.WalkSpeed);
-                    var plan = planner.NextOutAndBack(_pos, maxStep);
+                    var plan = planner.NextAroundHome(_pos, maxStep);
                     if (!plan.Send)
                     {
                         if (plan.Reason == "pause")

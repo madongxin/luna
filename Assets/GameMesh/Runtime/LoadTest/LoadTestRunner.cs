@@ -314,7 +314,9 @@ namespace GameMesh.LoadTest
             {
                 if (count > MoveStepLimit.SuzhouMaxPlayers)
                 {
-                    _lastError = "1002 最多 8 条线、每线 400 人，一共 3200。这一波没有启动";
+                    _lastError = "1002 最多 " + MoveStepLimit.SuzhouMaxLines +
+                                 " 条线、每线 " + MoveStepLimit.SuzhouLineCap +
+                                 " 人，一共 " + MoveStepLimit.SuzhouMaxPlayers + "。这一波没有启动";
                     _phase = "超出 1002 容量";
                     _busy = false;
                     return;
@@ -369,6 +371,8 @@ namespace GameMesh.LoadTest
                 // bot AOI callbacks on the Unity dispatcher made rendering pay for load generation.
                 // The local playable client still uses GameMeshMainThreadDispatcher.
                 var dispatcher = new ImmediateDispatcher();
+                Movement.BotCount = count;
+                BotHomeLayout.BeginWave();
                 var stamp = DateTime.Now.ToString("HHmmssfff");
                 var gate = new SemaphoreSlim(20);
                 var tasks = new List<Task>(count);

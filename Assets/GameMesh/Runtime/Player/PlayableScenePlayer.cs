@@ -209,6 +209,9 @@ namespace GameMesh.Player
                 var layers = tp.GetType().GetField("GroundLayers");
                 if (layers != null)
                     layers.SetValue(tp, (LayerMask)(-1));
+                // Server move_speed is 10 m/s. Faster than that is pulled back.
+                SetFloat(tp, "MoveSpeed", 10f);
+                SetFloat(tp, "SprintSpeed", 10f);
             }
 
             var playerInput = player.GetComponent("PlayerInput") as Behaviour;
@@ -304,6 +307,13 @@ namespace GameMesh.Player
             var field = _starterInput.GetType().GetField(name);
             if (field != null)
                 field.SetValue(_starterInput, value);
+        }
+
+        static void SetFloat(MonoBehaviour behaviour, string name, float value)
+        {
+            var field = behaviour.GetType().GetField(name);
+            if (field != null)
+                field.SetValue(behaviour, value);
         }
 
         void SpawnFpsPlayer(Pose spawn)

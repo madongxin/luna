@@ -474,8 +474,9 @@ namespace GameMesh.UI
                 MoveStepLimit.VisibleOthers + " 人，自己不算。",
                 _hint);
             GUILayout.Label(
-                "每个机器人从出生点走向随机方向 " + runner.Movement.OutboundMeters.ToString("0") +
-                "m 的目标，到达后走回出生点，再换一个方向。Hz 只决定多久发一次，服务器不按 2/5/10Hz 拒包。一步不超过 10 米/秒乘 client_time_ms 的间隔。权威确认只表示坐标已提交，别人大约每 " +
+                "出生点在玩家出生点周围 20 个格子里随机选，一格 8 米。服务器仍先把所有人放在玩家出生点，机器人再走到自己的格子，然后在 " +
+                runner.Movement.HomeRadiusMeters.ToString("0") +
+                "m 内随机走。Hz 只决定多久发一次，服务器不按 2/5/10Hz 拒包。一步不超过 10 米/秒乘 client_time_ms 的间隔。权威确认只表示坐标已提交，别人大约每 " +
                 MoveStepLimit.AoiMergeMs + "ms 合并一次位置。8081/8083 各一半。",
                 _hint);
             _loadCount = Field("登录人数", _loadCount);

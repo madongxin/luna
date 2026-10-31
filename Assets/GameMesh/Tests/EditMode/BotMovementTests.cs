@@ -321,7 +321,8 @@ namespace GameMesh.Tests.EditMode
             var far = MoveStepLimit.Clamp(Vector3.zero, new Vector3(5f, -20f, 0f), MoveStepLimit.MaxMeters(0.1f));
             Assert.LessOrEqual(far.magnitude, 1.001f);
             Assert.Greater(600, MoveStepLimit.SuzhouLineCap);
-            Assert.AreEqual(3200, MoveStepLimit.SuzhouLineCap * MoveStepLimit.SuzhouMaxLines);
+            Assert.AreEqual(300, MoveStepLimit.SuzhouLineCap);
+            Assert.AreEqual(2400, MoveStepLimit.SuzhouLineCap * MoveStepLimit.SuzhouMaxLines);
             Assert.Greater(10000, MoveStepLimit.SuzhouMaxPlayers);
             Assert.AreEqual(200, MoveStepLimit.VisibleOthers);
         }
@@ -379,6 +380,74 @@ namespace GameMesh.Tests.EditMode
             var turned = rejected.NextOutAndBack(target.Position, 5f);
             Assert.AreEqual("outbound", turned.Reason);
             Assert.Greater(Flat(turned.Position, target.Position), 0.02f);
+        }
+
+        [Test]
+        public void Homes_StayWithinTwentyCellsOfPlayerSpawn()
+        {
+            var cells = new bool[80 * 80];
+            for (var i = 0; i < cells.Length; i++)
+                cells[i] = true;
+            const float step = 8f;
+            const float anchorX = (40 + 0.5f) * step;
+            const float anchorZ = (40 + 0.5f) * step;
+            BotHomeLayout.InstallForTests(0f, 0f, step, 80, 80, cells, anchorX, anchorZ);
+            try
+            {
+                BotHomeLayout.BeginWave();
+                var homes = new Vector3[40];
+                for (var i = 0; i < homes.Length; i++)
+                    homes[i] = BotHomeLayout.Pick(i, homes.Length, -18f);
+                var distinct = 0;
+                for (var i = 0; i < homes.Length; i++)
+                {
+                    Assert.AreEqual(-18f, homes[i].y, 0.001f);
+                    var col = (int)System.Math.Floor(homes[i].x / step);
+                    var row = (int)System.Math.Floor(homes[i].z / step);
+                    Assert.LessOrEqual(System.Math.Abs(col - 40), BotHomeLayout.SpawnCellRadius);
+                    Assert.LessOrEqual(System.Math.Abs(row - 40), BotHomeLayout.SpawnCellRadius);
+                    var same = false;
+                    for (var j = 0; j < i; j++)
+                    {
+                        if (homes[j] == homes[i])
+                            same = true;
+                    }
+
+                    if (!same)
+                        distinct++;
+                }
+
+                Assert.Greater(distinct, 10);
+            }
+            finally
+            {
+                BotHomeLayout.Clear();
+            }
+        }
+
+        [Test]
+        public void AroundHome_StaysInsideOneHundredMeters()
+        {
+            var home = new Vector3(1000f, -18f, -500f);
+            var settings = Settings();
+            settings.HomeRadiusMeters = 100f;
+            var planner = new BotMovementPlanner(BotMovementProfile.Idle, 3, settings, home);
+            var pos = home;
+            for (var i = 0; i < 40; i++)
+            {
+                var plan = planner.NextAroundHome(pos, 10f);
+                Assert.IsTrue(plan.Send);
+                Assert.AreEqual("wander", plan.Reason);
+                Assert.LessOrEqual(Flat(home, plan.Position), 100.05f);
+                Assert.LessOrEqual(Flat(pos, plan.Position), 10.05f);
+                pos = plan.Position;
+            }
+
+            var far = new Vector3(home.x + 800f, home.y, home.z);
+            var scatter = new BotMovementPlanner(BotMovementProfile.Idle, 4, settings, home);
+            var step = scatter.NextAroundHome(far, 10f);
+            Assert.AreEqual("scatter", step.Reason);
+            Assert.Less(Flat(home, step.Position), Flat(home, far));
         }
 
         static float Flat(Vector3 a, Vector3 b)
