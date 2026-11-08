@@ -450,6 +450,185 @@ namespace GameMesh.Tests.EditMode
             Assert.Less(Flat(home, step.Position), Flat(home, far));
         }
 
+        [Test]
+        public void SparsePatrol_Defaults_AndValidate()
+        {
+            var settings = new BotMovementSettings();
+            Assert.IsTrue(settings.SparsePatrol);
+            Assert.AreEqual(60, settings.ClusterSize);
+            Assert.AreEqual(100, settings.MoveDutyPct);
+            Assert.AreEqual(10f, settings.SegmentMinSec, 0.001f);
+            Assert.AreEqual(30f, settings.SegmentMaxSec, 0.001f);
+            Assert.IsNull(settings.Validate());
+            settings.ClusterSize = 20;
+            Assert.AreEqual("cluster_size must be 0 or 40..80", settings.Validate());
+            settings.ClusterSize = 0;
+            Assert.IsNull(settings.Validate());
+        }
+
+        [Test]
+        public void SparsePatrol_OnlyDepartAndOptionalArrive()
+        {
+            var settings = Settings();
+            settings.SparsePatrol = true;
+            settings.SegmentMinSec = 10f;
+            settings.SegmentMaxSec = 10f;
+            settings.MoveDutyPct = 100;
+            settings.WalkSpeed = 5.5f;
+            settings.ServerMoveSpeed = 10f;
+            settings.ClusterSize = 60;
+            var sparse = new SparsePatrolController(3, settings);
+            var metrics = new BotMovementMetrics();
+            long now = 0;
+            sparse.Arm(now);
+            var confirmed = new Vector3(100f, -18f, 200f);
+            var plan = sparse.Poll(confirmed, now, metrics, out _);
+
+            Assert.IsTrue(plan.Send);
+            Assert.AreEqual("depart", plan.Reason);
+            // Sparse legs cover the full interval at the server's authority speed; using
+            // WalkSpeed here made the body arrive early and visibly stand still.
+            Assert.AreEqual(100f, Flat(confirmed, plan.Position), 6f);
+            sparse.NoteSent(plan.Yaw, now, plan.Reason, metrics);
+
+            // Mid-segment: no MOVE even as wall clock advances.
+            var segmentMs = (long)(Flat(confirmed, plan.Position) /
+                                   settings.ServerMoveSpeed * 1000f);
+            now = segmentMs - 1;
+            var mid = sparse.Poll(confirmed, now, metrics, out _);
+            Assert.IsFalse(mid.Send);
+
+            // Server shortened: confirmed still at start when segment ends → arrive.
+            now = segmentMs;
+            var arrive = sparse.Poll(confirmed, now, metrics, out _);
+            Assert.IsTrue(arrive.Send);
+            Assert.AreEqual("arrive", arrive.Reason);
+            Assert.AreEqual(plan.Position, arrive.Position);
+            sparse.NoteSent(arrive.Yaw, now, arrive.Reason, metrics);
+
+            // Already at goal: no arrive packet.
+            var done = new SparsePatrolController(4, settings);
+            metrics = new BotMovementMetrics();
+            now = 0;
+            done.Arm(now);
+            plan = done.Poll(confirmed, now, metrics, out _);
+            Assert.AreEqual("depart", plan.Reason);
+            done.NoteSent(plan.Yaw, now, "depart", metrics);
+            var atGoal = plan.Position;
+            var doneSegmentMs = (long)(Flat(confirmed, atGoal) /
+                                       settings.ServerMoveSpeed * 1000f);
+            now += doneSegmentMs;
+            var nextDepart = done.Poll(atGoal, now, metrics, out _);
+            Assert.IsTrue(nextDepart.Send);
+            Assert.AreEqual("depart", nextDepart.Reason);
+            Assert.AreEqual(doneSegmentMs, metrics.MovingMs);
+            Assert.AreEqual(0, metrics.DwellingMs);
+            Assert.AreEqual(1.0, metrics.DutyRatio, 0.001);
+        }
+
+        [Test]
+        public void SparsePatrol_DutyAndTurnsAggregate()
+        {
+            var metrics = new BotMovementMetrics();
+            metrics.Sent = 12;
+            metrics.Turns = 3;
+            metrics.MovingMs = 60000;
+            metrics.DwellingMs = 40000;
+            metrics.SampleStartedMs = 0;
+            metrics.SampleEndedMs = 100000;
+            Assert.AreEqual(0.12, metrics.UplinkMovePerSec, 0.001);
+            Assert.AreEqual(0.6, metrics.DutyRatio, 0.001);
+            var json = metrics.ToJson("sparse");
+            StringAssert.Contains("\"uplink_move_per_sec\": 0.12", json);
+            StringAssert.Contains("\"turns\": 3", json);
+            StringAssert.Contains("\"duty\": 0.6", json);
+            StringAssert.Contains("\"moving_ms\": 60000", json);
+            StringAssert.Contains("\"dwelling_ms\": 40000", json);
+
+            var sum = new BotMovementMetrics();
+            sum.Add(metrics);
+            var other = new BotMovementMetrics { Turns = 2, MovingMs = 1000, DwellingMs = 500 };
+            sum.Add(other);
+            Assert.AreEqual(5, sum.Turns);
+            Assert.AreEqual(61000, sum.MovingMs);
+            Assert.AreEqual(40500, sum.DwellingMs);
+
+            var settings = Settings();
+            settings.SegmentMinSec = 10f;
+            settings.SegmentMaxSec = 10f;
+            settings.MoveDutyPct = 100;
+            var turnMetrics = new BotMovementMetrics();
+            var sparse = new SparsePatrolController(1, settings);
+            sparse.Arm(0);
+            var from = Vector3.zero;
+            long t = 0;
+            var first = sparse.Poll(from, t, turnMetrics, out _);
+
+            sparse.NoteSent(0f, t, "depart", turnMetrics);
+            sparse.NoteSent(40f, t + 100, "arrive", turnMetrics);
+            Assert.AreEqual(1, turnMetrics.Turns);
+        }
+
+        [Test]
+        public void SparsePatrol_StepDt_UsesFullClientGap()
+        {
+            // Sparse path must not chop client_time gaps to 1s (that shattered one leg).
+            var dt = 18f;
+            var max = MoveStepLimit.MaxMeters(dt);
+            Assert.AreEqual(180f, max, 0.001f);
+            var first = MoveStepLimit.MaxMeters(10f);
+            Assert.AreEqual(100f, first, 0.001f);
+        }
+
+        [Test]
+        public void Clusters_AreNinetySixMetersApart_AndTwelveMeterRadius()
+        {
+            var cells = new bool[200 * 200];
+            for (var i = 0; i < cells.Length; i++)
+                cells[i] = true;
+            const float step = 8f;
+            const float anchorX = (100 + 0.5f) * step;
+            const float anchorZ = (100 + 0.5f) * step;
+            BotHomeLayout.InstallForTests(0f, 0f, step, 200, 200, cells, anchorX, anchorZ);
+            try
+            {
+                BotHomeLayout.BeginWave();
+                const int clusterSize = 60;
+                const int bots = 180;
+                var homes = new Vector3[bots];
+                for (var i = 0; i < bots; i++)
+                    homes[i] = BotHomeLayout.PickClustered(i, bots, -18f, clusterSize, 96f, 12f);
+
+                var centers = new Vector3[3];
+                for (var c = 0; c < 3; c++)
+                {
+                    var sx = 0f;
+                    var sz = 0f;
+                    for (var i = 0; i < clusterSize; i++)
+                    {
+                        sx += homes[c * clusterSize + i].x;
+                        sz += homes[c * clusterSize + i].z;
+                    }
+
+                    centers[c] = new Vector3(sx / clusterSize, 0f, sz / clusterSize);
+                }
+
+                Assert.GreaterOrEqual(Flat(centers[0], centers[1]), 90f);
+                Assert.GreaterOrEqual(Flat(centers[0], centers[2]), 90f);
+                for (var i = 0; i < clusterSize; i++)
+                    Assert.LessOrEqual(Flat(homes[i], centers[0]), 12f + step);
+
+                BotHomeLayout.BeginWave();
+                var legacy = BotHomeLayout.Pick(0, bots, -18f);
+                BotHomeLayout.BeginWave();
+                Assert.AreEqual(legacy, BotHomeLayout.PickClustered(0, bots, -18f, 0));
+            }
+            finally
+            {
+                BotHomeLayout.Clear();
+            }
+        }
+
         static float Flat(Vector3 a, Vector3 b)
         {
             var dx = a.x - b.x;

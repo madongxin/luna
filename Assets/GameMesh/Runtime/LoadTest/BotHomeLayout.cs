@@ -96,6 +96,105 @@ namespace GameMesh.LoadTest
             }
         }
 
+        /// <summary>
+        /// Pack bots into clusters whose centers sit ClusterSpacing apart (beyond the 32m AOI).
+        /// Each bot lands inside ClusterRadius of its center, snapped to the nearest walkable cell.
+        /// clusterSize 0 falls back to <see cref="Pick"/>.
+        /// </summary>
+        public static Vector3 PickClustered(int botIndex, int botCount, float y, int clusterSize,
+            float spacingMeters = 96f, float radiusMeters = 12f)
+        {
+            if (clusterSize <= 0)
+                return Pick(botIndex, botCount, y);
+            if (clusterSize < 40)
+                clusterSize = 40;
+            if (clusterSize > 80)
+                clusterSize = 80;
+            if (botCount < 1)
+                botCount = 1;
+            if (spacingMeters < 1f)
+                spacingMeters = 96f;
+            if (radiusMeters < 1f)
+                radiusMeters = 12f;
+
+            lock (Gate)
+            {
+                EnsureLoaded();
+                var clusters = (botCount + clusterSize - 1) / clusterSize;
+                if (clusters < 1)
+                    clusters = 1;
+                var clusterId = botIndex / clusterSize;
+                if (clusterId >= clusters)
+                    clusterId = clusters - 1;
+                var gridW = (int)Math.Ceiling(Math.Sqrt(clusters));
+                if (gridW < 1)
+                    gridW = 1;
+                var cx = clusterId % gridW;
+                var cz = clusterId / gridW;
+                var anchor = CellAt(_anchorCol, _anchorRow, y);
+                var centerX = anchor.x + (cx - (gridW - 1) * 0.5f) * spacingMeters;
+                var centerZ = anchor.z + (cz - (gridW - 1) * 0.5f) * spacingMeters;
+                var roll = StableSlot(botIndex, 1000003);
+                var angle = (roll % 6283) / 1000f;
+                var dist = Mathf.Sqrt((roll % 10000) / 10000f) * radiusMeters;
+                var raw = new Vector3(
+                    centerX + Mathf.Cos(angle) * dist,
+                    y,
+                    centerZ + Mathf.Sin(angle) * dist);
+                return SnapNearestWalkableUnlocked(raw, y);
+            }
+        }
+
+        public static Vector3 SnapNearestWalkable(Vector3 world, float y)
+        {
+            lock (Gate)
+            {
+                EnsureLoaded();
+                return SnapNearestWalkableUnlocked(world, y);
+            }
+        }
+
+        static Vector3 SnapNearestWalkableUnlocked(Vector3 world, float y)
+        {
+            if (_walkable == null || _width < 1 || _height < 1)
+                return new Vector3(world.x, y, world.z);
+            var col = CellIndex(world.x, _originX, _width);
+            var row = CellIndex(world.z, _originZ, _height);
+            var best = -1;
+            var bestDist = int.MaxValue;
+            const int maxRing = 24;
+            for (var ring = 0; ring <= maxRing; ring++)
+            {
+                for (var dr = -ring; dr <= ring; dr++)
+                {
+                    for (var dc = -ring; dc <= ring; dc++)
+                    {
+                        if (ring > 0 && Math.Abs(dr) != ring && Math.Abs(dc) != ring)
+                            continue;
+                        var c = col + dc;
+                        var r = row + dr;
+                        if (c < 0 || r < 0 || c >= _width || r >= _height)
+                            continue;
+                        var index = r * _width + c;
+                        if (index >= _walkable.Length || !_walkable[index])
+                            continue;
+                        var dist = dr * dr + dc * dc;
+                        if (dist >= bestDist)
+                            continue;
+                        bestDist = dist;
+                        best = index;
+                    }
+                }
+
+                if (best >= 0)
+                    break;
+            }
+
+            if (best < 0)
+                return CellAt(_anchorCol, _anchorRow, y);
+            return CellAt(best % _width, best / _width, y);
+        }
+
         static void SetAnchor(float x, float z)
         {
             _anchorCol = CellIndex(x, _originX, _width);

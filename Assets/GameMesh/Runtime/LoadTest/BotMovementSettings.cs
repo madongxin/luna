@@ -41,6 +41,17 @@ namespace GameMesh.LoadTest
         public int AoiVisibleCapExpected = 200;
         public bool SyncWave;
 
+        // Sparse waypoint patrol (default on). Mid-segment MOVE is omitted.
+        public bool SparsePatrol = true;
+        public float SegmentMinSec = 10f;
+        public float SegmentMaxSec = 30f;
+        // Sparse patrol is continuous: a completed segment immediately starts the next one.
+        public int MoveDutyPct = 100;
+        // 0 = legacy BotHomeLayout.Pick. Otherwise pack bots into clusters of this size.
+        public int ClusterSize = 60;
+        public float ClusterSpacingMeters = 96f;
+        public float ClusterRadiusMeters = 12f;
+
         public BotMovementSettings Clone()
         {
             return new BotMovementSettings
@@ -67,7 +78,14 @@ namespace GameMesh.LoadTest
                 WanderMax = WanderMax,
                 PauseMaxSec = PauseMaxSec,
                 AoiVisibleCapExpected = AoiVisibleCapExpected,
-                SyncWave = SyncWave
+                SyncWave = SyncWave,
+                SparsePatrol = SparsePatrol,
+                SegmentMinSec = SegmentMinSec,
+                SegmentMaxSec = SegmentMaxSec,
+                MoveDutyPct = MoveDutyPct,
+                ClusterSize = ClusterSize,
+                ClusterSpacingMeters = ClusterSpacingMeters,
+                ClusterRadiusMeters = ClusterRadiusMeters
             };
         }
 
@@ -109,6 +127,14 @@ namespace GameMesh.LoadTest
                 return "pause must be 0..5 seconds";
             if (AoiVisibleCapExpected != GameMesh.Map.MoveStepLimit.VisibleOthers)
                 return "aoi cap is 200 other players, self excluded, and is not sent to the server";
+            if (SegmentMinSec < 1f || SegmentMaxSec < SegmentMinSec || SegmentMaxSec > 120f)
+                return "segment duration must be 1..120 seconds with min <= max";
+            if (MoveDutyPct < 1 || MoveDutyPct > 100)
+                return "move_duty_pct must be 1..100";
+            if (ClusterSize != 0 && (ClusterSize < 40 || ClusterSize > 80))
+                return "cluster_size must be 0 or 40..80";
+            if (ClusterSpacingMeters < 1f || ClusterRadiusMeters < 1f)
+                return "cluster spacing and radius must be positive";
             return null;
         }
 

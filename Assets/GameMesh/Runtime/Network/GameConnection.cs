@@ -78,7 +78,9 @@ namespace GameMesh.Network
             }
         }
 
-        public bool MoveBackpressured => SendQueueDepth >= 2 || OldestQueueAgeMs >= 400;
+        // Under cwnd=1 extra Moves just sit behind a retransmit. Prefer drop-skip over pile-up.
+        // Depth 1 still allows Heartbeat+Move to share the pipe; depth 2 means a Move is already waiting.
+        public bool MoveBackpressured => SendQueueDepth >= 2 || OldestQueueAgeMs >= 250;
         public int QueueWaitP95 => _pending.Metrics.QueueWaitMs.Percentile(95);
         public int QueueWaitMax => _pending.Metrics.QueueWaitMs.Max;
 

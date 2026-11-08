@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.Text;
 
 namespace GameMesh.LoadTest
@@ -37,6 +38,9 @@ namespace GameMesh.LoadTest
         public int SchedulerLagMs;
         public long SampleStartedMs;
         public long SampleEndedMs;
+        public int Turns;
+        public long MovingMs;
+        public long DwellingMs;
         readonly int[] _latency = new int[256];
         int _latencyCount;
         int _latencyCursor;
@@ -85,12 +89,23 @@ namespace GameMesh.LoadTest
             }
         }
 
+        public double UplinkMovePerSec => ActualSendHz;
+
         public double ActualSuccessHz
         {
             get
             {
                 var sec = ElapsedSec;
                 return sec <= 0.001 ? 0 : AckOk / sec;
+            }
+        }
+
+        public double DutyRatio
+        {
+            get
+            {
+                var total = MovingMs + DwellingMs;
+                return total <= 0 ? 0 : MovingMs / (double)total;
             }
         }
 
@@ -154,6 +169,9 @@ namespace GameMesh.LoadTest
             PathRejected += other.PathRejected;
             Corrections += other.Corrections;
             CorrectionDistanceSum += other.CorrectionDistanceSum;
+            Turns += other.Turns;
+            MovingMs += other.MovingMs;
+            DwellingMs += other.DwellingMs;
             if (other.SchedulerLagMs > SchedulerLagMs)
                 SchedulerLagMs = other.SchedulerLagMs;
             if (other.SampleEndedMs > other.SampleStartedMs)
@@ -180,7 +198,8 @@ namespace GameMesh.LoadTest
 
         public string ToJson(string runId)
         {
-            var sb = new StringBuilder(512);
+            var inv = CultureInfo.InvariantCulture;
+            var sb = new StringBuilder(640);
             sb.Append("{\n");
             sb.Append("  \"run_id\": \"").Append(runId ?? "").Append("\",\n");
             sb.Append("  \"move_planned\": ").Append(Planned).Append(",\n");
@@ -211,8 +230,13 @@ namespace GameMesh.LoadTest
             sb.Append("  \"move_paused\": ").Append(Paused).Append(",\n");
             sb.Append("  \"path_rejected\": ").Append(PathRejected).Append(",\n");
             sb.Append("  \"corrections\": ").Append(Corrections).Append(",\n");
-            sb.Append("  \"actual_send_hz\": ").Append(ActualSendHz.ToString("0.###")).Append(",\n");
-            sb.Append("  \"actual_success_hz\": ").Append(ActualSuccessHz.ToString("0.###")).Append(",\n");
+            sb.Append("  \"actual_send_hz\": ").Append(ActualSendHz.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"uplink_move_per_sec\": ").Append(UplinkMovePerSec.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"turns\": ").Append(Turns).Append(",\n");
+            sb.Append("  \"moving_ms\": ").Append(MovingMs).Append(",\n");
+            sb.Append("  \"dwelling_ms\": ").Append(DwellingMs).Append(",\n");
+            sb.Append("  \"duty\": ").Append(DutyRatio.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"actual_success_hz\": ").Append(ActualSuccessHz.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"rpc_latency_p50\": ").Append(LatencyPercentile(50)).Append(",\n");
             sb.Append("  \"rpc_latency_p95\": ").Append(LatencyPercentile(95)).Append(",\n");
             sb.Append("  \"rpc_latency_p99\": ").Append(LatencyPercentile(99)).Append(",\n");

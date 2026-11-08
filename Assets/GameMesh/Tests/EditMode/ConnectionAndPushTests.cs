@@ -186,6 +186,19 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void PushReliability_CoalescedAoiGap_AdoptsLatestWithoutSnapshot()
+        {
+            var rel = new PushReliability();
+            rel.MarkApplied(10);
+            Assert.AreEqual(PushReliability.Decision.Gap, rel.Observe(14));
+            Assert.IsTrue(rel.HasGap);
+            rel.AdoptCoalesced(14);
+            Assert.IsFalse(rel.HasGap);
+            Assert.AreEqual(14ul, rel.LastAppliedServerSeq);
+            Assert.AreEqual(PushReliability.Decision.Apply, rel.Observe(15));
+        }
+
+        [Test]
         public void FakeGateway_HelloIncludesMap1001_AndLoginLogoutFailBranches()
         {
             using (var server = new FakeGatewayServer())

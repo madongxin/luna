@@ -25,7 +25,7 @@ namespace GameMesh.UI
         string _friendConfirm = "";
         string _loadCount = "100";
         string _loadMinutes = "5";
-        string _loadStaggerMs = "40";
+        string _loadStaggerMs = "0";
         string _loadPortA = "8081";
         string _loadPortB = "8083";
         string _loadPassword = "loadtest";
@@ -479,9 +479,18 @@ namespace GameMesh.UI
                 "m 内随机走。Hz 只决定多久发一次，服务器不按 2/5/10Hz 拒包。一步不超过 10 米/秒乘 client_time_ms 的间隔。权威确认只表示坐标已提交，别人大约每 " +
                 MoveStepLimit.AoiMergeMs + "ms 合并一次位置。8081/8083 各一半。",
                 _hint);
+            GUILayout.Label(
+                "登录固定在途 " + GameMeshLoadTestRunner.LoginInflight +
+                "：EnterMap 成功即放名额，不等快照/第一次 Move。" +
+                "Hello/注册/登录/进图等待 ≥45s（覆盖重传 RTO）。" +
+                "900 人不要从同一公网地址挤出去；ss 仍见 cwnd:1 且 rto 几十秒时先处理路径丢包。" +
+                "本机移动不等 MoveRsp；别人位置只取最新一条。",
+                _hint);
+            if (!string.IsNullOrEmpty(runner.HostHint))
+                GUILayout.Label(runner.HostHint, _hint);
             _loadCount = Field("登录人数", _loadCount);
             _loadMinutes = Field("在线分钟", _loadMinutes);
-            _loadStaggerMs = Field("登录间隔ms", _loadStaggerMs);
+            _loadStaggerMs = Field("登录间隔ms(0=全速)", _loadStaggerMs);
             _loadHz = Field("移动Hz 2/5/10", _loadHz);
             _loadJitter = Field("抖动%", _loadJitter);
             _loadSeed = Field("移动种子", _loadSeed);

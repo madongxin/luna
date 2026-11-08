@@ -23,11 +23,11 @@ namespace GameMesh.Player
             new System.Collections.Generic.HashSet<ulong>();
         readonly System.Collections.Generic.List<ulong> _deadRemoteIds =
             new System.Collections.Generic.List<ulong>();
-        float _nextAoiSnapshotAt;
         int _holdSpawnFrames;
         Vector3 _goodPose;
         bool _hasGoodPose;
         bool _loggedSink;
+        readonly AoiStallTrace _stallTrace = new AoiStallTrace();
         // maps/1002.grid.json bounds_min.y is -38. Terrain origin Y is -40, so the
         // lowest mesh sits under the server box. A pawn that falls there is rejected.
         const float MapFloorY = -37.5f;
@@ -76,6 +76,7 @@ namespace GameMesh.Player
         void OnDisable()
         {
             SceneManager.sceneLoaded -= OnSceneLoaded;
+            _stallTrace.Close();
             foreach (var kv in _views)
             {
                 if (kv.Value != null)
@@ -102,6 +103,7 @@ namespace GameMesh.Player
             BindLocal(client);
             MaybeRefreshAoi(client);
             SyncRemotes(client);
+            TraceAoiStalls();
             PlaceLocal(client);
             HoldStable(client);
             MaybeReportMove(client);
@@ -454,17 +456,6 @@ namespace GameMesh.Player
             if (client.Connection == null || client.Connection.State != ConnectionState.InWorld)
                 return;
 
-            var localId = client.Aoi.LocalPlayerId != 0
-                ? client.Aoi.LocalPlayerId
-                : client.Session.PlayerId;
-            var remoteCount = 0;
-            foreach (var kv in client.Aoi.Entities)
-            {
-                if (localId != 0 && kv.Key == localId)
-                    continue;
-                remoteCount++;
-            }
-
             // While bots are online, a missing MOVE is usually a full write buffer, not a leave.
             // PruneSilent would delete the whole crowd about 25s after the last push.
             var runner = GameMeshLoadTestRunner.Instance;
@@ -474,24 +465,13 @@ namespace GameMesh.Player
             {
                 var pruned = client.Aoi.PruneSilent(AoiWorld.LocalNowMs, silenceMs);
                 if (pruned > 0)
-                {
                     GameMeshLog.Warn("prune silent AOI n=" + pruned + " silence_ms=" + silenceMs);
-                    remoteCount = System.Math.Max(0, remoteCount - pruned);
-                }
             }
 
-            var afterLoadGhosts = runner != null && !loadActive && remoteCount > 0;
-            var far = remoteCount > 0 && _local != null &&
-                      TryNearestRemote(out _, out var dist) && dist > 40f;
-            // Empty AOI with a full line is normal: this map only pushes entities inside 32m.
-            // Polling WorldSnapshot here does not create interest, and it times out under load.
-            var needRefresh = far || afterLoadGhosts;
-            if (!needRefresh || client.LastRttMs > 5000)
-                return;
-            if (Time.unscaledTime < _nextAoiSnapshotAt)
-                return;
-            _nextAoiSnapshotAt = Time.unscaledTime + 8f;
-            _ = client.RequestWorldSnapshotAsync(background: true);
+            // Never fetch a full snapshot merely because a remote is far away or an
+            // intermediate AOI position was coalesced. Replacing the AOI table made views
+            // disappear/reappear at a distant position and looked like teleporting.
+            // Real reliable-state gaps are handled by GameMeshClient.OnPush.
         }
 
         void SyncRemotes(GameMeshClient client)
@@ -568,6 +548,23 @@ namespace GameMesh.Player
             }
         }
 
+        void TraceAoiStalls()
+        {
+            var origin = _local != null ? _local.position : Vector3.zero;
+            _stallTrace.BeginFrame(Time.unscaledTime, Time.frameCount, Time.unscaledDeltaTime,
+                origin.x, origin.z);
+            foreach (var kv in _views)
+            {
+                var view = kv.Value;
+                if (view == null || view.Fading)
+                    continue;
+                var sample = view.CaptureStallSample();
+                _stallTrace.Observe(sample);
+            }
+
+            _stallTrace.EndFrame();
+        }
+
         /// <summary>Called after load-test LogoutAll so leftover Bot models do not linger.</summary>
         public void PurgeAllRemoteViews(string reason = "")
         {
@@ -605,6 +602,15 @@ namespace GameMesh.Player
         float _gapSec;
         float _lastSampleTime;
         ulong _lastSampleSeq;
+        float _lastAuthorityX;
+        float _lastAuthorityZ;
+        float _lastAuthorityYaw;
+        bool _hasAuthorityPose;
+        ulong _playerId;
+        int _dropOlderSeq;
+        int _dropServerTime;
+        int _dropPose;
+        float _nextJumpLogAt;
         string _labelName;
         float _labelHp = -1f;
         float _labelMaxHp = -1f;
@@ -632,7 +638,8 @@ namespace GameMesh.Player
             view.EntityId = state.EntityId;
             view._delay = delayMs / 1000f;
             view._color = Color.HSVToRGB((state.EntityId % 12) / 12f, 0.72f, 0.95f);
-            view._target = new Vector3(state.X, GroundY(state.X, state.Z, state.Y), state.Z);
+            view._target = new Vector3(state.X,
+                GroundY(state.X, state.Z, state.Y) + FootClearance, state.Z);
 
             var labelGo = new GameObject("Name");
             labelGo.transform.SetParent(go.transform, false);
@@ -808,54 +815,111 @@ namespace GameMesh.Player
             SetVisualAlpha(1f);
         }
 
+        public AoiStallSample CaptureStallSample()
+        {
+            var now = Time.unscaledTime;
+            var pos = transform.position;
+            var speed = new Vector3(_velocity.x, 0f, _velocity.z).magnitude;
+            return new AoiStallSample
+            {
+                EntityId = EntityId,
+                PlayerId = _playerId,
+                Name = _labelName ?? "",
+                X = pos.x,
+                Y = pos.y,
+                Z = pos.z,
+                AuthorityX = _lastAuthorityX,
+                AuthorityZ = _lastAuthorityZ,
+                AuthorityYaw = _lastAuthorityYaw,
+                TargetX = _target.x,
+                TargetZ = _target.z,
+                Speed = speed,
+                StateSeq = _lastSampleSeq,
+                ServerTimeMs = _lastServerTimeMs,
+                SampleAge = _lastSampleTime > 0f ? Mathf.Max(0f, now - _lastSampleTime) : -1f,
+                GapSec = _gapSec,
+                LateSec = _lateSec,
+                DelaySec = PlaybackDelay(),
+                PoseCount = _poses.Count,
+                DropOlderSeq = _dropOlderSeq,
+                DropServerTime = _dropServerTime,
+                DropPose = _dropPose,
+                HasAuthority = _hasAuthorityPose
+            };
+        }
+
         public void Apply(RemoteEntityState state)
         {
             CancelFade();
             UpdateLabel(state);
-            // SyncRemotes visits every entity every frame. Do no terrain or pose work until
-            // this entity actually has a newer authoritative sample.
-            var sameSeqCorrection = false;
-            if (state.StateSeq != 0 && _lastSampleSeq != 0)
+            if (state.PlayerId != 0)
+                _playerId = state.PlayerId;
+            // SyncRemotes visits every entity every frame. Aoi MOVE along one path keeps the same
+            // state_seq while position changes — those body updates must still move the Transform.
+            if (state.StateSeq != 0 && _lastSampleSeq != 0 && state.StateSeq < _lastSampleSeq)
             {
-                if (state.StateSeq < _lastSampleSeq)
+                _dropOlderSeq++;
+                return;
+            }
+            if (state.StateSeq != 0 && state.StateSeq == _lastSampleSeq)
+            {
+                // _target is delayed playback and changes every rendered frame. Comparing the
+                // AOI table with it re-enqueued one server packet every frame and reset blending.
+                var unchanged =
+                    _hasAuthorityPose &&
+                    Mathf.Abs(state.X - _lastAuthorityX) <= 0.01f &&
+                    Mathf.Abs(state.Z - _lastAuthorityZ) <= 0.01f &&
+                    Mathf.Abs(Mathf.DeltaAngle(state.Yaw, _lastAuthorityYaw)) <= 0.5f;
+                if (unchanged)
                     return;
-                if (state.StateSeq == _lastSampleSeq)
-                {
-                    sameSeqCorrection =
-                        Mathf.Abs(state.X - _target.x) > 0.01f ||
-                        Mathf.Abs(state.Z - _target.z) > 0.01f ||
-                        Mathf.Abs(Mathf.DeltaAngle(state.Yaw, _targetYaw)) > 0.5f;
-                    if (!sameSeqCorrection)
-                        return;
-                }
             }
             // Order by server clock when present. Playback uses one local timeline; server times are
             // mapped onto it with a single offset (SampleTime), never mixed raw.
             if (state.ServerTimeMs != 0 && _lastServerTimeMs != 0 &&
                 state.ServerTimeMs + 5 < _lastServerTimeMs)
+            {
+                _dropServerTime++;
                 return;
+            }
+            var previousServerTimeMs = _lastServerTimeMs;
             if (state.ServerTimeMs != 0)
                 _lastServerTimeMs = state.ServerTimeMs;
 
             var next = new Vector3(state.X, state.Y, state.Z);
-            next.y = GroundY(next.x, next.z, next.y);
-            var err = Vector3.Distance(new Vector3(transform.position.x, 0f, transform.position.z),
+            next.y = GroundY(next.x, next.z, next.y) + FootClearance;
+            var authorityJump = Vector3.Distance(
+                _hasAuthorityPose
+                    ? new Vector3(_lastAuthorityX, 0f, _lastAuthorityZ)
+                    : new Vector3(_target.x, 0f, _target.z),
                 new Vector3(next.x, 0f, next.z));
+            if (authorityJump > 5f && previousServerTimeMs > 0 && state.ServerTimeMs > previousServerTimeMs)
+            {
+                var serverDt = (state.ServerTimeMs - previousServerTimeMs) / 1000f;
+                var plausible = MoveStepLimit.ServerMetersPerSec * serverDt + 5f;
+                if (authorityJump > plausible && Time.unscaledTime >= _nextJumpLogAt)
+                {
+                    _nextJumpLogAt = Time.unscaledTime + 2f;
+                    GameMeshLog.Warn("remote authority jump id=" + EntityId +
+                                     " seq=" + state.StateSeq +
+                                     " meters=" + authorityJump.ToString("F1") +
+                                     " server_dt_ms=" + (state.ServerTimeMs - previousServerTimeMs));
+                }
+            }
             var now = Time.unscaledTime;
             var sampleTime = SampleTime(state, now);
-            var accepted = false;
-            if (err > 30f || sameSeqCorrection)
-            {
-                _velocity = Vector3.zero;
-                _poses.Snap(next.x, next.y, next.z, state.Yaw, sampleTime, state.StateSeq);
-                accepted = true;
-            }
-            else
-                accepted = _poses.Push(next.x, next.y, next.z, state.Yaw, sampleTime, state.StateSeq);
+            // A seq gap or a large network gap means intermediate samples were lost, not that
+            // the body teleported. Always retain the last visible pose as the blend origin.
+            var accepted = _poses.Push(next.x, next.y, next.z, state.Yaw, sampleTime, state.StateSeq);
+            if (!accepted)
+                _dropPose++;
 
             // Only move the follow target when a new sample is accepted; SyncRemotes runs every frame.
             if (accepted)
             {
+                _lastAuthorityX = state.X;
+                _lastAuthorityZ = state.Z;
+                _lastAuthorityYaw = state.Yaw;
+                _hasAuthorityPose = true;
                 _target = next;
                 _targetYaw = state.Yaw;
             }
@@ -864,21 +928,31 @@ namespace GameMesh.Player
 
         void UpdateLabel(RemoteEntityState state)
         {
-            if (_label != null &&
-                (state.Name != _labelName || state.Hp != _labelHp || state.MaxHp != _labelMaxHp))
-            {
-                _labelName = state.Name;
-                _labelHp = state.Hp;
-                _labelMaxHp = state.MaxHp;
-                _label.text = $"{state.Name} {state.Hp:0}/{state.MaxHp:0}";
-            }
+            if (_label == null)
+                return;
+            // MOVE often omits player_name to save bandwidth. Keep whatever ENTER gave us,
+            // and if the name is still empty fall back to player_id so the model is never
+            // anonymous (HUD "最近 BotN" already uses the GameObject id).
+            var shown = !string.IsNullOrEmpty(state.Name)
+                ? state.Name
+                : ("#" + (state.PlayerId != 0 ? state.PlayerId : state.EntityId));
+            if (shown == _labelName && state.Hp == _labelHp && state.MaxHp == _labelMaxHp)
+                return;
+            _labelName = shown;
+            _labelHp = state.Hp;
+            _labelMaxHp = state.MaxHp;
+            if (state.MaxHp > 0f || state.Hp > 0f)
+                _label.text = shown + " " + state.Hp.ToString("0") + "/" + state.MaxHp.ToString("0");
+            else
+                _label.text = shown;
         }
 
         // Places a sample on the local timeline by its server move time, so watcher-side
         // throttling and bursty delivery do not change the apparent walking speed.
         float SampleTime(RemoteEntityState state, float now)
         {
-            if (state.StateSeq != 0 && state.StateSeq <= _lastSampleSeq)
+            // Older seq only. Equal seq with a new body pose still advances the local timeline.
+            if (state.StateSeq != 0 && state.StateSeq < _lastSampleSeq)
                 return _lastSampleTime;
             var t = now;
             if (state.ServerTimeMs > 0)
@@ -896,10 +970,13 @@ namespace GameMesh.Player
             {
                 if (t <= _lastSampleTime)
                     t = _lastSampleTime + 0.001f;
-                _gapSec = Mathf.Max(_gapSec * 0.97f, Mathf.Min(1.5f, t - _lastSampleTime));
+                // The pose buffer keeps only the previous and latest samples. Its delay must
+                // track that current pair, not a historical 15s maximum; otherwise playback
+                // remains before the previous sample and the model appears permanently frozen.
+                _gapSec = Mathf.Min(3.2f, t - _lastSampleTime);
             }
 
-            _lateSec = Mathf.Max(_lateSec * 0.97f, now - t);
+            _lateSec = Mathf.Min(3.2f, Mathf.Max(0f, now - t));
             _lastSampleTime = t;
             _lastSampleSeq = state.StateSeq;
             return t;
@@ -909,7 +986,7 @@ namespace GameMesh.Player
         // delay >= update gap + delivery lateness.
         float PlaybackDelay()
         {
-            return Mathf.Clamp(_gapSec + _lateSec + 0.05f, _delay, 1.2f);
+            return Mathf.Clamp(_gapSec + _lateSec + 0.05f, _delay, 3.25f);
         }
 
         void SetVisualAlpha(float alpha)
@@ -944,33 +1021,30 @@ namespace GameMesh.Player
             var pos = transform.position;
             if (_poses.TrySample(Time.unscaledTime, PlaybackDelay(), out var sx, out var sy, out var sz, out var syaw))
             {
-                _target = new Vector3(sx, sy, sz);
+                // Keep the buffered sample grounded. Straight Y lerp between packets cuts through hills.
+                _target = new Vector3(sx, GroundY(sx, sz, sy) + FootClearance, sz);
                 _targetYaw = syaw;
             }
 
-            // GroundY was already resolved when the authoritative sample arrived.
-            // Sampling terrain once per remote per rendered frame was a major load-test hot path.
-            var desiredY = _target.y;
-            var desired = new Vector3(_target.x, desiredY, _target.z);
+            var desired = _target;
             var planar = Vector3.Distance(new Vector3(pos.x, 0f, pos.z),
                 new Vector3(desired.x, 0f, desired.z));
+            // Under 905-bot load a rendered frame can stall for seconds. Spending the entire
+            // Time.deltaTime in one MoveTowards/SmoothDamp step makes a 16–30m AOI update look
+            // like a teleport. Catch up over subsequent rendered frames instead.
+            var renderDt = RemotePoseBuffer.ClampRenderDelta(Time.unscaledDeltaTime);
 
-            Vector3 next;
-            if (planar > 30f)
-            {
-                // A long-delayed AOI update may be tens of metres ahead. Teleporting here made
-                // robots flash to the new point with zero animation speed. Catch up visibly.
-                var dt = Mathf.Max(0.001f, Time.deltaTime);
-                next = Vector3.MoveTowards(pos, desired, 12f * dt);
-                _velocity = (next - pos) / dt;
-            }
-            else
-            {
-                // SmoothDamp kills packet-to-packet jitter; keep under walk speed.
-                next = Vector3.SmoothDamp(pos, desired, ref _velocity, 0.14f, 7.5f, Time.deltaTime);
-                next.y = Mathf.Lerp(pos.y, desiredY, 1f - Mathf.Exp(-Time.deltaTime * 10f));
-            }
+            // The buffered target already moves linearly along server AOI body samples.
+            // A second SmoothDamp eased to zero at every sample and made robots visibly stop,
+            // then accelerate/catch up. Follow it at the authority speed with a hard per-frame
+            // cap: this keeps motion continuous and prevents a delayed sample becoming a snap.
+            var next = Vector3.MoveTowards(pos, desired,
+                MoveStepLimit.ServerMetersPerSec * renderDt);
+            _velocity = (next - pos) / renderDt;
 
+            // Re-seat every frame at the rendered XZ. Server Y is often a flat spawn height, and
+            // extrapolating that height while XZ walks is what drives bots under the mesh.
+            next.y = GroundY(next.x, next.z, next.y) + FootClearance;
             transform.position = next;
             if (planar > 0.03f || _velocity.sqrMagnitude > 0.01f)
             {
@@ -981,13 +1055,13 @@ namespace GameMesh.Player
                     : _targetYaw;
                 var look = Quaternion.Euler(0f, faceYaw, 0f);
                 transform.rotation = Quaternion.Slerp(transform.rotation, look,
-                    1f - Mathf.Exp(-Time.deltaTime * 8f));
+                    1f - Mathf.Exp(-renderDt * 8f));
             }
 
             var speed = new Vector3(_velocity.x, 0f, _velocity.z).magnitude;
             var moving = speed > 0.15f;
             _animSpeed = Mathf.MoveTowards(_animSpeed, moving ? Mathf.Clamp(speed, 2f, 5.5f) : 0f,
-                Time.deltaTime * 8f);
+                renderDt * 8f);
 
             if (_anim != null)
             {
@@ -1044,20 +1118,26 @@ namespace GameMesh.Player
 
             if (!any)
                 return;
-            var ground = transform.position.y;
-            var extra = ground - bounds.min.y + 0.04f;
+            var surface = GroundY(transform.position.x, transform.position.z, transform.position.y);
+            var extra = surface - bounds.min.y + 0.04f;
             if (extra > -0.12f && extra < 0.06f)
                 return;
             var local = _model.localPosition;
-            local.y = Mathf.Clamp(local.y + extra * 0.55f, 0f, 1.6f);
+            // Pull deep sinks up in one step; small errors ease in.
+            var step = Mathf.Abs(extra) > 0.4f ? extra : extra * 0.7f;
+            local.y = Mathf.Clamp(local.y + step, -0.2f, 2.2f);
             _model.localPosition = local;
             if (_label != null)
                 _label.transform.localPosition = new Vector3(0f, Mathf.Max(2.15f, local.y + 1.9f), 0f);
         }
 
+        const float FootClearance = 0.08f;
+
         static float GroundY(float x, float z, float fallback)
         {
             var terrains = Terrain.activeTerrains;
+            var best = float.NegativeInfinity;
+            var found = false;
             for (var i = 0; i < terrains.Length; i++)
             {
                 var terrain = terrains[i];
@@ -1067,10 +1147,18 @@ namespace GameMesh.Player
                 var size = terrain.terrainData.size;
                 if (x < origin.x || z < origin.z || x > origin.x + size.x || z > origin.z + size.z)
                     continue;
-                return terrain.SampleHeight(new Vector3(x, 0f, z)) + origin.y;
+                var y = terrain.SampleHeight(new Vector3(x, 0f, z)) + origin.y;
+                if (!found || y > best)
+                {
+                    best = y;
+                    found = true;
+                }
             }
 
-            if (Physics.Raycast(new Vector3(x, fallback + 80f, z), Vector3.down, out var hit, 250f,
+            if (found)
+                return best;
+
+            if (Physics.Raycast(new Vector3(x, fallback + 120f, z), Vector3.down, out var hit, 400f,
                     Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
                 return hit.point.y;
             return fallback;

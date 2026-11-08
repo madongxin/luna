@@ -132,7 +132,10 @@ namespace GameMesh.Aoi
 
             if (delta.Op == AoiOp.Move && _entities.TryGetValue(id, out var existing))
             {
-                if (delta.Entity.StateSeq != 0 && existing.StateSeq != 0 && delta.Entity.StateSeq <= existing.StateSeq)
+                // Same state_seq with a new position is an along-path body update. Only drop
+                // a strictly older seq. Missing intermediate frames must not trigger a resync.
+                if (delta.Entity.StateSeq != 0 && existing.StateSeq != 0 &&
+                    delta.Entity.StateSeq < existing.StateSeq)
                     return false;
                 // A MOVE may omit name/hp/max_hp to save bandwidth; keep what ENTER gave us.
                 var name = existing.Name;

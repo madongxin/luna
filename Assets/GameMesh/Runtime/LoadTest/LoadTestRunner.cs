@@ -99,7 +99,11 @@ namespace GameMesh.LoadTest
         float _durationSec = 300f;
         float _nextLineRefresh;
         string _lastError = "";
+        string _hostHint = "";
         string _phase = "空闲";
+
+        // Fixed in-flight login slots. EnterMap success frees a slot; snapshot/Move must not hold it.
+        public const int LoginInflight = 16;
 
         public bool Busy => _busy;
         public bool HoldOnline => _holdOnline;
@@ -140,6 +144,7 @@ namespace GameMesh.LoadTest
 
         public string Phase => _phase;
         public string LastError => _lastError;
+        public string HostHint => _hostHint;
         public BotMovementSettings Movement { get; } = new BotMovementSettings();
         public string MovementExport { get; private set; } = "";
 
@@ -310,6 +315,7 @@ namespace GameMesh.LoadTest
             _busy = true;
             _holdOnline = false;
             _lastError = "";
+            _hostHint = "";
             try
             {
                 if (count > MoveStepLimit.SuzhouMaxPlayers)
@@ -330,6 +336,7 @@ namespace GameMesh.LoadTest
                     return;
                 }
 
+                // Stagger is optional pacing only. Never raise a floor that serializes the wave.
                 staggerMs = Mathf.Clamp(staggerMs, 0, 5000);
                 durationMinutes = Mathf.Max(0f, durationMinutes);
                 // 每个机器人两条循环再加收发。线程池若按 CPU 数慢慢扩，应答回调会排到几秒之后，
@@ -353,10 +360,10 @@ namespace GameMesh.LoadTest
                 var client = GameMeshClient.Instance;
                 if (client != null && client.Session != null && client.Session.HasIdentity)
                 {
-                    try { await client.QueryMapLinesAsync(true).ConfigureAwait(true); }
+                    try { await client.QueryMapLinesAsync(true).ConfigureAwait(false); }
                     catch { /* occupancy may be stale */ }
                     await EnsureLocalPlayerOnLineAsync(client).ConfigureAwait(true);
-                    try { await client.QueryMapLinesAsync(true).ConfigureAwait(true); }
+                    try { await client.QueryMapLinesAsync(true).ConfigureAwait(false); }
                     catch { /* ignore */ }
                     client.Lines.BindPresence(client.Session.MapInstanceId);
                 }
@@ -364,7 +371,13 @@ namespace GameMesh.LoadTest
                 TargetLineNo = ResolvePreferredLine(GameMeshClient.Instance);
                 ResolveLoadTestPorts(ref portA, ref portB);
 
-                _phase = "集体登录 " + count + "  端口 " + portA + "/" + portB;
+                _phase = "集体登录 " + count + "  在途" + LoginInflight +
+                         "  端口 " + portA + "/" + portB;
+                if (count >= 400)
+                    _hostHint =
+                        "提示：单机 " + count +
+                        " 条 TCP 会把同一公网出口的 cwnd 打到 1～3（RTT≈1s）。" +
+                        "满员请拆到多台机器或多条出口；ss 仍见 cwnd:1 且 rto 几十秒时先处理路径丢包。";
 
                 LoadTestSessionLedger.CachePathOnMainThread();
                 // Load bots do not touch Unity objects from push callbacks. Keeping hundreds of
@@ -374,18 +387,12 @@ namespace GameMesh.LoadTest
                 Movement.BotCount = count;
                 BotHomeLayout.BeginWave();
                 var stamp = DateTime.Now.ToString("HHmmssfff");
-                var gate = new SemaphoreSlim(20);
+                // Fixed 16 in-flight logins. One EnterMap (or timeout) frees a slot for the next.
+                // Do not serialize on snapshot / first Move; do not stagger-launch the wave.
+                var gate = new SemaphoreSlim(LoginInflight);
                 var tasks = new List<Task>(count);
-                if (staggerMs <= 0)
-                    staggerMs = 40;
                 for (var i = 0; i < count; i++)
                 {
-                    if (i > 0 && i % 25 == 0 && client != null && client.LastRttMs < 3000)
-                    {
-                        try { await client.QueryMapLinesAsync(true).ConfigureAwait(true); }
-                        catch { /* later bots still ask the server to choose a line */ }
-                    }
-
                     var bot = new LoadTestBot(i, dispatcher);
                     bot.Movement = Movement.Clone();
                     // 0 = server default TTL (7200s). Heartbeat does not renew the key.
@@ -395,8 +402,8 @@ namespace GameMesh.LoadTest
                     var name = "Bot" + i.ToString("D3");
                     var port = PickPort(i, portA, portB);
                     tasks.Add(EnterWithRetryAsync(bot, device, name, password, port, TargetLineNo, gate, ct));
-                    if (i + 1 < count)
-                        await Task.Delay(staggerMs, ct).ConfigureAwait(true);
+                    if (staggerMs > 0 && i + 1 < count)
+                        await Task.Delay(staggerMs, ct).ConfigureAwait(false);
                 }
 
                 try
@@ -449,14 +456,16 @@ namespace GameMesh.LoadTest
         static async Task EnterWithRetryAsync(LoadTestBot bot, string device, string name, string password, int port,
             uint preferredLine, SemaphoreSlim gate, CancellationToken ct)
         {
-            await gate.WaitAsync(ct).ConfigureAwait(true);
+            // One slot covers Hello→Register→Login→EnterMap only. Heartbeat/Move/snapshot run after release.
+            await gate.WaitAsync(ct).ConfigureAwait(false);
             try
             {
-                for (var attempt = 0; attempt < 8; attempt++)
+                // At most two tries while holding a slot. A 45s auth timeout must free capacity for peers.
+                for (var attempt = 0; attempt < 2; attempt++)
                 {
                     if (ct.IsCancellationRequested)
                     {
-                        await bot.CloseSessionAsync().ConfigureAwait(true);
+                        await bot.CloseSessionAsync().ConfigureAwait(false);
                         return;
                     }
 
@@ -464,28 +473,21 @@ namespace GameMesh.LoadTest
                     {
                         if (bot.InWorld)
                             return;
-                        var live = GameMeshClient.Instance;
-                        if (live != null)
-                        {
-                            try { await live.QueryMapLinesAsync(true).ConfigureAwait(true); }
-                            catch { /* retry with the last line list */ }
-                        }
-
-                        await bot.PrepareRetryAsync().ConfigureAwait(true);
-                        await Task.Delay(Math.Min(4000, 500 * attempt), ct).ConfigureAwait(true);
+                        await bot.PrepareRetryAsync().ConfigureAwait(false);
+                        await Task.Delay(250, ct).ConfigureAwait(false);
                     }
 
                     try
                     {
                         await bot.EnterWorldAsync(device, name, password, port, ct, preferredLine)
-                            .ConfigureAwait(true);
+                            .ConfigureAwait(false);
                         return;
                     }
                     catch (OperationCanceledException)
                     {
                         if (!bot.InWorld)
                         {
-                            try { await bot.CloseSessionAsync().ConfigureAwait(true); }
+                            try { await bot.CloseSessionAsync().ConfigureAwait(false); }
                             catch { /* ignore */ }
                         }
 
@@ -495,9 +497,9 @@ namespace GameMesh.LoadTest
                     {
                         if (bot.InWorld)
                             return;
-                        if (attempt == 7)
+                        if (attempt == 1)
                         {
-                            try { await bot.CloseSessionAsync().ConfigureAwait(true); }
+                            try { await bot.CloseSessionAsync().ConfigureAwait(false); }
                             catch { /* ignore */ }
                             return;
                         }

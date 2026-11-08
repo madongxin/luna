@@ -2,12 +2,14 @@ using System;
 
 namespace GameMesh.Aoi
 {
+    /// <summary>
+    /// Render-only pose trail for remote players. No vx/vz/move_start_ms extrapolation.
+    /// Between two AOI samples, blend along the last displacement; past the tip, hold still
+    /// until the next MOVE arrives and replaces the target.
+    /// </summary>
     public sealed class RemotePoseBuffer
     {
-        public const int Depth = 8;
-        // Render-only prediction bridges one late AOI sample. It never changes bot authority.
-        const float MaxExtrapolateSec = 0.25f;
-        const float MaxVisualSpeed = 6f;
+        public const int Depth = 2;
 
         struct Sample
         {
@@ -21,17 +23,39 @@ namespace GameMesh.Aoi
 
         public int Count => _count;
 
+        /// <summary>
+        /// A busy load-test frame can last seconds. Never spend that whole wall-clock gap in
+        /// one rendered movement step, or a remote visibly teleports on the next frame.
+        /// </summary>
+        public static float ClampRenderDelta(float deltaSec)
+        {
+            if (deltaSec < 0.001f)
+                return 0.001f;
+            return deltaSec > 0.05f ? 0.05f : deltaSec;
+        }
+
         public bool Push(float x, float y, float z, float yaw, float time, ulong stateSeq)
         {
-            if (stateSeq != 0 && _lastSeq != 0 && stateSeq <= _lastSeq)
+            // Strictly older seq only. Equal seq with a new position is an along-path update.
+            if (stateSeq != 0 && _lastSeq != 0 && stateSeq < _lastSeq)
                 return false;
             if (stateSeq != 0)
                 _lastSeq = stateSeq;
-            if (_count == Depth)
+
+            if (_count > 0)
             {
-                for (var i = 1; i < Depth; i++)
-                    _samples[i - 1] = _samples[i];
-                _count = Depth - 1;
+                var tip = _samples[_count - 1];
+                // Missing state sequences only mean intermediate body samples were coalesced
+                // or lost. Keep the last visible pose as the interpolation origin; snapping
+                // here made the next accepted position look like a teleport.
+                _samples[0] = tip;
+                _count = 1;
+            }
+
+            if (_count >= Depth)
+            {
+                _samples[0] = _samples[_count - 1];
+                _count = 1;
             }
 
             _samples[_count++] = new Sample
@@ -44,8 +68,14 @@ namespace GameMesh.Aoi
         public void Snap(float x, float y, float z, float yaw, float time, ulong stateSeq)
         {
             _count = 0;
-            _lastSeq = 0;
-            Push(x, y, z, yaw, time, stateSeq);
+            if (stateSeq != 0)
+                _lastSeq = stateSeq;
+            else
+                _lastSeq = 0;
+            _samples[_count++] = new Sample
+            {
+                X = x, Y = y, Z = z, Yaw = yaw, Time = time, Seq = stateSeq
+            };
         }
 
         public bool TrySample(float now, float delaySec, out float x, out float y, out float z, out float yaw)
@@ -69,52 +99,23 @@ namespace GameMesh.Aoi
             var last = _count - 1;
             if (t >= _samples[last].Time)
             {
-                // Past the newest sample: short extrapolation so sparse AOI does not stutter.
-                var b = _samples[last];
-                var a = _samples[last - 1];
-                var span = b.Time - a.Time;
-                var ahead = Math.Min(t - b.Time, MaxExtrapolateSec);
-                if (span > 0.0001f && ahead > 0f)
-                {
-                    var vx = (b.X - a.X) / span;
-                    var vz = (b.Z - a.Z) / span;
-                    var speed = (float)Math.Sqrt(vx * vx + vz * vz);
-                    if (speed > MaxVisualSpeed)
-                    {
-                        var scale = MaxVisualSpeed / speed;
-                        vx *= scale;
-                        vz *= scale;
-                    }
-                    x = b.X + vx * ahead;
-                    y = b.Y;
-                    z = b.Z + vz * ahead;
-                    var u = ahead / span;
-                    yaw = LerpAngle(b.Yaw, b.Yaw + (b.Yaw - a.Yaw), Math.Min(1f, u));
-                    return true;
-                }
-
-                Copy(b, out x, out y, out z, out yaw);
+                // Hold the latest AOI body position. Do not open velocity extrapolation.
+                Copy(_samples[last], out x, out y, out z, out yaw);
                 return true;
             }
 
-            for (var i = 0; i < last; i++)
-            {
-                var a = _samples[i];
-                var b = _samples[i + 1];
-                if (t > b.Time)
-                    continue;
-                var span = b.Time - a.Time;
-                var u = span <= 0.0001f ? 1f : (t - a.Time) / span;
-                // Smoothstep softens sparse AOI jumps.
-                u = u * u * (3f - 2f * u);
-                x = a.X + (b.X - a.X) * u;
-                y = a.Y + (b.Y - a.Y) * u;
-                z = a.Z + (b.Z - a.Z) * u;
-                yaw = LerpAngle(a.Yaw, b.Yaw, u);
-                return true;
-            }
-
-            Copy(_samples[last], out x, out y, out z, out yaw);
+            var from = _samples[0];
+            var to = _samples[last];
+            var blendSpan = to.Time - from.Time;
+            // The server samples a body that is already walking at constant speed.
+            // Smoothstep forced the rendered velocity to zero at every AOI sample, so sparse
+            // three-second updates looked like stop/start motion. Linear playback preserves
+            // the along-path speed and changes direction only when a new sample says so.
+            var uBlend = blendSpan <= 0.0001f ? 1f : (t - from.Time) / blendSpan;
+            x = from.X + (to.X - from.X) * uBlend;
+            y = from.Y + (to.Y - from.Y) * uBlend;
+            z = from.Z + (to.Z - from.Z) * uBlend;
+            yaw = LerpAngle(from.Yaw, to.Yaw, uBlend);
             return true;
         }
 

@@ -154,13 +154,23 @@ namespace GameMesh.Tests.EditMode
                 Entity = new EntitySnapshotDto { EntityId = 2, PlayerId = 2, X = 5, StateSeq = 3, MapInstanceId = 9 }
             });
             Assert.AreEqual(5f, world.Entities[2].X);
+            // Same state_seq with a new body pose is an along-path update — must apply.
+            Assert.IsTrue(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Move,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto { EntityId = 2, PlayerId = 2, X = 7, StateSeq = 3, MapInstanceId = 9 }
+            }));
+            Assert.AreEqual(7f, world.Entities[2].X);
+            Assert.AreEqual(3UL, world.Entities[2].StateSeq);
+            // Strictly older seq is dropped.
             world.ApplyDelta(new AoiDeltaDto
             {
                 Op = AoiOp.Move,
                 MapInstanceId = 9,
                 Entity = new EntitySnapshotDto { EntityId = 2, PlayerId = 2, X = 0, StateSeq = 2, MapInstanceId = 9 }
             });
-            Assert.AreEqual(5f, world.Entities[2].X);
+            Assert.AreEqual(7f, world.Entities[2].X);
             world.ApplyDelta(new AoiDeltaDto
             {
                 Op = AoiOp.Leave,
@@ -317,23 +327,74 @@ namespace GameMesh.Tests.EditMode
             var buffer = new RemotePoseBuffer();
             Assert.IsTrue(buffer.Push(0, 0, 0, 0, 1f, 1));
             Assert.IsTrue(buffer.Push(10, 0, 0, 90, 1.1f, 2));
-            Assert.IsFalse(buffer.Push(99, 0, 0, 0, 1.2f, 2));
+            Assert.IsTrue(buffer.TrySample(1.075f, 0.05f, out var quarterX, out _, out _, out _));
+            Assert.AreEqual(2.5f, quarterX, 0.01f,
+                "AOI body playback must stay linear instead of braking at every sample");
             Assert.IsTrue(buffer.TrySample(1.10f, 0.05f, out var x, out _, out _, out var yaw));
             Assert.AreEqual(5f, x, 0.01f);
             Assert.AreEqual(45f, yaw, 0.01f);
+            // Same seq with a new body pose is kept (along-path). Older seq is dropped.
+            Assert.IsTrue(buffer.Push(20, 0, 0, 90, 1.2f, 2));
+            Assert.IsFalse(buffer.Push(99, 0, 0, 0, 1.25f, 1));
+            Assert.IsTrue(buffer.TrySample(1.20f, 0.05f, out x, out _, out _, out yaw));
+            Assert.Greater(x, 10f);
+            Assert.LessOrEqual(x, 20f);
+            Assert.AreEqual(90f, yaw, 0.01f);
         }
 
         [Test]
-        public void RemotePoseBuffer_ExtrapolatesBrieflyButCapsVisualSpeed()
+        public void RemotePoseBuffer_HoldsAtLatestWithoutVelocityExtrapolation()
         {
             var buffer = new RemotePoseBuffer();
             Assert.IsTrue(buffer.Push(0, 0, 0, 0, 1f, 1));
             Assert.IsTrue(buffer.Push(10, 0, 0, 90, 1.1f, 2));
             Assert.IsTrue(buffer.TrySample(1.35f, 0f, out var x, out _, out _, out _));
-            // Raw samples imply 100 m/s; render-only prediction is capped at 6 m/s for 0.25 s.
-            Assert.AreEqual(11.5f, x, 0.01f);
+            // Past the tip: hold the latest AOI body position. No vx/vz extrapolation.
+            Assert.AreEqual(10f, x, 0.01f);
             Assert.IsTrue(buffer.TrySample(2f, 0f, out x, out _, out _, out _));
-            Assert.AreEqual(11.5f, x, 0.01f);
+            Assert.AreEqual(10f, x, 0.01f);
+        }
+
+        [Test]
+        public void RemotePoseBuffer_LongFrameCannotBecomeOneFrameTeleport()
+        {
+            Assert.AreEqual(0.05f, RemotePoseBuffer.ClampRenderDelta(2f), 0.0001f);
+            Assert.AreEqual(0.016f, RemotePoseBuffer.ClampRenderDelta(0.016f), 0.0001f);
+            Assert.AreEqual(0.001f, RemotePoseBuffer.ClampRenderDelta(0f), 0.0001f);
+            // At the 10 m/s authority cap, one rendered frame advances at most 0.5m.
+            Assert.LessOrEqual(10f * RemotePoseBuffer.ClampRenderDelta(2f), 0.5001f);
+        }
+
+        [Test]
+        public void RemotePoseBuffer_FarSameSeqGap_IsInterpolatedNotSnapped()
+        {
+            var buffer = new RemotePoseBuffer();
+            Assert.IsTrue(buffer.Push(0, 0, 0, 0, 10f, 7));
+            // Far AOI intentionally sends the same path state about every three seconds.
+            Assert.IsTrue(buffer.Push(18, 0, 0, 90, 13f, 7));
+            Assert.AreEqual(2, buffer.Count);
+            Assert.IsTrue(buffer.TrySample(13f, 1.5f, out var x, out _, out _, out var yaw));
+            Assert.AreEqual(9f, x, 0.01f);
+            Assert.AreEqual(45f, yaw, 0.01f);
+            // No extrapolation past the newest position.
+            Assert.IsTrue(buffer.TrySample(20f, 0f, out x, out _, out _, out yaw));
+            Assert.AreEqual(18f, x, 0.01f);
+            Assert.AreEqual(90f, yaw, 0.01f);
+        }
+
+        [Test]
+        public void RemotePoseBuffer_SeqGapStillInterpolatesFromLastVisiblePose()
+        {
+            var buffer = new RemotePoseBuffer();
+            Assert.IsTrue(buffer.Push(0, 0, 0, 0, 1f, 1));
+            Assert.IsTrue(buffer.Push(3, 0, 0, 0, 1.05f, 2));
+            // Missing intermediate seqs are coalesced/lost samples, not a teleport instruction.
+            Assert.IsTrue(buffer.Push(30, 0, 0, 0, 1.6f, 9));
+            Assert.AreEqual(2, buffer.Count);
+            Assert.IsTrue(buffer.TrySample(1.6f, 0.275f, out var x, out _, out _, out _));
+            Assert.AreEqual(16.5f, x, 0.01f);
+            Assert.IsTrue(buffer.TrySample(1.7f, 0f, out x, out _, out _, out _));
+            Assert.AreEqual(30f, x, 0.01f);
         }
 
         [Test]

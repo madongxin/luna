@@ -385,4 +385,216 @@ namespace GameMesh.LoadTest
             return Mathf.Sqrt(dx * dx + dz * dz);
         }
     }
+
+    /// <summary>
+    /// Sparse waypoint patrol: one MOVE at depart (segment goal), optional arrive MOVE
+    /// only when the server shortened the first packet. No mid-segment MOVE. No velocity
+    /// extrapolation — vx/vz/move_start_ms are not in the protocol yet.
+    /// </summary>
+    public sealed class SparsePatrolController
+    {
+        public const float TurnDegrees = 15f;
+        public const float ArriveEpsilon = 0.75f;
+
+        enum Phase
+        {
+            NeedDepart = 0,
+            Traveling = 1,
+            NeedArrive = 2
+        }
+
+        readonly BotMovementSettings _settings;
+        readonly System.Random _rng;
+        Phase _phase = Phase.NeedDepart;
+        long _segmentEndMs;
+        float _segmentSec;
+        Vector3 _goal;
+        bool _hasGoal;
+        bool _firstSegment = true;
+        bool _rejected;
+        float _lastSentYaw;
+        bool _hasLastYaw;
+        long _lastAccountMs = -1;
+
+        public SparsePatrolController(int botIndex, BotMovementSettings settings)
+        {
+            _settings = settings ?? new BotMovementSettings();
+            _rng = new System.Random(
+                BotMovementSettings.StablePercent(_settings.Seed, botIndex) + botIndex * 31);
+        }
+
+        public void Arm(long nowMs)
+        {
+            _phase = Phase.NeedDepart;
+            _hasGoal = false;
+            _lastAccountMs = nowMs;
+        }
+
+        public void NoteRejected()
+        {
+            _rejected = true;
+            _hasGoal = false;
+            _phase = Phase.NeedDepart;
+        }
+
+        /// <summary>
+        /// Decide the next sparse action. WaitMs is how long the move loop may sleep.
+        /// </summary>
+        public MovePlan Poll(Vector3 confirmed, long nowMs, BotMovementMetrics metrics, out int waitMs)
+        {
+            AccountTime(nowMs, metrics);
+            waitMs = 50;
+            if (_phase == Phase.Traveling)
+            {
+                // MoveRsp.position is the accepted endpoint, not proof that the body has
+                // already walked there. Keep the segment alive for its planned duration.
+                if (nowMs < _segmentEndMs)
+                {
+                    waitMs = ClampWait(_segmentEndMs - nowMs);
+                    return MovePlan.None("travel", 0);
+                }
+
+                if (Flat(confirmed, _goal) <= ArriveEpsilon)
+                    CompleteSegment(nowMs, metrics);
+                else
+                    _phase = Phase.NeedArrive;
+            }
+
+            if (_phase == Phase.NeedArrive)
+            {
+                if (Flat(confirmed, _goal) <= ArriveEpsilon)
+                    CompleteSegment(nowMs, metrics);
+                else
+                    return BuildSend(confirmed, "arrive", metrics, out waitMs);
+            }
+
+            // NeedDepart. Completion falls through here so the next segment is sent in
+            // the same poll instead of introducing a dwell tick.
+            if (_rejected || !_hasGoal)
+            {
+                _rejected = false;
+                PickSegment(confirmed);
+            }
+
+            return BuildSend(confirmed, "depart", metrics, out waitMs);
+        }
+
+        public void NoteSent(float yaw, long nowMs, string reason, BotMovementMetrics metrics)
+        {
+            if (_hasLastYaw && Mathf.Abs(Mathf.DeltaAngle(_lastSentYaw, yaw)) > TurnDegrees &&
+                metrics != null)
+                metrics.Turns++;
+            _lastSentYaw = yaw;
+            _hasLastYaw = true;
+            if (reason == "depart")
+            {
+                _phase = Phase.Traveling;
+                _segmentEndMs = nowMs + (long)(_segmentSec * 1000f);
+            }
+            else if (reason == "arrive")
+            {
+                CompleteSegment(nowMs, metrics);
+            }
+        }
+
+        void CompleteSegment(long nowMs, BotMovementMetrics metrics)
+        {
+            // Flush travel time before immediately making the next segment eligible.
+            AccountTime(nowMs, metrics);
+            _phase = Phase.NeedDepart;
+            _hasGoal = false;
+        }
+
+        void PickSegment(Vector3 from)
+        {
+            var min = _settings.SegmentMinSec;
+            var max = _settings.SegmentMaxSec;
+            if (max < min)
+                max = min;
+            // The server advances an accepted route at ServerMoveSpeed. Using WalkSpeed for
+            // the distance but waiting the full segment left the body parked for roughly 45%
+            // of every leg (5.5 / 10). Cover the whole interval at the authority speed.
+            // The first request only owns SegmentMinSec of server-side time budget.
+            var requestedSec = _firstSegment
+                ? min
+                : min + (float)_rng.NextDouble() * (max - min);
+            _firstSegment = false;
+            var serverSpeed = _settings.ServerMoveSpeed > 0.1f
+                ? _settings.ServerMoveSpeed
+                : 10f;
+            var dist = serverSpeed * requestedSec;
+            var angle = (float)(_rng.NextDouble() * Mathf.PI * 2.0);
+            _goal = new Vector3(
+                from.x + Mathf.Cos(angle) * dist,
+                from.y,
+                from.z + Mathf.Sin(angle) * dist);
+            _goal = BotHomeLayout.SnapNearestWalkable(_goal, from.y);
+            // Grid snapping changes the actual leg length. Schedule the next turn from that
+            // final distance so it cannot create another hidden dwell at the endpoint.
+            _segmentSec = Flat(from, _goal) / serverSpeed;
+            if (_segmentSec < 0.05f)
+                _segmentSec = 0.05f;
+            _hasGoal = true;
+        }
+
+        MovePlan BuildSend(Vector3 confirmed, string reason, BotMovementMetrics metrics, out int waitMs)
+        {
+            waitMs = 50;
+            if (metrics != null)
+                metrics.Planned++;
+            var yaw = Mathf.Atan2(_goal.x - confirmed.x, _goal.z - confirmed.z) * Mathf.Rad2Deg;
+            if (Flat(confirmed, _goal) < 0.05f)
+            {
+                _hasGoal = false;
+                _phase = Phase.NeedDepart;
+                return MovePlan.None("path_rejected", 0);
+            }
+
+            return new MovePlan
+            {
+                Send = true,
+                Position = new Vector3(_goal.x, confirmed.y, _goal.z),
+                Yaw = yaw,
+                Reason = reason,
+                WaypointIndex = 0,
+                CrossesCell = false,
+                CrossesInterest = false
+            };
+        }
+
+        void AccountTime(long nowMs, BotMovementMetrics metrics)
+        {
+            if (metrics == null)
+                return;
+            if (_lastAccountMs < 0)
+            {
+                _lastAccountMs = nowMs;
+                return;
+            }
+
+            var dt = nowMs - _lastAccountMs;
+            if (dt <= 0)
+                return;
+            _lastAccountMs = nowMs;
+            if (_phase == Phase.Traveling || _phase == Phase.NeedArrive)
+                metrics.MovingMs += dt;
+            metrics.SampleEndedMs = nowMs;
+        }
+
+        static int ClampWait(long ms)
+        {
+            if (ms < 20)
+                return 20;
+            if (ms > 1000)
+                return 1000;
+            return (int)ms;
+        }
+
+        static float Flat(Vector3 a, Vector3 b)
+        {
+            var dx = a.x - b.x;
+            var dz = a.z - b.z;
+            return Mathf.Sqrt(dx * dx + dz * dz);
+        }
+    }
 }

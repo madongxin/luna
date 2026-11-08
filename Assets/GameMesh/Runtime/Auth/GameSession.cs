@@ -147,6 +147,15 @@ namespace GameMesh.Auth
         }
 
         /// <summary>
+        /// Adopt the newest sequence for a latest-only stream such as coalesced AOI MOVE.
+        /// Skipped intermediate positions are intentionally not replayed or snapshot-repaired.
+        /// </summary>
+        public void AdoptCoalesced(ulong serverSeq)
+        {
+            MarkApplied(serverSeq);
+        }
+
+        /// <summary>
         /// A successful full snapshot's baseline_server_seq. Never moves the cursor backwards.
         /// Clearing the gap stops the snapshot loop until a newer reliable server_seq skips.
         /// </summary>

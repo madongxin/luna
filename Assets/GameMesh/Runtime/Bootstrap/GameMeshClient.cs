@@ -1879,21 +1879,29 @@ namespace GameMesh.Bootstrap
             {
                 _lastMoveClientTimeMs = nowMs;
                 _lastMoveSent = sent;
-                var pending = RequestAsync(req, null, ct);
                 MoveSampler.MarkSent(sent, yaw, Time.unscaledTime);
-                var rsp = await pending.ConfigureAwait(true);
-                if (Alive)
-                    ApplyMoveRsp(rsp, sent);
+                // Local locomotion must not wait on MoveRsp. A 2s retransmit is lag, not a freeze;
+                // free the sampler so the next frame can send. ApplyMoveRsp still reconciles.
+                var pending = RequestAsync(req, TimeSpan.FromSeconds(2), ct);
+                MoveSampler.MarkCompleted();
+                var rsp = await pending.ConfigureAwait(false);
+                // Request completion may run on a pool thread. ApplyMoveRsp reads Unity Terrain,
+                // Time and queues a visible correction, so it must run on the Unity thread.
+                // Off-thread application was throwing and allowed corrections to accumulate.
+                if (_dispatcher != null)
+                {
+                    _dispatcher.Enqueue(() =>
+                    {
+                        if (Alive)
+                            ApplyMoveRsp(rsp, sent);
+                    });
+                }
                 return GameErrorCatalog.MoveAccepted(rsp);
             }
             catch (Exception ex)
             {
                 GameMeshLog.Warn("move failed " + ex.Message);
                 return false;
-            }
-            finally
-            {
-                MoveSampler.MarkCompleted();
             }
         }
 
@@ -2351,9 +2359,9 @@ namespace GameMesh.Bootstrap
             if (move.Ok && move.Position != null &&
                 (move.StateSeq == 0 || _lastMoveStateSeq == 0 || move.StateSeq >= _lastMoveStateSeq))
             {
-                if (move.StateSeq != 0)
-                    _lastMoveStateSeq = move.StateSeq;
-                var authority = ProtocolMapper.ToUnity(move.Position);
+            if (move.StateSeq != 0)
+                _lastMoveStateSeq = move.StateSeq;
+            var authority = ProtocolMapper.ToUnity(move.Position);
                 // An ack under the heightfield is the box bottom the server already
                 // accepted while Y was still inside the AABB. Do not stand there.
                 if (GameMeshWorldBinder.TryLiftAboveSurface(authority, out _))
@@ -2375,9 +2383,9 @@ namespace GameMesh.Bootstrap
                 if (IsLatestSent(sent) && HorizontalMeters(authority, sent) > 0.75f)
                 {
                     RebaseMoveChain(authority);
-                    HasPendingCorrection = true;
+            HasPendingCorrection = true;
                     PendingCorrection = authority;
-                    PendingCorrectionYaw = move.Yaw;
+            PendingCorrectionYaw = move.Yaw;
                 }
                 if (LastErrorCode == "ERR_OUT_OF_BOUNDS" || LastErrorCode == "ERR_UNWALKABLE")
                     ClearError();
@@ -2390,7 +2398,7 @@ namespace GameMesh.Bootstrap
             if (move.Ok)
                 return;
 
-            if (GameErrorCatalog.IsStaleRoute(code))
+                if (GameErrorCatalog.IsStaleRoute(code))
             {
                 if (Time.unscaledTime >= _ignoreStaleMovesUntil)
                     _ = RecoverStaleRouteAsync();
@@ -2559,6 +2567,19 @@ namespace GameMesh.Bootstrap
 
                     if (decision == PushReliability.Decision.Gap)
                     {
+                        // AOI MOVE is latest-only/coalescable. A missing intermediate body
+                        // position must not replace the whole world from a snapshot: apply this
+                        // latest delta, advance the AOI cursor, and keep this TCP.
+                        if (messageType == "aoi.delta.v1" && parsed.AoiDelta != null)
+                        {
+                            ApplyInnerPush(parsed);
+                            Push.AdoptCoalesced(serverSeq);
+                            _gapCache.Clear();
+                            Session.LastServerSeq = Push.LastAppliedServerSeq;
+                            QueuePushAck(Session.LastServerSeq);
+                            return;
+                        }
+
                         AoiResyncHealthy = false;
                         GameMeshLog.Warn($"push gap expected={Push.ExpectedNext} got={serverSeq}");
                         if (!_gapCache.TryBuffer(serverSeq, parsed))

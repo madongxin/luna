@@ -53,8 +53,13 @@ namespace GameMesh.LoadTest
         long _currentAuthorityRequestSeq;
         long _currentAuthoritySentAtMs;
         Vector3 _uncertainTarget;
+        // After a 2s MoveRsp miss: resend this exact target on the same TCP. Do not open a
+        // new connection and do not stall the move loop waiting for PoseUncertain.
+        int _resendSameTarget;
         readonly ConcurrentDictionary<ulong, long> _moveWrittenAtMs =
             new ConcurrentDictionary<ulong, long>();
+        readonly ConcurrentDictionary<ulong, Vector3> _moveSentPos =
+            new ConcurrentDictionary<ulong, Vector3>();
         readonly ConcurrentDictionary<ulong, Vector3> _timedOutBeforeWriteCompleted =
             new ConcurrentDictionary<ulong, Vector3>();
         static int _lineRefreshTick;
@@ -171,6 +176,9 @@ namespace GameMesh.LoadTest
             }
         }
 
+        // Auth waits must cover TCP retransmit RTO on a congested path (observed ~38s), not 2s.
+        public const int AuthTimeoutMs = 45000;
+
         public async Task EnterWorldAsync(string deviceId, string displayName, string password, int gatewayPort,
             CancellationToken ct, uint preferredLine = 0)
         {
@@ -180,7 +188,7 @@ namespace GameMesh.LoadTest
             _password = password ?? "";
             GatewayPort = gatewayPort > 0 ? gatewayPort : 8083;
             _preferredLine = preferredLine;
-            await CloseSessionAsync().ConfigureAwait(true);
+            await CloseSessionAsync().ConfigureAwait(false);
             using (var linked = CancellationTokenSource.CreateLinkedTokenSource(_life.Token, ct))
             {
                 var token = linked.Token;
@@ -191,10 +199,12 @@ namespace GameMesh.LoadTest
                         throw new InvalidOperationException("GameMeshClient missing");
                     _host = client.Config.host ?? "";
                     client.Config.ResolveMapContract();
-                    await ConnectHelloWithFailoverAsync(client, GatewayPort, token).ConfigureAwait(true);
-                    await RegisterAsync(token).ConfigureAwait(true);
-                    await LoginAsync(token).ConfigureAwait(true);
-                    await EnterMapAsync(client, token).ConfigureAwait(true);
+                    // Login success stops at EnterMap. Snapshot / first Move run on this bot's
+                    // own connection after InWorld and must not hold a global login slot.
+                    await ConnectHelloWithFailoverAsync(client, GatewayPort, token).ConfigureAwait(false);
+                    await RegisterAsync(token).ConfigureAwait(false);
+                    await LoginAsync(token).ConfigureAwait(false);
+                    await EnterMapAsync(client, token).ConfigureAwait(false);
                     InWorld = true;
                     Status = "在线 :" + GatewayPort;
                     _heartbeatTask = HeartbeatLoopAsync(_life.Token);
@@ -345,9 +355,9 @@ namespace GameMesh.LoadTest
                 hello.Capabilities.Add(cap);
             var helloMs = timeoutMs > 0
                 ? timeoutMs
-                : Math.Max(3000, client.Config.helloTimeoutMs);
+                : Math.Max(AuthTimeoutMs, client.Config.helloTimeoutMs);
             var rsp = await SendAsync(new GameRequest { ClientHello = hello },
-                TimeSpan.FromMilliseconds(helloMs), ct).ConfigureAwait(true);
+                TimeSpan.FromMilliseconds(helloMs), ct).ConfigureAwait(false);
             var helloRsp = rsp.ServerHello;
             if (!ProtocolHandshake.TryValidate(helloRsp, client.ProtocolSchemaSha256,
                     ProtocolHandshake.ProtocolVersion, out var code, out var message))
@@ -380,7 +390,7 @@ namespace GameMesh.LoadTest
                     DisplayName = _displayName ?? "",
                     Password = _password ?? ""
                 }
-            }, TimeSpan.FromSeconds(15), ct).ConfigureAwait(true);
+            }, TimeSpan.FromMilliseconds(AuthTimeoutMs), ct).ConfigureAwait(false);
             if (!rsp.Ok || rsp.Register == null || !rsp.Register.Ok || rsp.Register.PlayerId == 0)
             {
                 var msg = rsp.Register != null ? rsp.Register.Message : rsp.Message;
@@ -408,7 +418,7 @@ namespace GameMesh.LoadTest
                     KickOtherDevice = kickOtherDevice,
                     Credential = _password ?? ""
                 }
-            }, TimeSpan.FromSeconds(15), ct).ConfigureAwait(true);
+            }, TimeSpan.FromMilliseconds(AuthTimeoutMs), ct).ConfigureAwait(false);
             if (!AuthResponse.TryAcceptLogin(rsp, _playerId, out var playerId, out var login, out var code,
                     out var message))
                 throw new GameMeshException(code, message);
@@ -422,20 +432,22 @@ namespace GameMesh.LoadTest
         async Task EnterMapAsync(GameMeshClient client, CancellationToken ct, bool systemPickLine = false)
         {
             Exception last = null;
-            for (var attempt = 0; attempt < 3; attempt++)
+            // Keep EnterMap retries short while holding a global login slot. Snapshot retries
+            // belong on this connection after InWorld, not here.
+            for (var attempt = 0; attempt < 2; attempt++)
             {
                 try
                 {
                     if (attempt > 0)
                     {
-                        await RefreshSharedLinesAsync().ConfigureAwait(true);
-                        await Task.Delay(400 * attempt, ct).ConfigureAwait(true);
+                        await RefreshSharedLinesAsync().ConfigureAwait(false);
+                        await Task.Delay(200, ct).ConfigureAwait(false);
                         // Timeout alone must not tear down a live socket; only reconnect when down.
                         if (IsLinkDown())
-                            await EnsureLinkedAsync(ct).ConfigureAwait(true);
+                            await EnsureLinkedAsync(ct).ConfigureAwait(false);
                     }
 
-                    await EnterMapOnceAsync(client, ct, systemPickLine || attempt > 0).ConfigureAwait(true);
+                    await EnterMapOnceAsync(client, ct, systemPickLine || attempt > 0).ConfigureAwait(false);
                     return;
                 }
                 catch (OperationCanceledException)
@@ -448,7 +460,7 @@ namespace GameMesh.LoadTest
                     // A slow EnterMap on a live socket is still in the gateway queue.
                     // Sending it again is what piled 605 logins into multi-second replies.
                     var slowOnly = IsLinkFailure(ex) && !IsTransportDead(ex) && !IsLinkDown();
-                    if (attempt == 2 || !IsRetryableEnter(ex) || slowOnly)
+                    if (attempt == 1 || !IsRetryableEnter(ex) || slowOnly)
                         throw;
                 }
             }
@@ -464,15 +476,15 @@ namespace GameMesh.LoadTest
             // Post-reconnect / overflow: line_no=0 lets the server open or assign a line.
             var line = systemPickLine ? 0u : ResolveEnterLine(client, _preferredLine, _index);
             _lastEnterLine = line;
-            var rsp = await SendEnterMapAsync(client, line, ct).ConfigureAwait(true);
+            var rsp = await SendEnterMapAsync(client, line, ct).ConfigureAwait(false);
             if (!EnterMapAccepted(rsp))
             {
                 var code = ProtocolMapper.ExtractErrorCode(rsp);
                 RememberRspMeta(rsp);
                 if (GameErrorCatalog.IsSessionMissing(code))
                 {
-                    await LoginAsync(ct).ConfigureAwait(true);
-                    rsp = await SendEnterMapAsync(client, line, ct).ConfigureAwait(true);
+                    await LoginAsync(ct).ConfigureAwait(false);
+                    rsp = await SendEnterMapAsync(client, line, ct).ConfigureAwait(false);
                     RememberRspMeta(rsp);
                 }
                 else
@@ -481,7 +493,7 @@ namespace GameMesh.LoadTest
                     if (retry != null)
                     {
                         _lastEnterLine = retry.Value;
-                        rsp = await SendEnterMapAsync(client, retry.Value, ct).ConfigureAwait(true);
+                        rsp = await SendEnterMapAsync(client, retry.Value, ct).ConfigureAwait(false);
                         RememberRspMeta(rsp);
                     }
                 }
@@ -530,7 +542,7 @@ namespace GameMesh.LoadTest
                     OperationId = Guid.NewGuid().ToString("N"),
                     LineNo = lineNo
                 }
-            }, TimeSpan.FromSeconds(20), ct).ConfigureAwait(true);
+            }, TimeSpan.FromMilliseconds(AuthTimeoutMs), ct).ConfigureAwait(false);
         }
 
         static bool EnterMapAccepted(GameResponse rsp)
@@ -631,7 +643,7 @@ namespace GameMesh.LoadTest
                 return;
             try
             {
-                await live.QueryMapLinesAsync(true).ConfigureAwait(true);
+                await live.QueryMapLinesAsync(true).ConfigureAwait(false);
             }
             catch
             {
@@ -684,7 +696,7 @@ namespace GameMesh.LoadTest
                     _helloOk = false;
                     using (var connectCts = CancellationTokenSource.CreateLinkedTokenSource(ct))
                     {
-                        connectCts.CancelAfter(15000);
+                        connectCts.CancelAfter(AuthTimeoutMs);
                         await _conn.ConnectAsync(_host, port, connectCts.Token).ConfigureAwait(false);
                     }
 
@@ -1059,8 +1071,10 @@ namespace GameMesh.LoadTest
                     }
 
                     _heartbeatMisses++;
-                    Status = "心跳超时 :" + GatewayPort + " x" + _heartbeatMisses;
-                    var pause = BotMovementMetrics.HeartbeatPauseMs(_heartbeatMisses) + (_index % 10) * 100;
+                    // A late HeartbeatRsp is not permission to stop Move. Keep the move loop
+                    // running; only back off this heartbeat task briefly while TCP is open.
+                    Status = "心跳慢 :" + GatewayPort + " x" + _heartbeatMisses;
+                    var pause = Math.Min(2000, 500 + _heartbeatMisses * 200) + (_index % 20) * 25;
                     try { await Task.Delay(pause, ct).ConfigureAwait(false); }
                     catch (TaskCanceledException) { return; }
                 }
@@ -1069,8 +1083,6 @@ namespace GameMesh.LoadTest
 
         async Task MoveLoopAsync(CancellationToken ct)
         {
-            // Absolute send clock. The Move RPC stays in flight beside the clock.
-            // A slow reply skips the next slot; it does not queue a burst.
             var settings = Movement ?? new BotMovementSettings();
             var invalid = settings.Validate();
             Profile = invalid == null
@@ -1078,33 +1090,38 @@ namespace GameMesh.LoadTest
                 : BotMovementProfile.Idle;
             _clock = new BotMovementClock(settings, _index);
             var population = settings.BotCount > 0 ? settings.BotCount : 1;
-            _spawn = BotHomeLayout.Pick(_index, population, _pos.y);
+            _spawn = settings.ClusterSize > 0
+                ? BotHomeLayout.PickClustered(_index, population, _pos.y, settings.ClusterSize,
+                    settings.ClusterSpacingMeters, settings.ClusterRadiusMeters)
+                : BotHomeLayout.Pick(_index, population, _pos.y);
+            if (settings.SparsePatrol)
+            {
+                await SparseMoveLoopAsync(settings, ct).ConfigureAwait(false);
+                return;
+            }
+
+            await DenseMoveLoopAsync(settings, ct).ConfigureAwait(false);
+        }
+
+        async Task DenseMoveLoopAsync(BotMovementSettings settings, CancellationToken ct)
+        {
+            // Absolute send clock. The Move RPC stays in flight beside the clock.
+            // A slow reply skips the next slot; it does not queue a burst.
             var planner = new BotMovementPlanner(Profile, _index, settings, _spawn);
             var gen = _loopGen;
-            Task inflight = Task.CompletedTask;
             while (!_stopMoves && !ct.IsCancellationRequested && gen == _loopGen)
             {
                 var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                if (PoseUncertain && nowMs >= Interlocked.Read(ref _nextAuthorityAtMs))
-                {
-                    // Never switch a timed-out Move to full snapshots. Under pressure snapshots
-                    // are larger and were timing out too, leaving the bot permanently frozen.
-                    // Repeating the exact target is idempotent and stays on the priority MoveRsp path.
-                    if (Volatile.Read(ref _moveRecoveryBusy) == 0)
-                        _recoveryTask = RetryUnknownMoveAsync(planner, _clock, ct);
-                }
                 var queueBlocked = _conn.MoveBackpressured;
                 var sessionReady = InWorld && Volatile.Read(ref _resumeBusy) == 0 &&
                                    _conn.State == ConnectionState.InWorld && _mapInstanceId != 0;
-                var poseReady = !PoseUncertain;
+                // A written Move with no reply in 2s is TCP lag, not a hard stop. Keep planning
+                // from the last confirmed pose; a late MoveRsp still reconciles.
                 var holdReady = nowMs >= Interlocked.Read(ref _moveHoldUntilMs);
-                var ready = sessionReady && poseReady && holdReady && !queueBlocked;
-                // RequestAsync completion is not the end of this step. A written Move still owns
-                // the single send slot until its MoveRsp arrives or its own 2-second budget expires.
-                var slotOccupied = !inflight.IsCompleted || !_recoveryTask.IsCompleted ||
-                                   AwaitingMoveAuthority
-                    ? 1
-                    : 0;
+                var ready = sessionReady && holdReady && !queueBlocked;
+                // Free the send slot when the 2s authority budget expires even if RequestAsync
+                // is still pending a retransmit.
+                var slotOccupied = AwaitingMoveAuthority ? 1 : 0;
                 var tick = _clock.Evaluate(ready, slotOccupied);
                 if (queueBlocked && tick.Kind == BotMoveTickKind.SkipNotReady && _clock.Metrics != null)
                 {
@@ -1115,46 +1132,37 @@ namespace GameMesh.LoadTest
                 {
                     if (!sessionReady)
                         _clock.Metrics.SkippedSessionNotReady++;
-                    else if (!poseReady)
-                        _clock.Metrics.SkippedPoseUncertain++;
                     else if (!holdReady)
                         _clock.Metrics.SkippedRecoveryHold++;
                 }
                 if (tick.Kind == BotMoveTickKind.Send)
                 {
-                    var dt = _lastClientTimeMs <= 0
-                        ? 1f / settings.TargetHz
-                        : (nowMs - _lastClientTimeMs) / 1000f;
-                    if (dt < 0f)
-                        dt = 0f;
-                    // A long stall may advance client_time_ms. The step still stays
-                    // within 10 m/s of that delta; one second is enough for one step.
-                    var stepDt = dt > 1f ? 1f : dt;
-                    var maxStep = MoveStepLimit.PlannedMeters(stepDt, settings.WalkSpeed);
-                    var plan = planner.NextAroundHome(_pos, maxStep);
-                    if (!plan.Send)
+                    if (TryTakeResendTarget(out var resend))
                     {
-                        if (plan.Reason == "pause")
-                            _clock.Metrics.Paused++;
-                        else if (plan.Reason == "path_rejected")
-                            _clock.Metrics.PathRejected++;
+                        FireMove(resend, nowMs, planner.NoteRejected, ct);
                     }
                     else
                     {
-                        _yaw = plan.Yaw;
-                        _lastClientTimeMs = nowMs;
-                        // 名额跟着请求本身释放。统计回调若排在线程池后面，不能继续把机器人算成忙。
-                        try
+                        var dt = _lastClientTimeMs <= 0
+                            ? 1f / settings.TargetHz
+                            : (nowMs - _lastClientTimeMs) / 1000f;
+                        if (dt < 0f)
+                            dt = 0f;
+                        // Dense path keeps the 1s cap. SparsePatrol does not.
+                        var stepDt = dt > 1f ? 1f : dt;
+                        var maxStep = MoveStepLimit.PlannedMeters(stepDt, settings.WalkSpeed);
+                        var plan = planner.NextAroundHome(_pos, maxStep);
+                        if (!plan.Send)
                         {
-                            var requestTask = StartMoveRequest(plan.Position, nowMs, ct,
-                                out var requestSeq);
-                            inflight = requestTask;
-                            _ = FinishMoveStepAsync(requestTask, requestSeq, plan.Position,
-                                planner, _clock, ct);
+                            if (plan.Reason == "pause")
+                                _clock.Metrics.Paused++;
+                            else if (plan.Reason == "path_rejected")
+                                _clock.Metrics.PathRejected++;
                         }
-                        catch (Exception ex)
+                        else
                         {
-                            NoteMoveSendFailed(ex, planner, _clock);
+                            _yaw = plan.Yaw;
+                            FireMove(plan.Position, nowMs, planner.NoteRejected, ct);
                         }
                     }
                 }
@@ -1162,6 +1170,97 @@ namespace GameMesh.LoadTest
                 var wait = tick.WaitMs > 0 ? tick.WaitMs : 20;
                 try { await Task.Delay(wait, ct).ConfigureAwait(false); }
                 catch (TaskCanceledException) { return; }
+            }
+        }
+
+        async Task SparseMoveLoopAsync(BotMovementSettings settings, CancellationToken ct)
+        {
+            var sparse = new SparsePatrolController(_index, settings);
+            var metrics = _clock.Metrics;
+            var now0 = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            metrics.SampleStartedMs = now0;
+            sparse.Arm(now0);
+            var gen = _loopGen;
+            while (!_stopMoves && !ct.IsCancellationRequested && gen == _loopGen)
+            {
+                var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                var queueBlocked = _conn.MoveBackpressured;
+                var sessionReady = InWorld && Volatile.Read(ref _resumeBusy) == 0 &&
+                                   _conn.State == ConnectionState.InWorld && _mapInstanceId != 0;
+                var holdReady = nowMs >= Interlocked.Read(ref _moveHoldUntilMs);
+                metrics.SampleEndedMs = nowMs;
+                if (!sessionReady || !holdReady || queueBlocked || AwaitingMoveAuthority)
+                {
+                    // Sparse waits are long by design; do not treat every 50ms poll as a skip tick.
+                    try { await Task.Delay(50, ct).ConfigureAwait(false); }
+                    catch (TaskCanceledException) { return; }
+                    continue;
+                }
+
+                // 2s MoveRsp miss: only resend the same target on this TCP. Do not NoteSent again.
+                if (TryTakeResendTarget(out var resend))
+                {
+                    FireMove(resend, nowMs, sparse.NoteRejected, ct);
+                    try { await Task.Delay(50, ct).ConfigureAwait(false); }
+                    catch (TaskCanceledException) { return; }
+                    continue;
+                }
+
+                var plan = sparse.Poll(_pos, nowMs, metrics, out var waitMs);
+                if (!plan.Send)
+                {
+                    if (plan.Reason == "path_rejected")
+                        metrics.PathRejected++;
+                    try { await Task.Delay(waitMs > 0 ? waitMs : 50, ct).ConfigureAwait(false); }
+                    catch (TaskCanceledException) { return; }
+                    continue;
+                }
+
+                // Absolute client_time_ms on the wire. The first request uses the server's
+                // SegmentMinSec allowance; later requests use the full gap. Never chop Δt to 1s.
+                // Full segment goal is sent; server may shorten; arrive finishes. No velocity fields.
+                _yaw = plan.Yaw;
+                try
+                {
+                    var requestTask = StartMoveRequest(plan.Position, nowMs, ct, out var requestSeq);
+                    _lastClientTimeMs = nowMs;
+                    sparse.NoteSent(plan.Yaw, nowMs, plan.Reason, metrics);
+                    _ = FinishMoveStepAsync(requestTask, requestSeq, plan.Position,
+                        sparse.NoteRejected, _clock, ct);
+                }
+                catch (Exception ex)
+                {
+                    NoteMoveSendFailed(ex, sparse.NoteRejected, _clock);
+                }
+
+                try { await Task.Delay(waitMs > 0 ? waitMs : 50, ct).ConfigureAwait(false); }
+                catch (TaskCanceledException) { return; }
+            }
+        }
+
+        bool TryTakeResendTarget(out Vector3 target)
+        {
+            if (Interlocked.CompareExchange(ref _resendSameTarget, 0, 1) != 1)
+            {
+                target = default;
+                return false;
+            }
+
+            target = _uncertainTarget;
+            return true;
+        }
+
+        void FireMove(Vector3 position, long nowMs, Action onRejected, CancellationToken ct)
+        {
+            _lastClientTimeMs = nowMs;
+            try
+            {
+                var requestTask = StartMoveRequest(position, nowMs, ct, out var requestSeq);
+                _ = FinishMoveStepAsync(requestTask, requestSeq, position, onRejected, _clock, ct);
+            }
+            catch (Exception ex)
+            {
+                NoteMoveSendFailed(ex, onRejected, _clock);
             }
         }
 
@@ -1186,13 +1285,14 @@ namespace GameMesh.LoadTest
                 request.SessionToken = _token;
             var task = _conn.RequestAsync(request, TimeSpan.FromSeconds(2), ct);
             requestSeq = request.Seq;
+            _moveSentPos[requestSeq] = next;
             if (metrics != null)
                 Interlocked.Increment(ref metrics.QueueAccepted);
             return task;
         }
 
         async Task FinishMoveStepAsync(Task<GameResponse> requestTask, ulong requestSeq, Vector3 sent,
-            BotMovementPlanner planner, BotMovementClock clock, CancellationToken ct)
+            Action onRejected, BotMovementClock clock, CancellationToken ct)
         {
             var metrics = clock.Metrics;
             try
@@ -1259,7 +1359,8 @@ namespace GameMesh.LoadTest
                     metrics.RejectUnwalkable++;
                 else
                     metrics.RejectOther++;
-                planner.NoteRejected();
+                if (onRejected != null)
+                    onRejected();
                 if (!adopted && GameErrorCatalog.IsNotOnMap(code) &&
                     Volatile.Read(ref _resumeBusy) == 0)
                 {
@@ -1313,7 +1414,8 @@ namespace GameMesh.LoadTest
 
                 metrics.Rejected++;
                 ForgetMoveRequest(requestSeq);
-                planner.NoteRejected();
+                if (onRejected != null)
+                    onRejected();
             }
         }
 
@@ -1341,8 +1443,13 @@ namespace GameMesh.LoadTest
             Interlocked.Exchange(ref _currentAuthorityRequestSeq, (long)requestSeq);
             Interlocked.Exchange(ref _currentAuthoritySentAtMs, writtenAtMs);
 
-            if (_timedOutBeforeWriteCompleted.TryRemove(requestSeq, out var target) && metrics != null)
-                WaitForMoveAuthorityBudget(requestSeq, target, metrics);
+            Vector3 sent;
+            if (_timedOutBeforeWriteCompleted.TryRemove(requestSeq, out var target))
+                sent = target;
+            else
+                _moveSentPos.TryGetValue(requestSeq, out sent);
+            if (metrics != null)
+                WaitForMoveAuthorityBudget(requestSeq, sent, metrics);
         }
 
         void NoteMoveResponse(ulong requestSeq, bool authorityConfirmed, BotMovementMetrics metrics,
@@ -1358,6 +1465,7 @@ namespace GameMesh.LoadTest
             }
 
             _timedOutBeforeWriteCompleted.TryRemove(requestSeq, out _);
+            _moveSentPos.TryRemove(requestSeq, out _);
             if (Interlocked.Read(ref _currentAuthorityRequestSeq) == (long)requestSeq)
             {
                 Interlocked.Exchange(ref _currentAuthoritySentAtMs, 0);
@@ -1381,6 +1489,7 @@ namespace GameMesh.LoadTest
         void ForgetMoveRequest(ulong requestSeq)
         {
             _moveWrittenAtMs.TryRemove(requestSeq, out _);
+            _moveSentPos.TryRemove(requestSeq, out _);
             _timedOutBeforeWriteCompleted.TryRemove(requestSeq, out _);
             if (Interlocked.Read(ref _currentAuthorityRequestSeq) != (long)requestSeq)
                 return;
@@ -1393,31 +1502,30 @@ namespace GameMesh.LoadTest
         {
             if ((ulong)Math.Max(0, Interlocked.Read(ref _lastAuthorityRequestSeq)) >= requestSeq)
                 return;
+            // Already freed by a racing budget/timeout path.
+            if (!_moveWrittenAtMs.ContainsKey(requestSeq) &&
+                Interlocked.Read(ref _currentAuthorityRequestSeq) != (long)requestSeq)
+                return;
 
             Interlocked.Increment(ref metrics.UnknownOutcome);
             _unknownStreak++;
             _uncertainTarget = sent;
-            // The request has now left RpcPendingTable. It is a timed-out outcome, not a
-            // centuries-old "currently waiting" sample. A retry gets its own fresh timer.
+            // Leave the pending table and free the send slot. Resend the same target on this
+            // TCP; do not open a new connection or stop the move loop.
             ForgetMoveRequest(requestSeq);
             Interlocked.Exchange(ref _uncertainRequestSeq, (long)requestSeq);
-            Volatile.Write(ref _poseUncertain, 1);
+            Volatile.Write(ref _poseUncertain, 0);
+            Interlocked.Exchange(ref _resendSameTarget, 1);
 
-            // Close the timeout/late-response race. Whichever side observes the matching
-            // authority last leaves the bot ready, never permanently uncertain.
             if ((ulong)Math.Max(0, Interlocked.Read(ref _lastAuthorityRequestSeq)) >= requestSeq)
             {
                 Interlocked.Exchange(ref _uncertainRequestSeq, 0);
-                Volatile.Write(ref _poseUncertain, 0);
+                Interlocked.Exchange(ref _resendSameTarget, 0);
                 _unknownStreak = 0;
                 return;
             }
 
-            var retryShift = Math.Min(3, Math.Max(0, _unknownStreak - 1));
-            var retryMs = Math.Min(5000, 500 << retryShift);
-            Interlocked.Exchange(ref _nextAuthorityAtMs,
-                DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + retryMs + (_index % 20) * 50);
-            Status = "Move超过2秒未确认，等待同目标重试 :" + GatewayPort;
+            Status = "Move超时，重发同目标 :" + GatewayPort;
         }
 
         void WaitForMoveAuthorityBudget(ulong requestSeq, Vector3 sent,
@@ -1456,7 +1564,7 @@ namespace GameMesh.LoadTest
             MarkMoveAuthorityUncertain(requestSeq, sent, metrics);
         }
 
-        async Task RetryUnknownMoveAsync(BotMovementPlanner planner, BotMovementClock clock,
+        async Task RetryUnknownMoveAsync(Action onRejected, BotMovementClock clock,
             CancellationToken ct)
         {
             if (Interlocked.CompareExchange(ref _moveRecoveryBusy, 1, 0) != 0)
@@ -1468,7 +1576,7 @@ namespace GameMesh.LoadTest
                 var target = _uncertainTarget;
                 var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 var requestTask = StartMoveRequest(target, nowMs, ct, out var requestSeq);
-                await FinishMoveStepAsync(requestTask, requestSeq, target, planner, clock, ct)
+                await FinishMoveStepAsync(requestTask, requestSeq, target, onRejected, clock, ct)
                     .ConfigureAwait(false);
             }
             catch (TaskCanceledException)
@@ -1476,7 +1584,7 @@ namespace GameMesh.LoadTest
             }
             catch (Exception ex)
             {
-                NoteMoveSendFailed(ex, planner, clock);
+                NoteMoveSendFailed(ex, onRejected, clock);
                 Interlocked.Exchange(ref _nextAuthorityAtMs,
                     DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() + 750 + (_index % 20) * 100);
             }
@@ -1487,7 +1595,7 @@ namespace GameMesh.LoadTest
         }
 
         // RequestAsync throws synchronously only before the frame is queued.
-        void NoteMoveSendFailed(Exception ex, BotMovementPlanner planner, BotMovementClock clock)
+        void NoteMoveSendFailed(Exception ex, Action onRejected, BotMovementClock clock)
         {
             var metrics = clock != null ? clock.Metrics : null;
             if (metrics == null || ex is TaskCanceledException)
@@ -1509,8 +1617,8 @@ namespace GameMesh.LoadTest
             }
 
             metrics.Rejected++;
-            if (planner != null)
-                planner.NoteRejected();
+            if (onRejected != null)
+                onRejected();
         }
 
         TimeSpan RpcBudget(int floorMs)
