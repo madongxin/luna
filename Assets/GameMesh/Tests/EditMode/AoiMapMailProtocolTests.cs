@@ -1,6 +1,7 @@
 using System.IO;
 using GameMesh.Aoi;
 using GameMesh.Auth;
+using GameMesh.Player;
 using GameMesh.Map;
 using GameMesh.Network;
 using GameMesh.Protocol;
@@ -187,6 +188,81 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void Aoi_LeaveWithOnlyPlayerIdRemovesTheBody()
+        {
+            var world = new AoiWorld { LocalPlayerId = 1 };
+            world.SetMapInstance(9);
+            world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Enter,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto
+                {
+                    EntityId = 99, PlayerId = 42, X = 3, StateSeq = 4, MapInstanceId = 9
+                }
+            });
+            Assert.IsTrue(world.Entities.ContainsKey(42));
+            Assert.IsTrue(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Leave,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto { EntityId = 0, PlayerId = 42, MapInstanceId = 9 }
+            }));
+            Assert.AreEqual(0, world.Entities.Count);
+            Assert.IsFalse(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Leave,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto { EntityId = 0, PlayerId = 42, MapInstanceId = 9 }
+            }));
+        }
+
+        [Test]
+        public void Aoi_SameSeqNewPositionAndServerTimeApplies()
+        {
+            var world = new AoiWorld { LocalPlayerId = 1 };
+            world.SetMapInstance(9);
+            world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Enter,
+                MapInstanceId = 9,
+                ServerTimeMs = 1000,
+                Entity = new EntitySnapshotDto
+                {
+                    EntityId = 0, PlayerId = 42, X = 1, StateSeq = 4, MapInstanceId = 9, ServerTimeMs = 1000
+                }
+            });
+            Assert.IsTrue(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Move,
+                MapInstanceId = 9,
+                ServerTimeMs = 1800,
+                Entity = new EntitySnapshotDto
+                {
+                    EntityId = 0, PlayerId = 42, X = 8, Z = 2, StateSeq = 4, MapInstanceId = 9,
+                    ServerTimeMs = 1800
+                }
+            }));
+            var body = world.Entities[42];
+            Assert.AreEqual(8f, body.X);
+            Assert.AreEqual(2f, body.Z);
+            Assert.AreEqual(1800L, body.ServerTimeMs);
+            Assert.AreEqual(4UL, body.StateSeq);
+            world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Move,
+                MapInstanceId = 9,
+                ServerTimeMs = 1900,
+                Entity = new EntitySnapshotDto
+                {
+                    EntityId = 0, PlayerId = 42, X = 0, StateSeq = 3, MapInstanceId = 9, ServerTimeMs = 1900
+                }
+            });
+            Assert.AreEqual(8f, body.X);
+            Assert.AreEqual(1800L, body.ServerTimeMs);
+        }
+
+        [Test]
         public void Aoi_MoveWithoutNameOrHp_KeepsEnterValues()
         {
             var world = new AoiWorld { LocalPlayerId = 1 };
@@ -343,16 +419,62 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
-        public void RemotePoseBuffer_HoldsAtLatestWithoutVelocityExtrapolation()
+        public void RemotePoseBuffer_MovePositionIsTheCurrentPoint()
         {
             var buffer = new RemotePoseBuffer();
             Assert.IsTrue(buffer.Push(0, 0, 0, 0, 1f, 1));
             Assert.IsTrue(buffer.Push(10, 0, 0, 90, 1.1f, 2));
-            Assert.IsTrue(buffer.TrySample(1.35f, 0f, out var x, out _, out _, out _));
-            // Past the tip: hold the latest AOI body position. No vx/vz extrapolation.
+            // Past the newest MOVE, stay on that position. Do not read vx/vz/move_start_ms.
+            Assert.IsTrue(buffer.TrySample(1.35f, 0f, out var x, out _, out _, out var yaw));
             Assert.AreEqual(10f, x, 0.01f);
+            Assert.AreEqual(90f, yaw, 0.01f);
             Assert.IsTrue(buffer.TrySample(2f, 0f, out x, out _, out _, out _));
             Assert.AreEqual(10f, x, 0.01f);
+        }
+
+        [Test]
+        public void RemotePoseBuffer_SameSeqPositionIsPlayed()
+        {
+            var buffer = new RemotePoseBuffer();
+            Assert.IsTrue(buffer.Push(0, 0, 0, 0, 1f, 4));
+            Assert.IsTrue(buffer.Push(2, 0, 0, 0, 1.2f, 4));
+            Assert.IsTrue(buffer.TrySample(1.4f, 0f, out var x, out _, out _, out _));
+            Assert.AreEqual(2f, x, 0.01f);
+            Assert.IsTrue(buffer.Push(2, 0, 4, 0, 1.6f, 4));
+            Assert.IsTrue(buffer.TrySample(1.8f, 0f, out x, out _, out var z, out _));
+            Assert.AreEqual(2f, x, 0.01f);
+            Assert.AreEqual(4f, z, 0.01f);
+        }
+
+        [Test]
+        public void RemotePoseBuffer_ZeroStepDoesNotDrift()
+        {
+            var buffer = new RemotePoseBuffer();
+            Assert.IsTrue(buffer.Push(3, 0, 5, 10, 1f, 1));
+            Assert.IsTrue(buffer.Push(3, 0, 5, 10, 1.2f, 1));
+            Assert.IsTrue(buffer.TrySample(4f, 0f, out var x, out _, out var z, out _));
+            Assert.AreEqual(3f, x, 0.01f);
+            Assert.AreEqual(5f, z, 0.01f);
+        }
+
+        [Test]
+        public void RemoteLocomotion_MovingStepPlaysRunAndZeroStepStops()
+        {
+            // 2m in 0.2s is the near-AOI pace. The blend tree's run clip is Speed 6.
+            RemotePlayerView.LocomotionFromStep(2f, 0.2f, out var speed, out var hold);
+            Assert.AreEqual(6f, speed, 0.01f);
+            Assert.AreEqual(0.35f, hold, 0.01f);
+
+            RemotePlayerView.LocomotionFromStep(0f, 0.2f, out speed, out hold);
+            Assert.AreEqual(0f, speed, 0.001f);
+            Assert.AreEqual(0f, hold, 0.001f);
+
+            // 30m over 3s is the far AOI step. Walk it at 10 m/s; do not cross it in one frame.
+            Assert.AreEqual(10f, RemotePlayerView.ChaseMetersPerSec(30f, 3f), 0.01f);
+            Assert.AreEqual(10f, RemotePlayerView.ChaseMetersPerSec(30f, 0.05f), 0.01f);
+            Assert.AreEqual(0f, RemotePlayerView.ChaseMetersPerSec(0f, 0.2f), 0.001f);
+            Assert.IsTrue(RemotePoseBuffer.IsAlongPathUpdate(4, 4));
+            Assert.IsFalse(RemotePoseBuffer.IsAlongPathUpdate(3, 4));
         }
 
         [Test]
@@ -376,10 +498,48 @@ namespace GameMesh.Tests.EditMode
             Assert.IsTrue(buffer.TrySample(13f, 1.5f, out var x, out _, out _, out var yaw));
             Assert.AreEqual(9f, x, 0.01f);
             Assert.AreEqual(45f, yaw, 0.01f);
-            // No extrapolation past the newest position.
+            // The later same-seq position is the current point, including after its time.
             Assert.IsTrue(buffer.TrySample(20f, 0f, out x, out _, out _, out yaw));
             Assert.AreEqual(18f, x, 0.01f);
             Assert.AreEqual(90f, yaw, 0.01f);
+        }
+
+        [Test]
+        public void RecoverPose_KeepsHorizontalStepOutOfAHole()
+        {
+            var stuck = new Vector3(-180f, -28.19f, 796f);
+            var previous = new Vector3(-172.3f, -27.4f, 805.1f);
+            Assert.IsFalse(GameMeshWorldBinder.TryRecoverPose(
+                stuck, true, previous, false, 0f, -37.5f, out _));
+
+            var buried = new Vector3(-180f, -34.9f, 796f);
+            Assert.IsTrue(GameMeshWorldBinder.TryRecoverPose(
+                buried, true, previous, true, -27.5f, -37.5f, out var lifted));
+            Assert.AreEqual(-180f, lifted.x, 0.001f);
+            Assert.AreEqual(796f, lifted.z, 0.001f);
+            Assert.Greater(lifted.y, -27.5f);
+
+            var voided = new Vector3(-180f, -40f, 796f);
+            Assert.IsTrue(GameMeshWorldBinder.TryRecoverPose(
+                voided, true, previous, false, 0f, -37.5f, out var restored));
+            Assert.AreEqual(-180f, restored.x, 0.001f);
+            Assert.AreEqual(796f, restored.z, 0.001f);
+            Assert.AreEqual(previous.y, restored.y, 0.001f);
+        }
+
+        [Test]
+        public void AoiSampleClock_RewoundConfirmTimeStillAdvancesThePath()
+        {
+            Assert.IsTrue(AoiSampleClock.IsRewound(4_500_000_000L, 4_500_010_000L));
+            Assert.IsFalse(AoiSampleClock.IsRewound(4_500_010_000L, 4_500_010_000L));
+            Assert.IsFalse(AoiSampleClock.IsRewound(4_500_010_004L, 4_500_010_000L));
+            Assert.IsFalse(AoiSampleClock.IsRewound(0L, 4_500_010_000L));
+
+            // 32m at 10 m/s is the far-AOI step. Place it on the timeline instead of dropping it.
+            var placed = AoiSampleClock.PlaceRewound(110f, 100f, 32f, 10f);
+            Assert.AreEqual(103.2f, placed, 0.001f);
+            Assert.Greater(placed, 100f);
+            Assert.Less(placed, 110f);
         }
 
         [Test]

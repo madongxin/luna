@@ -113,6 +113,12 @@ namespace GameMesh.Aoi
             }
         }
 
+        /// <summary>PlayerId is the body id. EntityId 0 still means PlayerId.</summary>
+        public static ulong BodyId(ulong entityId, ulong playerId)
+        {
+            return playerId != 0 ? playerId : entityId;
+        }
+
         public bool ApplyDelta(AoiDeltaDto delta)
         {
             if (delta?.Entity == null)
@@ -123,55 +129,148 @@ namespace GameMesh.Aoi
                 return false;
             }
 
-            var id = delta.Entity.EntityId != 0 ? delta.Entity.EntityId : delta.Entity.PlayerId;
-            if (id == 0 || id == LocalPlayerId || delta.Entity.PlayerId == LocalPlayerId)
+            var playerId = delta.Entity.PlayerId;
+            var entityId = delta.Entity.EntityId;
+            var id = BodyId(entityId, playerId);
+            if (id == 0 || id == LocalPlayerId || (playerId != 0 && playerId == LocalPlayerId))
                 return false;
 
             if (delta.Op == AoiOp.Leave)
-                return _entities.Remove(id);
+                return RemoveBody(entityId, playerId);
 
-            if (delta.Op == AoiOp.Move && _entities.TryGetValue(id, out var existing))
+            if (TryFindBody(entityId, playerId, out var key, out var existing))
             {
-                // Same state_seq with a new position is an along-path body update. Only drop
-                // a strictly older seq. Missing intermediate frames must not trigger a resync.
-                if (delta.Entity.StateSeq != 0 && existing.StateSeq != 0 &&
-                    delta.Entity.StateSeq < existing.StateSeq)
+                if (key != id)
+                {
+                    _entities.Remove(key);
+                    _entities[id] = existing;
+                }
+
+                // Same state_seq with a new position and a newer server_time_ms is the next
+                // sample of this walk. Only a strictly older seq is a stale packet.
+                if (!RemotePoseBuffer.IsAlongPathUpdate(delta.Entity.StateSeq, existing.StateSeq))
                     return false;
-                // A MOVE may omit name/hp/max_hp to save bandwidth; keep what ENTER gave us.
+                if (delta.Op == AoiOp.Enter && delta.Entity.StateSeq != 0 &&
+                    existing.StateSeq != 0 && delta.Entity.StateSeq < existing.StateSeq)
+                    return false;
+
                 var name = existing.Name;
                 var hp = existing.Hp;
                 var maxHp = existing.MaxHp;
                 Copy(delta.Entity, existing, delta.ServerTimeMs);
                 if (string.IsNullOrEmpty(existing.Name))
                     existing.Name = name;
-                if (delta.Entity.Hp == 0 && delta.Entity.MaxHp == 0)
+                if (delta.Op == AoiOp.Move && delta.Entity.Hp == 0 && delta.Entity.MaxHp == 0)
                 {
                     existing.Hp = hp;
                     existing.MaxHp = maxHp;
                 }
+
+                if (entityId != 0)
+                    existing.EntityId = entityId;
+                else if (existing.EntityId == 0)
+                    existing.EntityId = id;
                 existing.LastLocalMs = LocalNowMs;
                 return true;
             }
 
-            if (!_entities.TryGetValue(id, out var state))
+            var state = new RemoteEntityState
             {
-                state = new RemoteEntityState { EntityId = id };
-                _entities[id] = state;
-            }
-            else if (delta.Op == AoiOp.Enter && delta.Entity.StateSeq != 0 &&
-                     state.StateSeq != 0 && delta.Entity.StateSeq < state.StateSeq)
-            {
-                return false;
-            }
-
+                EntityId = entityId != 0 ? entityId : id,
+                PlayerId = playerId != 0 ? playerId : id
+            };
+            _entities[id] = state;
             Copy(delta.Entity, state, delta.ServerTimeMs);
             state.LastLocalMs = LocalNowMs;
             return true;
         }
 
+        public event System.Action<ulong> BodyRemoved;
+
+        bool RemoveBody(ulong entityId, ulong playerId)
+        {
+            var id = BodyId(entityId, playerId);
+            if (id == 0)
+                return false;
+            List<ulong> dead = null;
+            foreach (var kv in _entities)
+            {
+                if (!SameBody(kv.Key, kv.Value, entityId, playerId))
+                    continue;
+                if (dead == null)
+                    dead = new List<ulong>();
+                dead.Add(kv.Key);
+            }
+
+            if (dead == null)
+                return false;
+            for (var i = 0; i < dead.Count; i++)
+                _entities.Remove(dead[i]);
+            var removed = BodyRemoved;
+            if (removed != null)
+            {
+                removed(id);
+                if (playerId != 0 && playerId != id)
+                    removed(playerId);
+                if (entityId != 0 && entityId != id && entityId != playerId)
+                    removed(entityId);
+                for (var i = 0; i < dead.Count; i++)
+                {
+                    if (dead[i] != id && dead[i] != playerId && dead[i] != entityId)
+                        removed(dead[i]);
+                }
+            }
+
+            return true;
+        }
+
+        bool TryFindBody(ulong entityId, ulong playerId, out ulong key, out RemoteEntityState state)
+        {
+            var id = BodyId(entityId, playerId);
+            if (id != 0 && _entities.TryGetValue(id, out state))
+            {
+                key = id;
+                return true;
+            }
+
+            if (entityId != 0 && entityId != id && _entities.TryGetValue(entityId, out state))
+            {
+                key = entityId;
+                return true;
+            }
+
+            foreach (var kv in _entities)
+            {
+                if (!SameBody(kv.Key, kv.Value, entityId, playerId))
+                    continue;
+                key = kv.Key;
+                state = kv.Value;
+                return true;
+            }
+
+            key = 0;
+            state = null;
+            return false;
+        }
+
+        static bool SameBody(ulong key, RemoteEntityState state, ulong entityId, ulong playerId)
+        {
+            var id = BodyId(entityId, playerId);
+            if (id != 0 && (key == id || state.PlayerId == id || state.EntityId == id))
+                return true;
+            if (entityId != 0 && (key == entityId || state.EntityId == entityId || state.PlayerId == entityId))
+                return true;
+            if (playerId != 0 && (key == playerId || state.PlayerId == playerId || state.EntityId == playerId))
+                return true;
+            return false;
+        }
+
         static void Copy(EntitySnapshotDto src, RemoteEntityState dst, long eventServerTimeMs = 0)
         {
-            dst.PlayerId = src.PlayerId;
+            if (src.PlayerId != 0)
+                dst.PlayerId = src.PlayerId;
+            else if (dst.PlayerId == 0)
+                dst.PlayerId = dst.EntityId;
             dst.Name = src.Name ?? "";
             dst.X = src.X;
             dst.Y = src.Y;

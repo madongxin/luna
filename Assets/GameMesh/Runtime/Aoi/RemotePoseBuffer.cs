@@ -3,9 +3,9 @@ using System;
 namespace GameMesh.Aoi
 {
     /// <summary>
-    /// Render-only pose trail for remote players. No vx/vz/move_start_ms extrapolation.
-    /// Between two AOI samples, blend along the last displacement; past the tip, hold still
-    /// until the next MOVE arrives and replaces the target.
+    /// Render-only pose trail for remote players. Does not read vx, vz, or move_start_ms.
+    /// A MOVE position is the body position at that sample. Playback ends on the newest
+    /// sample; it does not continue past it.
     /// </summary>
     public sealed class RemotePoseBuffer
     {
@@ -24,6 +24,21 @@ namespace GameMesh.Aoi
         public int Count => _count;
 
         /// <summary>
+        /// Same state_seq with a new position is the next sample of this walk.
+        /// Only a strictly older seq is dropped. vx, vz, and move_start_ms are not inputs.
+        /// </summary>
+        public static bool IsAlongPathUpdate(ulong incomingSeq, ulong acceptedSeq)
+        {
+            return incomingSeq == 0 || acceptedSeq == 0 || incomingSeq >= acceptedSeq;
+        }
+
+        public void Clear()
+        {
+            _count = 0;
+            _lastSeq = 0;
+        }
+
+        /// <summary>
         /// A busy load-test frame can last seconds. Never spend that whole wall-clock gap in
         /// one rendered movement step, or a remote visibly teleports on the next frame.
         /// </summary>
@@ -36,8 +51,7 @@ namespace GameMesh.Aoi
 
         public bool Push(float x, float y, float z, float yaw, float time, ulong stateSeq)
         {
-            // Strictly older seq only. Equal seq with a new position is an along-path update.
-            if (stateSeq != 0 && _lastSeq != 0 && stateSeq < _lastSeq)
+            if (!IsAlongPathUpdate(stateSeq, _lastSeq))
                 return false;
             if (stateSeq != 0)
                 _lastSeq = stateSeq;
@@ -97,16 +111,16 @@ namespace GameMesh.Aoi
             }
 
             var last = _count - 1;
-            if (t >= _samples[last].Time)
-            {
-                // Hold the latest AOI body position. Do not open velocity extrapolation.
-                Copy(_samples[last], out x, out y, out z, out yaw);
-                return true;
-            }
-
             var from = _samples[0];
             var to = _samples[last];
             var blendSpan = to.Time - from.Time;
+            if (t >= to.Time)
+            {
+                // MOVE.position is the current body coordinate. Do not walk past it.
+                Copy(to, out x, out y, out z, out yaw);
+                return true;
+            }
+
             // The server samples a body that is already walking at constant speed.
             // Smoothstep forced the rendered velocity to zero at every AOI sample, so sparse
             // three-second updates looked like stop/start motion. Linear playback preserves
@@ -133,6 +147,35 @@ namespace GameMesh.Aoi
             while (delta > 180f) delta -= 360f;
             while (delta < -180f) delta += 360f;
             return a + delta * t;
+        }
+    }
+
+    /// <summary>
+    /// MOVE's server_time_ms is when that displacement was confirmed, so a later body
+    /// position can carry an earlier clock. That update still belongs on the path.
+    /// </summary>
+    public static class AoiSampleClock
+    {
+        public const float MaxGapSec = 3.2f;
+
+        public static bool IsRewound(long incomingMs, long acceptedMs)
+        {
+            return incomingMs != 0 && acceptedMs != 0 && incomingMs + 5 < acceptedMs;
+        }
+
+        public static float PlaceRewound(float now, float lastTime, float distance, float metersPerSec)
+        {
+            var travel = metersPerSec > 0.01f ? distance / metersPerSec : 0.05f;
+            if (travel < 0.05f)
+                travel = 0.05f;
+            if (travel > MaxGapSec)
+                travel = MaxGapSec;
+            var t = lastTime + travel;
+            if (t > now)
+                t = now;
+            if (t <= lastTime)
+                t = lastTime + 0.001f;
+            return t;
         }
     }
 }
