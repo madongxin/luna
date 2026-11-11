@@ -550,7 +550,7 @@ namespace GameMesh.Tests.EditMode
             Assert.IsTrue(buffer.Push(3, 0, 0, 0, 1.05f, 2));
             // Missing intermediate seqs are coalesced/lost samples, not a teleport instruction.
             Assert.IsTrue(buffer.Push(30, 0, 0, 0, 1.6f, 9));
-            Assert.AreEqual(2, buffer.Count);
+            Assert.AreEqual(3, buffer.Count);
             Assert.IsTrue(buffer.TrySample(1.6f, 0.275f, out var x, out _, out _, out _));
             Assert.AreEqual(16.5f, x, 0.01f);
             Assert.IsTrue(buffer.TrySample(1.7f, 0f, out x, out _, out _, out _));
@@ -584,6 +584,157 @@ namespace GameMesh.Tests.EditMode
             s = ConnectionStateMachine.Transition(s, ConnectionState.Closing);
             s = ConnectionStateMachine.Transition(s, ConnectionState.Disconnected);
             Assert.AreEqual(ConnectionState.Disconnected, s);
+        }
+
+        [Test]
+        public void Aoi_LeaveThenMove_DoesNotCreateBody()
+        {
+            var world = new AoiWorld { LocalPlayerId = 1 };
+            world.SetMapInstance(9);
+            var errors = world.ProtocolErrors;
+            Assert.IsFalse(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Leave,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto { EntityId = 42, PlayerId = 42, MapInstanceId = 9 }
+            }));
+            Assert.IsFalse(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Move,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto { EntityId = 42, PlayerId = 42, X = 5, StateSeq = 2, MapInstanceId = 9 }
+            }));
+            Assert.AreEqual(0, world.Entities.Count);
+            Assert.IsFalse(world.Entities.ContainsKey(42));
+            Assert.AreEqual(errors, world.ProtocolErrors);
+        }
+
+        [Test]
+        public void Aoi_SecondLeave_IsIgnored()
+        {
+            var world = new AoiWorld { LocalPlayerId = 1 };
+            world.SetMapInstance(9);
+            Assert.IsTrue(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Enter,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto { EntityId = 42, PlayerId = 42, X = 1, StateSeq = 1, MapInstanceId = 9 }
+            }));
+            Assert.IsTrue(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Leave,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto { EntityId = 42, PlayerId = 42, MapInstanceId = 9 }
+            }));
+            var errors = world.ProtocolErrors;
+            Assert.IsFalse(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Leave,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto { EntityId = 42, PlayerId = 42, MapInstanceId = 9 }
+            }));
+            Assert.AreEqual(0, world.Entities.Count);
+            Assert.AreEqual(errors, world.ProtocolErrors);
+        }
+
+        [Test]
+        public void Aoi_EnterWhilePresent_UpdatesTheSameRow()
+        {
+            var world = new AoiWorld { LocalPlayerId = 1 };
+            world.SetMapInstance(9);
+            Assert.IsTrue(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Enter,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto
+                {
+                    EntityId = 42, PlayerId = 42, Name = "Bot042", X = 1, Hp = 80, MaxHp = 100,
+                    StateSeq = 5, MapInstanceId = 9
+                }
+            }));
+            Assert.IsFalse(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Enter,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto
+                {
+                    EntityId = 42, PlayerId = 42, Name = "Stale", X = 99, Hp = 1, MaxHp = 100,
+                    StateSeq = 4, MapInstanceId = 9
+                }
+            }));
+            Assert.IsTrue(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Enter,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto
+                {
+                    EntityId = 42, PlayerId = 42, Name = "Bot042b", X = 8, Hp = 70, MaxHp = 100,
+                    StateSeq = 6, MapInstanceId = 9
+                }
+            }));
+            Assert.AreEqual(1, world.Entities.Count);
+            var body = world.Entities[42];
+            Assert.AreEqual(8f, body.X);
+            Assert.AreEqual("Bot042b", body.Name);
+            Assert.AreEqual(70f, body.Hp);
+            Assert.AreEqual(100f, body.MaxHp);
+            Assert.AreEqual(6ul, body.StateSeq);
+        }
+
+        [Test]
+        public void Aoi_MoveThenLeave_RemovesBodyAndModelKey()
+        {
+            var world = new AoiWorld { LocalPlayerId = 1 };
+            world.SetMapInstance(9);
+            ulong removed = 0;
+            var modelKeys = 0;
+            world.BodyRemoved += id =>
+            {
+                if (id == 42)
+                {
+                    removed = id;
+                    modelKeys--;
+                }
+            };
+            Assert.IsTrue(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Enter,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto { EntityId = 42, PlayerId = 42, X = 1, StateSeq = 1, MapInstanceId = 9 }
+            }));
+            modelKeys = 1;
+            Assert.IsTrue(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Move,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto { EntityId = 42, PlayerId = 42, X = 6, StateSeq = 2, MapInstanceId = 9 }
+            }));
+            Assert.AreEqual(6f, world.Entities[42].X);
+            Assert.IsTrue(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Leave,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto { EntityId = 42, PlayerId = 42, MapInstanceId = 9 }
+            }));
+            Assert.AreEqual(0, world.Entities.Count);
+            Assert.IsFalse(world.Entities.ContainsKey(42));
+            Assert.AreEqual(42ul, removed);
+            Assert.AreEqual(0, modelKeys);
+        }
+
+        [Test]
+        public void Aoi_MoveWithoutEnter_DoesNotCreate()
+        {
+            var world = new AoiWorld { LocalPlayerId = 1 };
+            world.SetMapInstance(9);
+            Assert.IsFalse(world.ApplyDelta(new AoiDeltaDto
+            {
+                Op = AoiOp.Move,
+                MapInstanceId = 9,
+                Entity = new EntitySnapshotDto { EntityId = 42, PlayerId = 42, X = 4, StateSeq = 1, MapInstanceId = 9 }
+            }));
+            Assert.AreEqual(0, world.Entities.Count);
+            Assert.AreEqual(0, world.ProtocolErrors);
         }
     }
 }

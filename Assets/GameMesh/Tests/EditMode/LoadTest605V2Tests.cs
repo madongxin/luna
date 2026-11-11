@@ -272,6 +272,51 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void BotPush_MoveWithoutEnter_StaysInvisible()
+        {
+            var tracker = new BotPushTracker();
+            tracker.BindInstance(9, 1);
+            Assert.IsTrue(tracker.ObserveServerPush(
+                new ServerPushEnvelope { ServerSeq = 1, Reliable = true },
+                Delta(9, AoiOp.Move, 42)));
+            Assert.AreEqual(0, tracker.VisibleCount);
+            Assert.AreEqual(1, tracker.UnknownMoveCount);
+
+            Assert.IsTrue(tracker.ObserveServerPush(
+                new ServerPushEnvelope { ServerSeq = 2, Reliable = true },
+                Delta(9, AoiOp.Enter, 42)));
+            Assert.AreEqual(1, tracker.VisibleCount);
+
+            Assert.IsTrue(tracker.ObserveServerPush(
+                new ServerPushEnvelope { ServerSeq = 3, Reliable = true },
+                Delta(9, AoiOp.Move, 42)));
+            Assert.AreEqual(1, tracker.VisibleCount);
+            Assert.AreEqual(1, tracker.UnknownMoveCount);
+
+            Assert.IsTrue(tracker.ObserveServerPush(
+                new ServerPushEnvelope { ServerSeq = 4, Reliable = true },
+                Delta(9, AoiOp.Leave, 42)));
+            Assert.AreEqual(0, tracker.VisibleCount);
+            Assert.AreEqual(0, tracker.DuplicateLeaveCount);
+
+            Assert.IsTrue(tracker.ObserveServerPush(
+                new ServerPushEnvelope { ServerSeq = 5, Reliable = true },
+                Delta(9, AoiOp.Leave, 42)));
+            Assert.AreEqual(0, tracker.VisibleCount);
+            Assert.AreEqual(1, tracker.DuplicateLeaveCount);
+        }
+
+        [Test]
+        public void BotPush_AoiLine_LogsOncePerThirtySeconds()
+        {
+            var tracker = new BotPushTracker();
+            Assert.IsFalse(tracker.NoteAoiClock(1000));
+            Assert.IsFalse(tracker.NoteAoiClock(30999));
+            Assert.IsTrue(tracker.NoteAoiClock(31000));
+            Assert.IsFalse(tracker.NoteAoiClock(31001));
+        }
+
+        [Test]
         public void Send_PastDeadline_DoesNotStartWrite()
         {
             var table = new RpcPendingTable();

@@ -73,9 +73,16 @@ namespace GameMesh.LoadTest
 
         public static Vector3 Pick(int botIndex, int botCount, float y)
         {
+            return Pick(botIndex, botCount, y, float.NaN, float.NaN);
+        }
+
+        public static Vector3 Pick(int botIndex, int botCount, float y, float anchorX, float anchorZ)
+        {
             lock (Gate)
             {
                 EnsureLoaded();
+                if (!float.IsNaN(anchorX) && !float.IsNaN(anchorZ))
+                    SetAnchor(anchorX, anchorZ);
                 if (_near == null || _near.Length == 0)
                     return CellAt(_anchorCol, _anchorRow, y);
                 var start = StableSlot(botIndex, _near.Length);
@@ -102,10 +109,11 @@ namespace GameMesh.LoadTest
         /// clusterSize 0 falls back to <see cref="Pick"/>.
         /// </summary>
         public static Vector3 PickClustered(int botIndex, int botCount, float y, int clusterSize,
-            float spacingMeters = 96f, float radiusMeters = 12f)
+            float spacingMeters = 96f, float radiusMeters = 12f,
+            float anchorX = float.NaN, float anchorZ = float.NaN)
         {
             if (clusterSize <= 0)
-                return Pick(botIndex, botCount, y);
+                return Pick(botIndex, botCount, y, anchorX, anchorZ);
             if (clusterSize < 40)
                 clusterSize = 40;
             if (clusterSize > 80)
@@ -120,6 +128,8 @@ namespace GameMesh.LoadTest
             lock (Gate)
             {
                 EnsureLoaded();
+                if (!float.IsNaN(anchorX) && !float.IsNaN(anchorZ))
+                    SetAnchor(anchorX, anchorZ);
                 var clusters = (botCount + clusterSize - 1) / clusterSize;
                 if (clusters < 1)
                     clusters = 1;

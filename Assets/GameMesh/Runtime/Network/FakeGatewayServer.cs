@@ -415,7 +415,7 @@ namespace GameMesh.Network
                     {
                         MapTemplateId = 1002,
                         DataVersion = 1,
-                        Sha256 = "46d5bb506de2f0418a85fce8d8e285dfec664023122b2692cecf818a26be75d9",
+                        Sha256 = "f1076df13fb228766ba36ad77447e1db47e6ea39729117db2e0b097ea00e18a0",
                         SceneName = "TerrainDemoScene",
                         Kind = "LINE"
                     });

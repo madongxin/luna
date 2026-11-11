@@ -67,6 +67,25 @@ namespace GameMesh.Bootstrap
         public float moveFastSpeed = 6f;
         public int interpolationDelayMs = 280;
         public float aoiLeaveFadeSeconds = 0.2f;
+        /// <summary>Delayed sampling of received AOI points. Default off; LEAVE still deletes immediately.</summary>
+        public bool aoiInterpEnabled;
+        public bool aoiInterpCoastEnabled;
+        public bool aoiInterpDebugDraw;
+        public bool aoiInterpMetricsEnabled;
+        public bool aoiInterpAllowSnap;
+        public bool aoiReconcileEnabled;
+        public int aoiInterpDelayMs = 200;
+        public int aoiInterpDelayMinMs = 150;
+        public int aoiInterpDelayMaxMs = 250;
+        public int aoiInterpCoastMaxMs = 300;
+        public int aoiInterpBufferSize = 12;
+        public int aoiInterpReenterReuseMs = 100;
+        public int aoiInterpFarGapMs = 400;
+        public int aoiInterpSlewUpMs = 40;
+        public int aoiInterpSlewDownMs = 20;
+        public float aoiInterpAlpha = 0.25f;
+        public float aoiInterpKJitter = 1.5f;
+        public int aoiInterpDebugMax = 8;
         public int maxFrameBytes = 4 * 1024 * 1024;
         public int sendQueueLimit = 128;
         public int pendingLimit = 256;

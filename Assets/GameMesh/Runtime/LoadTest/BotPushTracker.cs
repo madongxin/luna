@@ -1,5 +1,7 @@
 using System.Collections.Generic;
+using System.Diagnostics;
 using GameMesh.Aoi;
+using GameMesh.Network;
 using GameMesh.Protocol;
 
 namespace GameMesh.LoadTest
@@ -11,6 +13,11 @@ namespace GameMesh.LoadTest
     public sealed class BotPushTracker
     {
         readonly HashSet<ulong> _visible = new HashSet<ulong>();
+        static readonly Stopwatch Clock = Stopwatch.StartNew();
+        const long AoiLogIntervalMs = 30000;
+        int _unknownMove;
+        int _duplicateLeave;
+        long _nextAoiLogMs;
 
         public ulong MapInstanceId { get; private set; }
         public ulong OwnerEpoch { get; private set; }
@@ -18,6 +25,8 @@ namespace GameMesh.LoadTest
         public bool HasGap { get; private set; }
         public bool Healthy { get; private set; }
         public int VisibleCount => _visible.Count;
+        public int UnknownMoveCount => _unknownMove;
+        public int DuplicateLeaveCount => _duplicateLeave;
 
         public void BindInstance(ulong mapInstanceId, ulong ownerEpoch)
         {
@@ -36,6 +45,7 @@ namespace GameMesh.LoadTest
         {
             if (envelope == null || !envelope.Reliable || envelope.ServerSeq == 0)
                 return false;
+            NoteAoiClock(Clock.ElapsedMilliseconds);
             if (inner != null && inner.AoiDelta != null &&
                 inner.AoiDelta.MapInstanceId != 0 &&
                 MapInstanceId != 0 &&
@@ -134,16 +144,44 @@ namespace GameMesh.LoadTest
                 var id = ev != null && ev.Entity != null ? ev.Entity.PlayerId : 0;
                 if (id == 0)
                     continue;
-                if (ev.Op == (int)AoiOp.Leave)
-                    _visible.Remove(id);
-                else
+                if (ev.Op == (int)AoiOp.Enter)
                     _visible.Add(id);
+                else if (ev.Op == (int)AoiOp.Move)
+                {
+                    if (!_visible.Contains(id))
+                        _unknownMove++;
+                }
+                else if (ev.Op == (int)AoiOp.Leave)
+                {
+                    if (!_visible.Remove(id))
+                        _duplicateLeave++;
+                }
             }
+        }
+
+        internal bool NoteAoiClock(long nowMs)
+        {
+            if (_nextAoiLogMs == 0)
+            {
+                _nextAoiLogMs = nowMs + AoiLogIntervalMs;
+                return false;
+            }
+
+            if (nowMs < _nextAoiLogMs)
+                return false;
+            _nextAoiLogMs = nowMs + AoiLogIntervalMs;
+            GameMeshLog.Info("aoi visible=" + _visible.Count +
+                             " unknown_move=" + _unknownMove +
+                             " duplicate_leave=" + _duplicateLeave);
+            return true;
         }
 
         void ResetForOtherInstance(ulong mapInstanceId, ulong ownerEpoch)
         {
             _visible.Clear();
+            _unknownMove = 0;
+            _duplicateLeave = 0;
+            _nextAoiLogMs = 0;
             MapInstanceId = mapInstanceId;
             if (ownerEpoch != 0)
                 OwnerEpoch = ownerEpoch;

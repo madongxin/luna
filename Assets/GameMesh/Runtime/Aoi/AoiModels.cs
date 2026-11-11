@@ -41,6 +41,8 @@ namespace GameMesh.Aoi
         public long ServerTimeMs;
         /// <summary>Local tick of the last Enter or Move. Silence means a dropped LEAVE.</summary>
         public long LastLocalMs;
+        /// <summary>Bumped on snapshot/ENTER replace so the view drops the old pose trail.</summary>
+        public uint PoseEpoch;
     }
 
     public sealed class AoiWorld
@@ -62,14 +64,21 @@ namespace GameMesh.Aoi
 
         public void Clear()
         {
+            if (_entities.Count == 0)
+                return;
+            var dead = new List<ulong>(_entities.Keys);
             _entities.Clear();
+            NotifyRemoved(dead);
         }
 
-        /// <summary>Full replace. Ids absent from the snapshot are removed immediately.</summary>
+        /// <summary>
+        /// Ids absent from the snapshot are removed immediately (BodyRemoved).
+        /// Ids still present keep their row so the view can replace the pose buffer.
+        /// </summary>
         public void ApplySnapshot(IEnumerable<EntitySnapshotDto> entities, bool replace = true)
         {
             if (replace)
-                Clear();
+                RemoveMissing(entities);
             if (entities == null)
                 return;
             var now = LocalNowMs;
@@ -101,7 +110,57 @@ namespace GameMesh.Aoi
                 return 0;
             for (var i = 0; i < dead.Count; i++)
                 _entities.Remove(dead[i]);
+            NotifyRemoved(dead);
             return dead.Count;
+        }
+
+        void RemoveMissing(IEnumerable<EntitySnapshotDto> entities)
+        {
+            if (entities == null)
+            {
+                Clear();
+                return;
+            }
+
+            var keep = new HashSet<ulong>();
+            foreach (var e in entities)
+            {
+                if (e == null)
+                    continue;
+                var id = BodyId(e.EntityId, e.PlayerId);
+                if (id != 0)
+                    keep.Add(id);
+            }
+
+            List<ulong> dead = null;
+            foreach (var kv in _entities)
+            {
+                if (keep.Contains(kv.Key) ||
+                    (kv.Value.PlayerId != 0 && keep.Contains(kv.Value.PlayerId)) ||
+                    (kv.Value.EntityId != 0 && keep.Contains(kv.Value.EntityId)))
+                    continue;
+                if (dead == null)
+                    dead = new List<ulong>();
+                dead.Add(kv.Key);
+            }
+
+            if (dead == null)
+                return;
+            for (var i = 0; i < dead.Count; i++)
+                _entities.Remove(dead[i]);
+            NotifyRemoved(dead);
+        }
+
+        void NotifyRemoved(List<ulong> ids)
+        {
+            var removed = BodyRemoved;
+            if (removed == null || ids == null)
+                return;
+            for (var i = 0; i < ids.Count; i++)
+            {
+                if (ids[i] != 0)
+                    removed(ids[i]);
+            }
         }
 
         void StampAll(long nowMs)
@@ -136,7 +195,11 @@ namespace GameMesh.Aoi
                 return false;
 
             if (delta.Op == AoiOp.Leave)
+            {
+                // A repeated or late LEAVE for someone already gone is ignored.
+                // It is not a protocol error and must not throw.
                 return RemoveBody(entityId, playerId);
+            }
 
             if (TryFindBody(entityId, playerId, out var key, out var existing))
             {
@@ -153,6 +216,8 @@ namespace GameMesh.Aoi
                 if (delta.Op == AoiOp.Enter && delta.Entity.StateSeq != 0 &&
                     existing.StateSeq != 0 && delta.Entity.StateSeq < existing.StateSeq)
                     return false;
+                if (delta.Op == AoiOp.Enter)
+                    existing.PoseEpoch++;
 
                 var name = existing.Name;
                 var hp = existing.Hp;
@@ -173,6 +238,11 @@ namespace GameMesh.Aoi
                 existing.LastLocalMs = LocalNowMs;
                 return true;
             }
+
+            // MOVE after LEAVE, or MOVE before the first ENTER, must not create a body.
+            // The next ENTER is what brings that player back into the table.
+            if (delta.Op != AoiOp.Enter)
+                return false;
 
             var state = new RemoteEntityState
             {

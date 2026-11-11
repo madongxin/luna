@@ -415,6 +415,9 @@ namespace GameMesh.LoadTest
         float _lastSentYaw;
         bool _hasLastYaw;
         long _lastAccountMs = -1;
+        Vector3 _home;
+        float _keepRadius;
+        bool _keepInside;
 
         public SparsePatrolController(int botIndex, BotMovementSettings settings)
         {
@@ -428,6 +431,17 @@ namespace GameMesh.LoadTest
             _phase = Phase.NeedDepart;
             _hasGoal = false;
             _lastAccountMs = nowMs;
+        }
+
+        /// <summary>
+        /// Keep every segment inside the AOI disk around the EnterMap spawn.
+        /// The observer stands on that same spawn; a 100–300m leg leaves the 32m window.
+        /// </summary>
+        public void KeepInside(Vector3 home, float radius)
+        {
+            _home = home;
+            _keepRadius = radius;
+            _keepInside = radius > 1f;
         }
 
         public void NoteRejected()
@@ -528,13 +542,32 @@ namespace GameMesh.LoadTest
                 from.x + Mathf.Cos(angle) * dist,
                 from.y,
                 from.z + Mathf.Sin(angle) * dist);
+            ClampToHome();
             _goal = BotHomeLayout.SnapNearestWalkable(_goal, from.y);
+            ClampToHome();
             // Grid snapping changes the actual leg length. Schedule the next turn from that
             // final distance so it cannot create another hidden dwell at the endpoint.
             _segmentSec = Flat(from, _goal) / serverSpeed;
             if (_segmentSec < 0.05f)
                 _segmentSec = 0.05f;
             _hasGoal = true;
+        }
+
+        void ClampToHome()
+        {
+            if (!_keepInside)
+                return;
+            var limit = _keepRadius - 1f;
+            if (limit < 1f)
+                limit = 1f;
+            var dx = _goal.x - _home.x;
+            var dz = _goal.z - _home.z;
+            var dist = Mathf.Sqrt(dx * dx + dz * dz);
+            if (dist <= limit || dist < 0.001f)
+                return;
+            var scale = limit / dist;
+            _goal.x = _home.x + dx * scale;
+            _goal.z = _home.z + dz * scale;
         }
 
         MovePlan BuildSend(Vector3 confirmed, string reason, BotMovementMetrics metrics, out int waitMs)

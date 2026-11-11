@@ -1090,13 +1090,14 @@ namespace GameMesh.LoadTest
                 : BotMovementProfile.Idle;
             _clock = new BotMovementClock(settings, _index);
             var population = settings.BotCount > 0 ? settings.BotCount : 1;
+            var entered = _pos;
             _spawn = settings.ClusterSize > 0
-                ? BotHomeLayout.PickClustered(_index, population, _pos.y, settings.ClusterSize,
-                    settings.ClusterSpacingMeters, settings.ClusterRadiusMeters)
-                : BotHomeLayout.Pick(_index, population, _pos.y);
+                ? BotHomeLayout.PickClustered(_index, population, entered.y, settings.ClusterSize,
+                    settings.ClusterSpacingMeters, settings.ClusterRadiusMeters, entered.x, entered.z)
+                : BotHomeLayout.Pick(_index, population, entered.y, entered.x, entered.z);
             if (settings.SparsePatrol)
             {
-                await SparseMoveLoopAsync(settings, ct).ConfigureAwait(false);
+                await SparseMoveLoopAsync(settings, ct, entered).ConfigureAwait(false);
                 return;
             }
 
@@ -1173,9 +1174,10 @@ namespace GameMesh.LoadTest
             }
         }
 
-        async Task SparseMoveLoopAsync(BotMovementSettings settings, CancellationToken ct)
+        async Task SparseMoveLoopAsync(BotMovementSettings settings, CancellationToken ct, Vector3 entered)
         {
             var sparse = new SparsePatrolController(_index, settings);
+            sparse.KeepInside(entered, settings.AoiRadius);
             var metrics = _clock.Metrics;
             var now0 = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             metrics.SampleStartedMs = now0;

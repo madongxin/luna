@@ -9,7 +9,7 @@ namespace GameMesh.Map
         public const ulong LineTemplateId = 1002;
         public const ulong DungeonTemplateId = 2102;
         public const string HubHash = "ceef56586c5281dca4ce45340f511d0d577fd724b14131ae5a21d01ea7f41317";
-        public const string LineHash = "46d5bb506de2f0418a85fce8d8e285dfec664023122b2692cecf818a26be75d9";
+        public const string LineHash = "f1076df13fb228766ba36ad77447e1db47e6ea39729117db2e0b097ea00e18a0";
         public const string HubScene = "MainScene";
         public const string LineScene = "TerrainDemoScene";
         public const float SpawnX = -28.5f;

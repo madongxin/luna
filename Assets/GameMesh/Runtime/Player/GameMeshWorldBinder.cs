@@ -22,6 +22,8 @@ namespace GameMesh.Player
             new System.Collections.Generic.HashSet<ulong>();
         readonly System.Collections.Generic.List<ulong> _deadRemoteIds =
             new System.Collections.Generic.List<ulong>();
+        readonly System.Collections.Generic.Dictionary<ulong, RemotePlayerView> _dormantViews =
+            new System.Collections.Generic.Dictionary<ulong, RemotePlayerView>();
         int _holdSpawnFrames;
         Vector3 _goodPose;
         bool _hasGoodPose;
@@ -87,6 +89,7 @@ namespace GameMesh.Player
             }
 
             _views.Clear();
+            DestroyDormant();
         }
 
         void OnSceneLoaded(Scene scene, LoadSceneMode mode)
@@ -501,6 +504,10 @@ namespace GameMesh.Player
                 : client.Session.PlayerId;
             var seen = _seenRemoteIds;
             seen.Clear();
+            // Spawn only bodies already stored in Aoi.Entities. ApplyDelta drops a MOVE
+            // for someone who is not in that table, so this loop must not grow a second
+            // create path for MOVE. An ENTER for a body that already has a view reuses
+            // FindView and Apply; it does not Spawn another model.
             foreach (var kv in client.Aoi.Entities)
             {
                 var bodyId = AoiWorld.BodyId(kv.Value.EntityId, kv.Value.PlayerId);
@@ -513,7 +520,11 @@ namespace GameMesh.Player
                 {
                     view = FindView(bodyId, kv.Key, kv.Value.EntityId);
                     if (view != null)
+                    {
                         BindView(bodyId, view);
+                        if (view.Hidden)
+                            view.ResetForEnter(kv.Value);
+                    }
                 }
 
                 if (view == null)
@@ -560,6 +571,8 @@ namespace GameMesh.Player
 
                 ReleaseView(view);
             }
+
+            FlushDormant();
         }
 
         void TraceAoiStalls()
@@ -570,7 +583,7 @@ namespace GameMesh.Player
             foreach (var kv in _views)
             {
                 var view = kv.Value;
-                if (view == null || view.Fading)
+                if (view == null || view.Fading || view.Hidden)
                     continue;
                 var sample = view.CaptureStallSample();
                 _stallTrace.Observe(sample);
@@ -590,6 +603,7 @@ namespace GameMesh.Player
             }
 
             _views.Clear();
+            DestroyDormant();
             if (n > 0)
                 GameMeshLog.Info("purged remote views n=" + n +
                                  (string.IsNullOrEmpty(reason) ? "" : " " + reason));
@@ -613,7 +627,7 @@ namespace GameMesh.Player
                     return view;
             }
 
-            return null;
+            return FindDormant(bodyId, entityId);
         }
 
         void BindView(ulong bodyId, RemotePlayerView view)
@@ -634,6 +648,22 @@ namespace GameMesh.Player
             {
                 for (var i = 0; i < stale.Count; i++)
                     _views.Remove(stale[i]);
+            }
+
+            System.Collections.Generic.List<ulong> dormantKeys = null;
+            foreach (var kv in _dormantViews)
+            {
+                if (kv.Value != view && kv.Key != bodyId)
+                    continue;
+                if (dormantKeys == null)
+                    dormantKeys = new System.Collections.Generic.List<ulong>();
+                dormantKeys.Add(kv.Key);
+            }
+
+            if (dormantKeys != null)
+            {
+                for (var i = 0; i < dormantKeys.Count; i++)
+                    _dormantViews.Remove(dormantKeys[i]);
             }
 
             _views[bodyId] = view;
@@ -660,7 +690,74 @@ namespace GameMesh.Player
             }
 
             view.HideNow();
-            Destroy(view.gameObject);
+            var id = view.PlayerId != 0 ? view.PlayerId : view.EntityId;
+            if (id != 0)
+                _dormantViews[id] = view;
+            else
+                Destroy(view.gameObject);
+            AoiInterpMetrics.NoteLeave();
+        }
+
+        RemotePlayerView FindDormant(ulong bodyId, ulong entityId)
+        {
+            if (bodyId != 0 && _dormantViews.TryGetValue(bodyId, out var byBody) && byBody != null)
+                return byBody;
+            if (entityId != 0 && entityId != bodyId &&
+                _dormantViews.TryGetValue(entityId, out var byEntity) && byEntity != null)
+                return byEntity;
+            foreach (var kv in _dormantViews)
+            {
+                var view = kv.Value;
+                if (view == null)
+                    continue;
+                if (view.PlayerId == bodyId || view.EntityId == bodyId ||
+                    (entityId != 0 && (view.PlayerId == entityId || view.EntityId == entityId)))
+                    return view;
+            }
+
+            return null;
+        }
+
+        void FlushDormant()
+        {
+            if (_dormantViews.Count == 0)
+                return;
+            var reuse = AoiInterpSettings.FromConfig(
+                GameMeshClient.Instance != null ? GameMeshClient.Instance.Config : null).ReenterReuseSec;
+            if (reuse < 0.05f)
+                reuse = 0.1f;
+            var now = Time.unscaledTime;
+            System.Collections.Generic.List<ulong> dead = null;
+            foreach (var kv in _dormantViews)
+            {
+                var view = kv.Value;
+                if (view == null || now - view.HiddenAt > reuse)
+                {
+                    if (dead == null)
+                        dead = new System.Collections.Generic.List<ulong>();
+                    dead.Add(kv.Key);
+                }
+            }
+
+            if (dead == null)
+                return;
+            for (var i = 0; i < dead.Count; i++)
+            {
+                if (_dormantViews.TryGetValue(dead[i], out var view) && view != null)
+                    Destroy(view.gameObject);
+                _dormantViews.Remove(dead[i]);
+            }
+        }
+
+        void DestroyDormant()
+        {
+            foreach (var kv in _dormantViews)
+            {
+                if (kv.Value != null)
+                    Destroy(kv.Value.gameObject);
+            }
+
+            _dormantViews.Clear();
         }
 
         void HookAoi(GameMeshClient client)
@@ -711,7 +808,17 @@ namespace GameMesh.Player
     {
         public ulong EntityId;
         public ulong PlayerId => _playerId;
+        public bool Hidden { get; private set; }
+        public float HiddenAt { get; private set; }
         public bool HasModel { get; private set; }
+        internal int PoseCount => _poses.Count;
+        internal uint PoseGeneration => _poses.Generation;
+
+        internal bool TrySamplePose(float now, float delaySec, float coastMaxSec, float moveSpeed,
+            out RemotePoseBuffer.Hit hit)
+        {
+            return _poses.TrySample(now, delaySec, coastMaxSec, moveSpeed, out hit);
+        }
         public bool Fading { get; private set; }
         public bool FadeFinished => Fading && Time.unscaledTime >= _fadeUntil;
         Vector3 _target;
@@ -721,6 +828,15 @@ namespace GameMesh.Player
         float _locomotionUntil;
         float _chaseMetersPerSec;
         readonly RemotePoseBuffer _poses = new RemotePoseBuffer();
+        readonly AoiInterpDelay _interpDelay = new AoiInterpDelay();
+        readonly AoiInterpDebugDraw.Point[] _debugPath = new AoiInterpDebugDraw.Point[RemotePoseBuffer.Depth];
+        float _lastSegX;
+        float _lastSegZ;
+        bool _hasLastSeg;
+        bool _catchupActive;
+        bool _teleportGapActive;
+        bool _underrunActive;
+        uint _poseEpoch;
         float _fadeUntil;
         float _fadeSeconds = 0.2f;
         float _targetYaw;
@@ -773,6 +889,9 @@ namespace GameMesh.Player
             view.EntityId = state.EntityId != 0 ? state.EntityId : AoiWorld.BodyId(state.EntityId, state.PlayerId);
             view._playerId = state.PlayerId != 0 ? state.PlayerId : view.EntityId;
             view._delay = delayMs / 1000f;
+            view._poseEpoch = state.PoseEpoch;
+            view._interpDelay.Reset(AoiInterpSettings.FromConfig(
+                GameMeshClient.Instance != null ? GameMeshClient.Instance.Config : null).DelayDefault);
             view._color = Color.HSVToRGB((state.EntityId % 12) / 12f, 0.72f, 0.95f);
             view._target = new Vector3(state.X,
                 GroundY(state.X, state.Z, state.Y) + FootClearance, state.Z);
@@ -939,14 +1058,62 @@ namespace GameMesh.Player
         public void HideNow()
         {
             Fading = false;
+            Hidden = true;
+            HiddenAt = Time.unscaledTime;
             _hasAuthorityPose = false;
             _chaseMetersPerSec = 0f;
             _locomotionSpeed = 0f;
             _locomotionUntil = 0f;
-            _poses.Clear();
+            _hasLastSeg = false;
+            _poses.BumpGeneration();
+            _interpDelay.Reset(CurrentInterp().DelayDefault);
+            _catchupActive = false;
+            _teleportGapActive = false;
+            _underrunActive = false;
             if (_label != null)
                 _label.gameObject.SetActive(false);
             gameObject.SetActive(false);
+        }
+
+        public void ResetForEnter(RemoteEntityState state)
+        {
+            Hidden = false;
+            Fading = false;
+            CancelFade();
+            _poses.BumpGeneration();
+            var settings = CurrentInterp();
+            _interpDelay.Reset(settings.DelayDefault);
+            _hasLastSeg = false;
+            _dropOlderSeq = 0;
+            _dropServerTime = 0;
+            _dropPose = 0;
+            _lastSampleSeq = 0;
+            _lastSampleTime = 0f;
+            _lastServerTimeMs = 0;
+            _clockOffset = double.NaN;
+            _hasAuthorityPose = false;
+            _poseEpoch = state.PoseEpoch;
+            EntityId = state.EntityId != 0 ? state.EntityId : AoiWorld.BodyId(state.EntityId, state.PlayerId);
+            if (state.PlayerId != 0)
+                _playerId = state.PlayerId;
+            else if (_playerId == 0)
+                _playerId = EntityId;
+            if (_label != null)
+                _label.gameObject.SetActive(true);
+            if (!gameObject.activeSelf)
+                gameObject.SetActive(true);
+            var place = new Vector3(state.X, GroundY(state.X, state.Z, state.Y) + FootClearance, state.Z);
+            transform.SetPositionAndRotation(place, Quaternion.Euler(0f, state.Yaw, 0f));
+            _target = place;
+            _catchupActive = false;
+            _teleportGapActive = false;
+            _underrunActive = false;
+        }
+
+        static AoiInterpSettings CurrentInterp()
+        {
+            var client = GameMeshClient.Instance;
+            return AoiInterpSettings.FromConfig(client != null ? client.Config : null);
         }
 
         public void BeginFade(float seconds)
@@ -1001,16 +1168,42 @@ namespace GameMesh.Player
 
         public void Apply(RemoteEntityState state)
         {
+            if (Hidden)
+                return;
             CancelFade();
             UpdateLabel(state);
             if (state.PlayerId != 0)
                 _playerId = state.PlayerId;
+            if (state.PoseEpoch != _poseEpoch)
+            {
+                _poseEpoch = state.PoseEpoch;
+                _poses.BumpGeneration();
+                _interpDelay.Reset(CurrentInterp().DelayDefault);
+                _lastSampleSeq = 0;
+                _lastSampleTime = 0f;
+                _lastServerTimeMs = 0;
+                _clockOffset = double.NaN;
+                _hasLastSeg = false;
+                _hasAuthorityPose = false;
+                var settingsSnap = CurrentInterp();
+                var dx = state.X - transform.position.x;
+                var dz = state.Z - transform.position.z;
+                if (settingsSnap.AllowSnap &&
+                    dx * dx + dz * dz > AoiInterpFollow.CatchupMeters * AoiInterpFollow.CatchupMeters)
+                {
+                    var place = new Vector3(state.X,
+                        GroundY(state.X, state.Z, state.Y) + FootClearance, state.Z);
+                    transform.SetPositionAndRotation(place, Quaternion.Euler(0f, state.Yaw, 0f));
+                    AoiInterpMetrics.NoteTeleport();
+                }
+            }
             // SyncRemotes visits every entity every frame. Aoi MOVE along one path keeps the same
             // state_seq while position changes — those body updates must still move the Transform.
             if (state.StateSeq != 0 && _lastSampleSeq != 0 &&
                 !RemotePoseBuffer.IsAlongPathUpdate(state.StateSeq, _lastSampleSeq))
             {
                 _dropOlderSeq++;
+                AoiInterpMetrics.NoteDropOldSeq();
                 return;
             }
             if (state.StateSeq != 0 && state.StateSeq == _lastSampleSeq)
@@ -1064,16 +1257,24 @@ namespace GameMesh.Player
             var sampleTime = SampleTime(state, now, timeRewound);
             // A seq gap or a large network gap means intermediate samples were lost, not that
             // the body teleported. Always retain the last visible pose as the blend origin.
+            var settings = CurrentInterp();
             var accepted = _poses.Push(next.x, next.y, next.z, state.Yaw, sampleTime, state.StateSeq);
             if (!accepted)
                 _dropPose++;
+            else if (settings.Enabled)
+                _interpDelay.OnArrived(now, settings);
 
             // Only move the follow target when a new sample is accepted; SyncRemotes runs every frame.
             if (accepted)
             {
                 if (hadPose)
+                {
                     NoteLocomotion(state.X - previousX, state.Z - previousZ,
                         sampleTime - previousSampleTime, now);
+                    _lastSegX = state.X - previousX;
+                    _lastSegZ = state.Z - previousZ;
+                    _hasLastSeg = true;
+                }
                 _lastAuthorityX = state.X;
                 _lastAuthorityZ = state.Z;
                 _lastAuthorityYaw = state.Yaw;
@@ -1154,6 +1355,9 @@ namespace GameMesh.Player
         // delay >= update gap + delivery lateness.
         float PlaybackDelay()
         {
+            var settings = CurrentInterp();
+            if (settings.Enabled)
+                return _interpDelay.Delay;
             return Mathf.Clamp(_gapSec + _lateSec + 0.05f, _delay, 3.25f);
         }
 
@@ -1179,6 +1383,8 @@ namespace GameMesh.Player
 
         void Update()
         {
+            if (Hidden)
+                return;
             if (Fading)
             {
                 HideNow();
@@ -1189,18 +1395,60 @@ namespace GameMesh.Player
             var pos = transform.position;
             if (!_hasAuthorityPose)
                 return;
-            // Walk only toward the newest received MOVE coordinate. Do not jump to it and do
-            // not continue past it while waiting for the next MOVE or LEAVE.
+            var settings = CurrentInterp();
+            AoiInterpMetrics.Enabled = settings.MetricsEnabled;
             var renderDt = RemotePoseBuffer.ClampRenderDelta(Time.unscaledDeltaTime);
-            var destination = new Vector3(_lastAuthorityX, pos.y, _lastAuthorityZ);
-            _target = destination;
-            _targetYaw = _lastAuthorityYaw;
+            var destYaw = _lastAuthorityYaw;
+            var coasting = false;
+            var intended = new Vector3(_lastAuthorityX, pos.y, _lastAuthorityZ);
+            Vector3 next;
+            if (settings.Enabled)
+            {
+                var coast = settings.CoastEnabled ? settings.CoastMaxSec : 0f;
+                var delay = _interpDelay.Delay;
+                _interpDelay.CatchUpIfBehind(_lastSampleTime, Time.unscaledTime - delay, settings);
+                delay = _interpDelay.Delay;
+                AoiInterpMetrics.NoteDelay(delay);
+                if (_poses.TrySample(Time.unscaledTime, delay, coast, settings.MoveSpeed, out var hit))
+                {
+                    intended = new Vector3(hit.X, pos.y, hit.Z);
+                    destYaw = hit.Yaw;
+                    NoteEdge(hit.Underrun, ref _underrunActive, AoiInterpMetrics.NoteUnderrun);
+                    if (hit.CoastSec > 0f)
+                        AoiInterpMetrics.AddCoast(renderDt);
+                    coasting = hit.Coasting;
+                    if (_poses.TryLastSegment(out var segX, out var segZ, out _))
+                    {
+                        _lastSegX = segX;
+                        _lastSegZ = segZ;
+                        _hasLastSeg = true;
+                    }
+                }
+
+                var follow = AoiInterpFollow.Step(pos.x, pos.z, intended.x, intended.z,
+                    _hasLastSeg ? _lastSegX : intended.x - pos.x,
+                    _hasLastSeg ? _lastSegZ : intended.z - pos.z,
+                    renderDt, settings.MoveSpeed, settings.AllowSnap);
+                NoteEdge(follow.Catchup, ref _catchupActive, AoiInterpMetrics.NoteCatchup);
+                NoteEdge(follow.TeleportLogged, ref _teleportGapActive, AoiInterpMetrics.NoteTeleport);
+                next = new Vector3(follow.X, pos.y, follow.Z);
+                _chaseMetersPerSec = follow.Speed;
+            }
+            else
+            {
+                // Flag off: walk to the newest MOVE and stop. Do not use the delayed buffer.
+                var planarOff = Vector3.Distance(new Vector3(pos.x, 0f, pos.z),
+                    new Vector3(intended.x, 0f, intended.z));
+                var step = _chaseMetersPerSec * renderDt;
+                next = planarOff <= 0.02f || step <= 0f
+                    ? pos
+                    : Vector3.MoveTowards(pos, intended, step);
+            }
+
+            _target = intended;
+            _targetYaw = destYaw;
             var planar = Vector3.Distance(new Vector3(pos.x, 0f, pos.z),
-                new Vector3(destination.x, 0f, destination.z));
-            var step = _chaseMetersPerSec * renderDt;
-            var next = planar <= 0.02f || step <= 0f
-                ? pos
-                : Vector3.MoveTowards(pos, destination, step);
+                new Vector3(intended.x, 0f, intended.z));
             _velocity = (next - pos) / renderDt;
             next.y = GroundY(next.x, next.z, next.y) + FootClearance;
             transform.position = next;
@@ -1215,9 +1463,16 @@ namespace GameMesh.Player
                     1f - Mathf.Exp(-renderDt * 8f));
             }
 
+            if (settings.DebugDraw && AoiInterpDebugDraw.TryReserve(Time.frameCount, settings.DebugMax))
+            {
+                var n = _poses.CopyPath(_debugPath);
+                AoiInterpDebugDraw.Draw(_debugPath, n, next,
+                    new Vector3(_lastAuthorityX, next.y, _lastAuthorityZ), coasting, _color);
+            }
+
             // Run while the body is still walking to the MOVE point. After it arrives, keep the
             // clip across the short gap until the next sample so it does not flicker to idle.
-            var walking = planar > 0.08f && _chaseMetersPerSec > 0.05f;
+            var walking = (planar > 0.08f && _chaseMetersPerSec > 0.05f) || coasting;
             var animTarget = 0f;
             if (walking)
                 animTarget = _locomotionSpeed > 0.15f ? _locomotionSpeed : 6f;
@@ -1288,6 +1543,13 @@ namespace GameMesh.Player
                 _chaseMetersPerSec = chase;
             if (_locomotionSpeed > 0f)
                 _animSpeed = _locomotionSpeed;
+        }
+
+        static void NoteEdge(bool active, ref bool wasActive, System.Action note)
+        {
+            if (active && !wasActive)
+                note();
+            wasActive = active;
         }
 
         static Camera _frameCamera;

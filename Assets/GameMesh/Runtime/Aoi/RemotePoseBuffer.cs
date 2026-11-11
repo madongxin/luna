@@ -4,24 +4,54 @@ namespace GameMesh.Aoi
 {
     /// <summary>
     /// Render-only pose trail for remote players. Does not read vx, vz, or move_start_ms.
-    /// A MOVE position is the body position at that sample. Playback ends on the newest
-    /// sample; it does not continue past it.
+    /// Samples are the received MOVE/ENTER positions. Playback is at now - delay.
+    /// Past the newest sample it holds, or coasts along the last segment when asked.
     /// </summary>
     public sealed class RemotePoseBuffer
     {
-        public const int Depth = 2;
+        public const int Depth = 12;
 
-        struct Sample
+        public struct Sample
         {
             public float X, Y, Z, Yaw, Time;
             public ulong Seq;
         }
 
-        readonly Sample[] _samples = new Sample[Depth];
+        public struct Hit
+        {
+            public float X, Y, Z, Yaw;
+            public bool Underrun;
+            public bool Coasting;
+            public float CoastSec;
+            public float TipTime;
+        }
+
+        readonly Sample[] _samples;
+        int _start;
         int _count;
         ulong _lastSeq;
+        uint _generation;
+
+        public RemotePoseBuffer() : this(Depth)
+        {
+        }
+
+        public RemotePoseBuffer(int capacity)
+        {
+            if (capacity < 2)
+                capacity = Depth;
+            _samples = new Sample[capacity];
+        }
 
         public int Count => _count;
+        public int Capacity => _samples.Length;
+        public ulong LastSeq => _lastSeq;
+        public uint Generation => _generation;
+
+        public Sample At(int logical)
+        {
+            return _samples[Index(logical)];
+        }
 
         /// <summary>
         /// Same state_seq with a new position is the next sample of this walk.
@@ -35,7 +65,15 @@ namespace GameMesh.Aoi
         public void Clear()
         {
             _count = 0;
+            _start = 0;
             _lastSeq = 0;
+        }
+
+        public uint BumpGeneration()
+        {
+            _generation++;
+            Clear();
+            return _generation;
         }
 
         /// <summary>
@@ -55,90 +93,194 @@ namespace GameMesh.Aoi
                 return false;
             if (stateSeq != 0)
                 _lastSeq = stateSeq;
-
-            if (_count > 0)
-            {
-                var tip = _samples[_count - 1];
-                // Missing state sequences only mean intermediate body samples were coalesced
-                // or lost. Keep the last visible pose as the interpolation origin; snapping
-                // here made the next accepted position look like a teleport.
-                _samples[0] = tip;
-                _count = 1;
-            }
-
-            if (_count >= Depth)
-            {
-                _samples[0] = _samples[_count - 1];
-                _count = 1;
-            }
-
-            _samples[_count++] = new Sample
+            if (_count >= _samples.Length)
+                DropOldest();
+            var idx = Index(_count);
+            _samples[idx] = new Sample
             {
                 X = x, Y = y, Z = z, Yaw = yaw, Time = time, Seq = stateSeq
             };
+            _count++;
             return true;
         }
 
         public void Snap(float x, float y, float z, float yaw, float time, ulong stateSeq)
         {
             _count = 0;
+            _start = 0;
             if (stateSeq != 0)
                 _lastSeq = stateSeq;
             else
                 _lastSeq = 0;
-            _samples[_count++] = new Sample
+            _samples[Index(0)] = new Sample
             {
                 X = x, Y = y, Z = z, Yaw = yaw, Time = time, Seq = stateSeq
             };
+            _count = 1;
+        }
+
+        public bool TryLastSegment(out float dx, out float dz, out float span)
+        {
+            dx = dz = span = 0f;
+            if (_count < 2)
+                return false;
+            var from = At(_count - 2);
+            var to = At(_count - 1);
+            dx = to.X - from.X;
+            dz = to.Z - from.Z;
+            span = to.Time - from.Time;
+            return true;
+        }
+
+        public int CopyPath(AoiInterpDebugDraw.Point[] dest)
+        {
+            if (dest == null)
+                return 0;
+            var n = _count < dest.Length ? _count : dest.Length;
+            for (var i = 0; i < n; i++)
+            {
+                var s = At(i);
+                dest[i] = new AoiInterpDebugDraw.Point { X = s.X, Y = s.Y, Z = s.Z };
+            }
+
+            return n;
         }
 
         public bool TrySample(float now, float delaySec, out float x, out float y, out float z, out float yaw)
         {
-            x = y = z = yaw = 0f;
+            var ok = TrySample(now, delaySec, 0f, 10f, out var hit);
+            x = hit.X;
+            y = hit.Y;
+            z = hit.Z;
+            yaw = hit.Yaw;
+            return ok;
+        }
+
+        public bool TrySample(float now, float delaySec, float coastMaxSec, float moveSpeed, out Hit hit)
+        {
+            hit = default;
             if (_count <= 0)
                 return false;
-            if (_count == 1)
+            if (delaySec < 0f)
+                delaySec = 0f;
+            var t = now - delaySec;
+            Expire(t);
+            if (_count <= 0)
+                return false;
+
+            var first = At(0);
+            if (_count == 1 || t <= first.Time)
             {
-                Copy(_samples[0], out x, out y, out z, out yaw);
+                Copy(first, ref hit);
+                hit.TipTime = At(_count - 1).Time;
                 return true;
             }
 
-            var t = now - Math.Max(0f, delaySec);
-            if (t <= _samples[0].Time)
+            var last = At(_count - 1);
+            hit.TipTime = last.Time;
+            if (t >= last.Time)
             {
-                Copy(_samples[0], out x, out y, out z, out yaw);
+                Copy(last, ref hit);
+                ApplyCoast(ref hit, last, t, coastMaxSec, moveSpeed);
                 return true;
             }
 
-            var last = _count - 1;
-            var from = _samples[0];
-            var to = _samples[last];
-            var blendSpan = to.Time - from.Time;
-            if (t >= to.Time)
+            for (var i = 0; i < _count - 1; i++)
             {
-                // MOVE.position is the current body coordinate. Do not walk past it.
-                Copy(to, out x, out y, out z, out yaw);
+                var to = At(i + 1);
+                if (t > to.Time)
+                    continue;
+                var from = At(i);
+                var span = to.Time - from.Time;
+                var u = span <= 0.0001f ? 1f : (t - from.Time) / span;
+                if (u < 0f)
+                    u = 0f;
+                if (u > 1f)
+                    u = 1f;
+                hit.X = from.X + (to.X - from.X) * u;
+                hit.Y = from.Y + (to.Y - from.Y) * u;
+                hit.Z = from.Z + (to.Z - from.Z) * u;
+                hit.Yaw = LerpAngle(from.Yaw, to.Yaw, u);
                 return true;
             }
 
-            // The server samples a body that is already walking at constant speed.
-            // Smoothstep forced the rendered velocity to zero at every AOI sample, so sparse
-            // three-second updates looked like stop/start motion. Linear playback preserves
-            // the along-path speed and changes direction only when a new sample says so.
-            var uBlend = blendSpan <= 0.0001f ? 1f : (t - from.Time) / blendSpan;
-            x = from.X + (to.X - from.X) * uBlend;
-            y = from.Y + (to.Y - from.Y) * uBlend;
-            z = from.Z + (to.Z - from.Z) * uBlend;
-            yaw = LerpAngle(from.Yaw, to.Yaw, uBlend);
+            Copy(last, ref hit);
             return true;
         }
 
-        static void Copy(Sample s, out float x, out float y, out float z, out float yaw)
+        void ApplyCoast(ref Hit hit, Sample last, float t, float coastMaxSec, float moveSpeed)
         {
-            x = s.X;
-            y = s.Y;
-            z = s.Z;
-            yaw = s.Yaw;
+            var ahead = t - last.Time;
+            if (ahead <= 0.0001f || _count < 2 || coastMaxSec <= 0f)
+            {
+                if (ahead > 0.0001f)
+                    hit.Underrun = true;
+                return;
+            }
+
+            var prev = At(_count - 2);
+            var stepX = last.X - prev.X;
+            var stepZ = last.Z - prev.Z;
+            var dist2 = stepX * stepX + stepZ * stepZ;
+            if (dist2 <= 0.0001f)
+            {
+                hit.Underrun = true;
+                return;
+            }
+
+            var span = last.Time - prev.Time;
+            if (span < 0.05f)
+                span = 0.05f;
+            var dist = (float)Math.Sqrt(dist2);
+            var speed = dist / span;
+            if (moveSpeed > 0.01f && speed > moveSpeed)
+                speed = moveSpeed;
+            var coast = ahead < coastMaxSec ? ahead : coastMaxSec;
+            var inv = 1f / dist;
+            hit.X = last.X + stepX * inv * speed * coast;
+            hit.Z = last.Z + stepZ * inv * speed * coast;
+            hit.Y = last.Y;
+            hit.Yaw = last.Yaw;
+            hit.Underrun = true;
+            hit.CoastSec = coast;
+            hit.Coasting = ahead <= coastMaxSec + 0.0001f;
+        }
+
+        void Expire(float tRender)
+        {
+            var expireAt = tRender - 0.05f;
+            while (_count > 1)
+            {
+                var oldest = At(0);
+                var next = At(1);
+                if (oldest.Time >= expireAt)
+                    break;
+                // Keep the left endpoint of the segment that still contains t_render.
+                if (next.Time > tRender)
+                    break;
+                DropOldest();
+            }
+        }
+
+        void DropOldest()
+        {
+            if (_count <= 0)
+                return;
+            _start = (_start + 1) % _samples.Length;
+            _count--;
+        }
+
+        int Index(int logical)
+        {
+            return (_start + logical) % _samples.Length;
+        }
+
+        static void Copy(Sample s, ref Hit hit)
+        {
+            hit.X = s.X;
+            hit.Y = s.Y;
+            hit.Z = s.Z;
+            hit.Yaw = s.Yaw;
         }
 
         static float LerpAngle(float a, float b, float t)

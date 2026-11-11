@@ -28,13 +28,31 @@ MonoBehaviour:
   moveFastSpeed: 6
   interpolationDelayMs: 280
   aoiLeaveFadeSeconds: 0.2
+  aoiInterpEnabled: 0
+  aoiInterpCoastEnabled: 0
+  aoiInterpDebugDraw: 0
+  aoiInterpMetricsEnabled: 0
+  aoiInterpAllowSnap: 0
+  aoiReconcileEnabled: 0
+  aoiInterpDelayMs: 200
+  aoiInterpDelayMinMs: 150
+  aoiInterpDelayMaxMs: 250
+  aoiInterpCoastMaxMs: 300
+  aoiInterpBufferSize: 12
+  aoiInterpReenterReuseMs: 100
+  aoiInterpFarGapMs: 400
+  aoiInterpSlewUpMs: 40
+  aoiInterpSlewDownMs: 20
+  aoiInterpAlpha: 0.25
+  aoiInterpKJitter: 1.5
+  aoiInterpDebugMax: 8
   maxFrameBytes: 4194304
   sendQueueLimit: 128
   pendingLimit: 256
   mapTemplateId: 1002
   realmId: 1
   dataVersion: 1
-  mapDataHash: 46d5bb506de2f0418a85fce8d8e285dfec664023122b2692cecf818a26be75d9
+  mapDataHash: f1076df13fb228766ba36ad77447e1db47e6ea39729117db2e0b097ea00e18a0
   mainSceneName: TerrainDemoScene
   disableSprint: 1
   snapError: 2.5

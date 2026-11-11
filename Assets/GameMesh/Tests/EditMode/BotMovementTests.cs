@@ -527,6 +527,23 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void SparsePatrol_KeepInside_StaysInAoiDisk()
+        {
+            var settings = Settings();
+            settings.SegmentMinSec = 10f;
+            settings.SegmentMaxSec = 10f;
+            settings.ServerMoveSpeed = 10f;
+            settings.AoiRadius = 32f;
+            var sparse = new SparsePatrolController(9, settings);
+            var home = new Vector3(65f, -30f, 737f);
+            sparse.KeepInside(home, settings.AoiRadius);
+            sparse.Arm(0);
+            var plan = sparse.Poll(home, 0, new BotMovementMetrics(), out _);
+            Assert.IsTrue(plan.Send);
+            Assert.LessOrEqual(Flat(home, plan.Position), settings.AoiRadius);
+        }
+
+        [Test]
         public void SparsePatrol_DutyAndTurnsAggregate()
         {
             var metrics = new BotMovementMetrics();
