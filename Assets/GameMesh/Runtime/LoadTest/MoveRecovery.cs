@@ -2,6 +2,7 @@ namespace GameMesh.LoadTest
 {
     public static class MoveRecovery
     {
+        public const float SamePointMeters = 0.5f;
         public static bool NeedsSnapshot(int unknownAfterWrite)
         {
             // A full snapshot is not a Move recovery path. Remote AOI gaps and Move timeouts
@@ -19,6 +20,29 @@ namespace GameMesh.LoadTest
             if (gotStateSeq == 0 || gotStateSeq <= haveStateSeq)
                 return false;
             return true;
+        }
+
+        /// <summary>
+        /// An OK for this request, or any newer one, ends the "resend that exact target" latch.
+        /// uncertainRequestSeq 0 means nothing is pinned.
+        /// </summary>
+        public static bool ConfirmClearsResend(long confirmedRequestSeq, long uncertainRequestSeq)
+        {
+            return uncertainRequestSeq == 0 || confirmedRequestSeq >= uncertainRequestSeq;
+        }
+
+        /// <summary>
+        /// Resend only while the confirmed pose is still short of the pinned target.
+        /// Standing on that target must fall through to the next patrol segment.
+        /// </summary>
+        public static bool ShouldResendSamePoint(float confirmedX, float confirmedZ,
+            float targetX, float targetZ, bool armed)
+        {
+            if (!armed)
+                return false;
+            var dx = confirmedX - targetX;
+            var dz = confirmedZ - targetZ;
+            return dx * dx + dz * dz > SamePointMeters * SamePointMeters;
         }
     }
 }

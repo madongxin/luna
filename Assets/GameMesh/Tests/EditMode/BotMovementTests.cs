@@ -527,6 +527,51 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void Sparse_AlreadyAtGoal_DoesNotWaitOutTheSegment()
+        {
+            var settings = Settings();
+            settings.SegmentMinSec = 10f;
+            settings.SegmentMaxSec = 10f;
+            settings.ServerMoveSpeed = 10f;
+            var sparse = new SparsePatrolController(268, settings);
+            var start = new Vector3(160f, -18f, 658f);
+            sparse.Arm(0);
+            var metrics = new BotMovementMetrics();
+            var depart = sparse.Poll(start, 0, metrics, out _);
+            Assert.IsTrue(depart.Send);
+            sparse.NoteSent(depart.Yaw, 0, depart.Reason, metrics);
+
+            var next = sparse.Poll(depart.Position, 500, metrics, out _);
+            Assert.IsTrue(next.Send);
+            Assert.AreEqual("depart", next.Reason);
+            Assert.Greater(Flat(depart.Position, next.Position), 1f);
+        }
+
+        [Test]
+        public void Sparse_AfterArrival_NextPollLeavesThatPoint()
+        {
+            var settings = Settings();
+            settings.SegmentMinSec = 10f;
+            settings.SegmentMaxSec = 10f;
+            settings.ServerMoveSpeed = 10f;
+            var sparse = new SparsePatrolController(92, settings);
+            var start = new Vector3(128.3f, -18f, 625.9f);
+            sparse.Arm(0);
+            var metrics = new BotMovementMetrics();
+            var depart = sparse.Poll(start, 0, metrics, out _);
+            Assert.IsTrue(depart.Send);
+            Assert.AreEqual("depart", depart.Reason);
+            sparse.NoteSent(depart.Yaw, 0, depart.Reason, metrics);
+
+            var arrived = depart.Position;
+            var segmentMs = (long)(Flat(start, arrived) / settings.ServerMoveSpeed * 1000f);
+            var next = sparse.Poll(arrived, segmentMs, metrics, out _);
+            Assert.IsTrue(next.Send);
+            Assert.AreEqual("depart", next.Reason);
+            Assert.Greater(Flat(arrived, next.Position), 1f);
+        }
+
+        [Test]
         public void SparsePatrol_KeepInside_StaysInAoiDisk()
         {
             var settings = Settings();

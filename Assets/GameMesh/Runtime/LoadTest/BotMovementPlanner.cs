@@ -415,6 +415,7 @@ namespace GameMesh.LoadTest
         float _lastSentYaw;
         bool _hasLastYaw;
         long _lastAccountMs = -1;
+        int _spin;
         Vector3 _home;
         float _keepRadius;
         bool _keepInside;
@@ -460,16 +461,15 @@ namespace GameMesh.LoadTest
             waitMs = 50;
             if (_phase == Phase.Traveling)
             {
-                // MoveRsp.position is the accepted endpoint, not proof that the body has
-                // already walked there. Keep the segment alive for its planned duration.
-                if (nowMs < _segmentEndMs)
+                // The server can reach the goal before this segment's clock ends. Standing
+                // there until the clock expires looks like the bot stopped.
+                if (Flat(confirmed, _goal) <= ArriveEpsilon)
+                    CompleteSegment(nowMs, metrics);
+                else if (nowMs < _segmentEndMs)
                 {
                     waitMs = ClampWait(_segmentEndMs - nowMs);
                     return MovePlan.None("travel", 0);
                 }
-
-                if (Flat(confirmed, _goal) <= ArriveEpsilon)
-                    CompleteSegment(nowMs, metrics);
                 else
                     _phase = Phase.NeedArrive;
             }
@@ -537,7 +537,9 @@ namespace GameMesh.LoadTest
                 ? _settings.ServerMoveSpeed
                 : 10f;
             var dist = serverSpeed * requestedSec;
-            var angle = (float)(_rng.NextDouble() * Mathf.PI * 2.0);
+            if (dist < 2f)
+                dist = 2f;
+            var angle = (float)(_rng.NextDouble() * Mathf.PI * 2.0) + _spin * 0.7f;
             _goal = new Vector3(
                 from.x + Mathf.Cos(angle) * dist,
                 from.y,
@@ -545,6 +547,18 @@ namespace GameMesh.LoadTest
             ClampToHome();
             _goal = BotHomeLayout.SnapNearestWalkable(_goal, from.y);
             ClampToHome();
+            if (Flat(from, _goal) < 2f)
+            {
+                _spin++;
+                angle += 1.2f * _spin;
+                _goal = new Vector3(
+                    from.x + Mathf.Cos(angle) * dist,
+                    from.y,
+                    from.z + Mathf.Sin(angle) * dist);
+                ClampToHome();
+                _goal = BotHomeLayout.SnapNearestWalkable(_goal, from.y);
+                ClampToHome();
+            }
             // Grid snapping changes the actual leg length. Schedule the next turn from that
             // final distance so it cannot create another hidden dwell at the endpoint.
             _segmentSec = Flat(from, _goal) / serverSpeed;

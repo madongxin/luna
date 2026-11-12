@@ -402,6 +402,52 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void Leave_DestroysModelAndNameplate()
+        {
+            var host = new GameObject("leave-host");
+            var binder = host.AddComponent<GameMeshWorldBinder>();
+            var state = new RemoteEntityState
+            {
+                EntityId = 93310, PlayerId = 93310, Name = "Bot223",
+                X = 197.9f, Z = 660.5f, StateSeq = 4
+            };
+            var view = RemotePlayerView.Spawn(state, 200, false);
+            try
+            {
+                var plate = view.transform.Find("Name");
+                Assert.IsNotNull(plate);
+                Assert.IsTrue(plate.gameObject.activeInHierarchy);
+                binder.BindRemoteForTest(93310, view);
+                var world = new AoiWorld { LocalPlayerId = 819 };
+                world.BodyRemoved += binder.RemoveRemoteNow;
+                Assert.IsTrue(world.ApplyDelta(new AoiDeltaDto
+                {
+                    Op = AoiOp.Enter,
+                    Entity = new EntitySnapshotDto
+                    {
+                        PlayerId = 93310, EntityId = 93310, Name = "Bot223",
+                        X = 197.9f, Z = 660.5f, StateSeq = 4
+                    }
+                }));
+                Assert.IsTrue(world.Entities.ContainsKey(93310));
+                Assert.IsTrue(world.ApplyDelta(new AoiDeltaDto
+                {
+                    Op = AoiOp.Leave,
+                    Entity = new EntitySnapshotDto { PlayerId = 93310, EntityId = 93310 }
+                }));
+                Assert.IsFalse(world.Entities.ContainsKey(93310));
+                Assert.IsTrue(view == null);
+                Assert.IsNull(GameObject.Find("RemotePlayer_93310"));
+            }
+            finally
+            {
+                if (view != null)
+                    Object.DestroyImmediate(view.gameObject);
+                Object.DestroyImmediate(host);
+            }
+        }
+
+        [Test]
         public void View_HideNowClearsPoseAndNameplateSameCall()
         {
             var state = new RemoteEntityState

@@ -237,6 +237,7 @@ namespace GameMesh.LoadTest
 
         public async Task LogoutAsync()
         {
+            StopSendingMoves();
             Status = "下线中";
             try
             {
@@ -244,11 +245,20 @@ namespace GameMesh.LoadTest
             }
             finally
             {
-                try { _life.Cancel(); }
-                catch { /* ignore */ }
+                StopSendingMoves();
                 Status = Failed ? "失败" : "已下线";
             }
         }
+
+        /// <summary>Logout and wave stop. Move loops must not send after this.</summary>
+        internal void StopSendingMoves()
+        {
+            _stopMoves = true;
+            try { _life.Cancel(); }
+            catch { /* ignore */ }
+        }
+
+        internal bool CanSendMove => !_stopMoves && !_life.IsCancellationRequested;
 
         public Task CloseSessionAsync()
         {
@@ -290,7 +300,8 @@ namespace GameMesh.LoadTest
                 _token = "";
                 _sessionId = "";
                 _playerId = 0;
-                _stopMoves = false;
+                if (!_life.IsCancellationRequested)
+                    _stopMoves = false;
             }
         }
 
@@ -1138,7 +1149,8 @@ namespace GameMesh.LoadTest
                 }
                 if (tick.Kind == BotMoveTickKind.Send)
                 {
-                    if (TryTakeResendTarget(out var resend))
+                    if (TryTakeResendTarget(out var resend) &&
+                        MoveRecovery.ShouldResendSamePoint(_pos.x, _pos.z, resend.x, resend.z, true))
                     {
                         FireMove(resend, nowMs, planner.NoteRejected, ct);
                     }
@@ -1200,7 +1212,8 @@ namespace GameMesh.LoadTest
                 }
 
                 // 2s MoveRsp miss: only resend the same target on this TCP. Do not NoteSent again.
-                if (TryTakeResendTarget(out var resend))
+                if (TryTakeResendTarget(out var resend) &&
+                    MoveRecovery.ShouldResendSamePoint(_pos.x, _pos.z, resend.x, resend.z, true))
                 {
                     FireMove(resend, nowMs, sparse.NoteRejected, ct);
                     try { await Task.Delay(50, ct).ConfigureAwait(false); }
@@ -1254,6 +1267,8 @@ namespace GameMesh.LoadTest
 
         void FireMove(Vector3 position, long nowMs, Action onRejected, CancellationToken ct)
         {
+            if (!CanSendMove)
+                return;
             _lastClientTimeMs = nowMs;
             try
             {
@@ -1269,6 +1284,8 @@ namespace GameMesh.LoadTest
         Task<GameResponse> StartMoveRequest(Vector3 next, long clientTimeMs, CancellationToken ct,
             out ulong requestSeq)
         {
+            if (!CanSendMove)
+                throw new GameMeshException(GameMeshErrorCode.ClientCancelled, "logout");
             var metrics = _clock != null ? _clock.Metrics : null;
             var request = new GameRequest
             {
@@ -1480,12 +1497,12 @@ namespace GameMesh.LoadTest
             AtomicMax(ref _lastAuthorityRequestSeq, (long)requestSeq);
 
             var uncertainSeq = Interlocked.Read(ref _uncertainRequestSeq);
-            if (uncertainSeq != 0 && (long)requestSeq >= uncertainSeq)
-            {
-                Interlocked.Exchange(ref _uncertainRequestSeq, 0);
-                Volatile.Write(ref _poseUncertain, 0);
-                _unknownStreak = 0;
-            }
+            if (!MoveRecovery.ConfirmClearsResend((long)requestSeq, uncertainSeq))
+                return;
+            Interlocked.Exchange(ref _uncertainRequestSeq, 0);
+            Interlocked.Exchange(ref _resendSameTarget, 0);
+            Volatile.Write(ref _poseUncertain, 0);
+            _unknownStreak = 0;
         }
 
         void ForgetMoveRequest(ulong requestSeq)
@@ -1502,12 +1519,44 @@ namespace GameMesh.LoadTest
         void MarkMoveAuthorityUncertain(ulong requestSeq, Vector3 sent,
             BotMovementMetrics metrics)
         {
-            if ((ulong)Math.Max(0, Interlocked.Read(ref _lastAuthorityRequestSeq)) >= requestSeq)
+            if (!CanSendMove)
+            {
+                ForgetMoveRequest(requestSeq);
+                Interlocked.Exchange(ref _resendSameTarget, 0);
+                Interlocked.Exchange(ref _uncertainRequestSeq, 0);
                 return;
+            }
+            if ((ulong)Math.Max(0, Interlocked.Read(ref _lastAuthorityRequestSeq)) >= requestSeq)
+            {
+                // This request was already confirmed. Do not leave its wait flag set, or the
+                // move loop never reaches the next segment.
+                if (Interlocked.Read(ref _currentAuthorityRequestSeq) == (long)requestSeq)
+                    ForgetMoveRequest(requestSeq);
+                if (MoveRecovery.ConfirmClearsResend((long)requestSeq,
+                        Interlocked.Read(ref _uncertainRequestSeq)))
+                {
+                    Interlocked.Exchange(ref _uncertainRequestSeq, 0);
+                    Interlocked.Exchange(ref _resendSameTarget, 0);
+                    Volatile.Write(ref _poseUncertain, 0);
+                    _unknownStreak = 0;
+                }
+
+                return;
+            }
             // Already freed by a racing budget/timeout path.
             if (!_moveWrittenAtMs.ContainsKey(requestSeq) &&
                 Interlocked.Read(ref _currentAuthorityRequestSeq) != (long)requestSeq)
                 return;
+            // The body is already on this target. Arming a resend would pin the patrol here.
+            if (!MoveRecovery.ShouldResendSamePoint(_pos.x, _pos.z, sent.x, sent.z, true))
+            {
+                ForgetMoveRequest(requestSeq);
+                Interlocked.Exchange(ref _uncertainRequestSeq, 0);
+                Interlocked.Exchange(ref _resendSameTarget, 0);
+                Volatile.Write(ref _poseUncertain, 0);
+                _unknownStreak = 0;
+                return;
+            }
 
             Interlocked.Increment(ref metrics.UnknownOutcome);
             _unknownStreak++;
@@ -1533,6 +1582,11 @@ namespace GameMesh.LoadTest
         void WaitForMoveAuthorityBudget(ulong requestSeq, Vector3 sent,
             BotMovementMetrics metrics)
         {
+            if (!CanSendMove)
+            {
+                ForgetMoveRequest(requestSeq);
+                return;
+            }
             if (!_moveWrittenAtMs.TryGetValue(requestSeq, out var writtenAtMs))
             {
                 _timedOutBeforeWriteCompleted[requestSeq] = sent;
@@ -1575,7 +1629,16 @@ namespace GameMesh.LoadTest
             {
                 if (!PoseUncertain || !InWorld || _conn.State != ConnectionState.InWorld)
                     return;
+                // This path is not the sparse loop. A confirmed OK clears the latch in
+                // NoteMoveResponse; do not keep planning suppressed after that.
                 var target = _uncertainTarget;
+                if (!MoveRecovery.ShouldResendSamePoint(_pos.x, _pos.z, target.x, target.z, true))
+                {
+                    Interlocked.Exchange(ref _uncertainRequestSeq, 0);
+                    Interlocked.Exchange(ref _resendSameTarget, 0);
+                    Volatile.Write(ref _poseUncertain, 0);
+                    return;
+                }
                 var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 var requestTask = StartMoveRequest(target, nowMs, ct, out var requestSeq);
                 await FinishMoveStepAsync(requestTask, requestSeq, target, onRejected, clock, ct)

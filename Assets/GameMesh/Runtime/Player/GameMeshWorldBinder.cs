@@ -689,13 +689,23 @@ namespace GameMesh.Player
                     _views.Remove(keys[i]);
             }
 
+            var gone = view.gameObject;
             view.HideNow();
-            var id = view.PlayerId != 0 ? view.PlayerId : view.EntityId;
-            if (id != 0)
-                _dormantViews[id] = view;
-            else
-                Destroy(view.gameObject);
+            if (gone != null)
+                DestroyImmediate(gone);
             AoiInterpMetrics.NoteLeave();
+        }
+
+        internal void BindRemoteForTest(ulong id, RemotePlayerView view)
+        {
+            if (id == 0 || view == null)
+                return;
+            _views[id] = view;
+        }
+
+        internal void RemoveRemoteNow(ulong id)
+        {
+            OnBodyRemoved(id);
         }
 
         RemotePlayerView FindDormant(ulong bodyId, ulong entityId)

@@ -347,6 +347,15 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void Logout_StopsMoveSending()
+        {
+            var bot = new LoadTestBot(223, new ImmediateDispatcher());
+            Assert.IsTrue(bot.CanSendMove);
+            bot.StopSendingMoves();
+            Assert.IsFalse(bot.CanSendMove);
+        }
+
+        [Test]
         public void Recovery_BeforeWrite_DoesNotSnapshot()
         {
             Assert.IsFalse(MoveRecovery.NeedsSnapshot(0));
@@ -362,6 +371,26 @@ namespace GameMesh.Tests.EditMode
             Assert.IsFalse(MoveRecovery.TryAdoptLate(4, 4, 2, 2, 9, 9));
             Assert.IsFalse(MoveRecovery.TryAdoptLate(4, 0, 2, 2, 9, 9));
             Assert.IsFalse(MoveRecovery.TryAdoptLate(4, 8, 2, 2, 9, 10));
+        }
+
+        [Test]
+        public void Arrival_ConfirmedOk_DoesNotResendTheSamePoint()
+        {
+            const float fromX = 128.3f;
+            const float fromZ = 625.9f;
+            const float arrivedX = 177.9f;
+            const float arrivedZ = 590.1f;
+            const long timedOutSeq = 41;
+
+            Assert.IsTrue(MoveRecovery.ShouldResendSamePoint(fromX, fromZ, arrivedX, arrivedZ, true),
+                "before the body reaches the target, a timeout still resends that point");
+            Assert.IsTrue(MoveRecovery.ConfirmClearsResend(timedOutSeq, timedOutSeq));
+            Assert.IsTrue(MoveRecovery.TryAdoptLate(7, 8, 1, 1, 9, 9));
+            Assert.IsFalse(MoveRecovery.ShouldResendSamePoint(arrivedX, arrivedZ, arrivedX, arrivedZ, true),
+                "OK with a newer state_seq leaves the bot on this point, so the latch must not resend it");
+            Assert.IsFalse(MoveRecovery.ShouldResendSamePoint(arrivedX, arrivedZ, arrivedX, arrivedZ, false));
+            Assert.IsFalse(MoveRecovery.ConfirmClearsResend(40, 41),
+                "an older reply must not clear a newer pinned target");
         }
 
         static GameResponse Delta(ulong mapInstanceId, AoiOp op, ulong playerId)
