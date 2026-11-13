@@ -419,6 +419,11 @@ namespace GameMesh.LoadTest
         Vector3 _home;
         float _keepRadius;
         bool _keepInside;
+        float _lastSegmentSec;
+        float _lastSegmentMeters;
+
+        public float LastSegmentSec => _lastSegmentSec;
+        public float LastSegmentMeters => _lastSegmentMeters;
 
         public SparsePatrolController(int botIndex, BotMovementSettings settings)
         {
@@ -500,10 +505,14 @@ namespace GameMesh.LoadTest
                 metrics.Turns++;
             _lastSentYaw = yaw;
             _hasLastYaw = true;
+            if (metrics != null)
+                metrics.NoteSendReason(reason);
             if (reason == "depart")
             {
                 _phase = Phase.Traveling;
                 _segmentEndMs = nowMs + (long)(_segmentSec * 1000f);
+                if (metrics != null)
+                    metrics.NoteSegment(_lastSegmentSec, _lastSegmentMeters);
             }
             else if (reason == "arrive")
             {
@@ -519,10 +528,22 @@ namespace GameMesh.LoadTest
             _hasGoal = false;
         }
 
+        /// <summary>Drop the current goal so the next Poll picks a new waypoint.</summary>
+        public void AbandonTarget()
+        {
+            NoteRejected();
+        }
+
         void PickSegment(Vector3 from)
         {
-            var min = _settings.SegmentMinSec;
-            var max = _settings.SegmentMaxSec;
+            var scale = 1f;
+            if (_settings.AoiBotBackoff)
+                scale = BotCongestionGate.SegmentScale(
+                    System.DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            if (scale < 1f)
+                scale = 1f;
+            var min = _settings.SegmentMinSec * scale;
+            var max = _settings.SegmentMaxSec * scale;
             if (max < min)
                 max = min;
             // The server advances an accepted route at ServerMoveSpeed. Using WalkSpeed for
@@ -561,9 +582,13 @@ namespace GameMesh.LoadTest
             }
             // Grid snapping changes the actual leg length. Schedule the next turn from that
             // final distance so it cannot create another hidden dwell at the endpoint.
-            _segmentSec = Flat(from, _goal) / serverSpeed;
+            // KeepInside often shrinks the leg below SegmentMinSec×speed; _segmentSec follows
+            // the clamped distance, not the configured 10–30s request.
+            _lastSegmentMeters = Flat(from, _goal);
+            _segmentSec = _lastSegmentMeters / serverSpeed;
             if (_segmentSec < 0.05f)
                 _segmentSec = 0.05f;
+            _lastSegmentSec = _segmentSec;
             _hasGoal = true;
         }
 

@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
 
@@ -41,9 +42,68 @@ namespace GameMesh.LoadTest
         public int Turns;
         public long MovingMs;
         public long DwellingMs;
+
+        // E1 run profile (filled once when the move loop starts).
+        public string LoopKind = "无数据";
+        public bool SparsePatrol;
+        public int ClusterSize;
+        public float ClusterSpacingMeters;
+        public float ClusterRadiusMeters;
+        public int TargetHz;
+        public float SegmentMinSec;
+        public float SegmentMaxSec;
+        public int MoveDutyPct;
+        public int BotCount;
+        public bool AoiBotBackoff;
+        public float AoiRadius;
+        public float SafeRadius;
+
+        // Send reason counters (Q1).
+        public int SendDepart;
+        public int SendArrive;
+        public int SendResend;
+        public int SendOther;
+
+        // E1 per-bot counters.
+        public int ResendCount;
+        public int ResendAbandonCount;
+        public int HeartbeatOk;
+        public int HeartbeatFail;
+
+        // E1 observer (AOI push) counters — usually filled on the same bot metrics.
+        public int AoiEnterEvents;
+        public int AoiLeaveEvents;
+        public int AoiMoveEvents;
+        public int AoiUnknownMove;
+        public int AoiLeaveThenMove;
+        public int AoiMoveWithStartMs;
+        public int AoiVisiblePeak;
+        public int AoiVisibleLast;
+        public int AoiGapSkipped;
+        public int AoiBareFrames;
+
+        // Aggregate-only samples filled by the runner export (per-bot hz / visible / moving ratio).
+        public float BotSendHzP50;
+        public float BotSendHzP95;
+        public float BotSendHzMax;
+        public int BotSendHzSamples;
+        public float BotMovingRatioP50;
+        public float BotMovingRatioP95;
+        public int BotMovingRatioSamples;
+        public float AoiVisibleP50;
+        public float AoiVisibleP95;
+        public float AoiVisibleMax;
+        public int AoiVisibleSamples;
+
         readonly int[] _latency = new int[256];
         int _latencyCount;
         int _latencyCursor;
+        readonly float[] _segSec = new float[512];
+        int _segSecCount;
+        int _segSecCursor;
+        readonly float[] _segMeters = new float[512];
+        int _segMetersCount;
+        int _segMetersCursor;
 
         public static bool IsBusy(string code)
         {
@@ -70,6 +130,57 @@ namespace GameMesh.LoadTest
             return pause;
         }
 
+        public void CaptureProfile(BotMovementSettings settings, string loopKind)
+        {
+            if (settings == null)
+            {
+                LoopKind = string.IsNullOrEmpty(loopKind) ? "无数据" : loopKind;
+                return;
+            }
+
+            LoopKind = string.IsNullOrEmpty(loopKind) ? "无数据" : loopKind;
+            SparsePatrol = settings.SparsePatrol;
+            ClusterSize = settings.ClusterSize;
+            ClusterSpacingMeters = settings.ClusterSpacingMeters;
+            ClusterRadiusMeters = settings.ClusterRadiusMeters;
+            TargetHz = settings.TargetHz;
+            SegmentMinSec = settings.SegmentMinSec;
+            SegmentMaxSec = settings.SegmentMaxSec;
+            MoveDutyPct = settings.MoveDutyPct;
+            BotCount = settings.BotCount;
+            AoiBotBackoff = settings.AoiBotBackoff;
+            AoiRadius = settings.AoiRadius;
+            SafeRadius = settings.SafeRadius;
+        }
+
+        public void NoteSendReason(string reason)
+        {
+            if (reason == "depart")
+                SendDepart++;
+            else if (reason == "arrive")
+                SendArrive++;
+            else if (reason == "resend")
+                SendResend++;
+            else
+                SendOther++;
+        }
+
+        public void NoteSegment(float sec, float meters)
+        {
+            if (sec < 0f)
+                sec = 0f;
+            if (meters < 0f)
+                meters = 0f;
+            _segSec[_segSecCursor] = sec;
+            _segSecCursor = (_segSecCursor + 1) % _segSec.Length;
+            if (_segSecCount < _segSec.Length)
+                _segSecCount++;
+            _segMeters[_segMetersCursor] = meters;
+            _segMetersCursor = (_segMetersCursor + 1) % _segMeters.Length;
+            if (_segMetersCount < _segMeters.Length)
+                _segMetersCount++;
+        }
+
         public void NoteLatency(int ms)
         {
             if (ms < 0)
@@ -78,6 +189,89 @@ namespace GameMesh.LoadTest
             _latencyCursor = (_latencyCursor + 1) % _latency.Length;
             if (_latencyCount < _latency.Length)
                 _latencyCount++;
+        }
+
+        public float SegmentSecPercentile(int pct)
+        {
+            return FloatPercentile(_segSec, _segSecCount, _segSecCursor, pct);
+        }
+
+        public float SegmentMetersPercentile(int pct)
+        {
+            return FloatPercentile(_segMeters, _segMetersCount, _segMetersCursor, pct);
+        }
+
+        public int SegmentSampleCount => _segSecCount;
+
+        public float SegmentSecMax()
+        {
+            return FloatMax(_segSec, _segSecCount, _segSecCursor);
+        }
+
+        public float SegmentMetersMax()
+        {
+            return FloatMax(_segMeters, _segMetersCount, _segMetersCursor);
+        }
+
+        static float FloatPercentile(float[] ring, int count, int cursor, int pct)
+        {
+            if (count <= 0)
+                return 0f;
+            var copy = new float[count];
+            var start = count == ring.Length ? cursor : 0;
+            for (var i = 0; i < count; i++)
+                copy[i] = ring[(start + i) % ring.Length];
+            Array.Sort(copy);
+            var index = (int)Math.Ceiling(pct / 100.0 * count) - 1;
+            if (index < 0)
+                index = 0;
+            if (index >= copy.Length)
+                index = copy.Length - 1;
+            return copy[index];
+        }
+
+        static float FloatMax(float[] ring, int count, int cursor)
+        {
+            if (count <= 0)
+                return 0f;
+            var start = count == ring.Length ? cursor : 0;
+            var max = ring[start];
+            for (var i = 1; i < count; i++)
+            {
+                var v = ring[(start + i) % ring.Length];
+                if (v > max)
+                    max = v;
+            }
+
+            return max;
+        }
+
+        public static float PercentileOf(List<float> values, int pct)
+        {
+            if (values == null || values.Count == 0)
+                return 0f;
+            var copy = values.ToArray();
+            Array.Sort(copy);
+            var index = (int)Math.Ceiling(pct / 100.0 * copy.Length) - 1;
+            if (index < 0)
+                index = 0;
+            if (index >= copy.Length)
+                index = copy.Length - 1;
+            return copy[index];
+        }
+
+        public static float MaxOf(List<float> values)
+        {
+            if (values == null || values.Count == 0)
+                return 0f;
+            var max = values[0];
+            for (var i = 1; i < values.Count; i++)
+            {
+                if (values[i] > max)
+                    max = values[i];
+            }
+
+            return max;
         }
 
         public double ActualSendHz
@@ -100,12 +294,43 @@ namespace GameMesh.LoadTest
             }
         }
 
+        public double AoiMovePerSec
+        {
+            get
+            {
+                var sec = ElapsedSec;
+                return sec <= 0.001 ? 0 : AoiMoveEvents / sec;
+            }
+        }
+
         public double DutyRatio
         {
             get
             {
                 var total = MovingMs + DwellingMs;
                 return total <= 0 ? 0 : MovingMs / (double)total;
+            }
+        }
+
+        /// <summary>Moving time over wall sample; missing sample → 0.</summary>
+        public double MovingTimeRatio
+        {
+            get
+            {
+                var sec = ElapsedSec;
+                if (sec <= 0.001)
+                    return 0;
+                return MovingMs / 1000.0 / sec;
+            }
+        }
+
+        public double MoveStartMsNonZeroRatio
+        {
+            get
+            {
+                if (AoiMoveEvents <= 0)
+                    return 0;
+                return AoiMoveWithStartMs / (double)AoiMoveEvents;
             }
         }
 
@@ -172,8 +397,50 @@ namespace GameMesh.LoadTest
             Turns += other.Turns;
             MovingMs += other.MovingMs;
             DwellingMs += other.DwellingMs;
+            SendDepart += other.SendDepart;
+            SendArrive += other.SendArrive;
+            SendResend += other.SendResend;
+            SendOther += other.SendOther;
+            ResendCount += other.ResendCount;
+            ResendAbandonCount += other.ResendAbandonCount;
+            HeartbeatOk += other.HeartbeatOk;
+            HeartbeatFail += other.HeartbeatFail;
+            AoiEnterEvents += other.AoiEnterEvents;
+            AoiLeaveEvents += other.AoiLeaveEvents;
+            AoiMoveEvents += other.AoiMoveEvents;
+            AoiUnknownMove += other.AoiUnknownMove;
+            AoiLeaveThenMove += other.AoiLeaveThenMove;
+            AoiMoveWithStartMs += other.AoiMoveWithStartMs;
+            AoiGapSkipped += other.AoiGapSkipped;
+            AoiBareFrames += other.AoiBareFrames;
+            if (other.AoiVisiblePeak > AoiVisiblePeak)
+                AoiVisiblePeak = other.AoiVisiblePeak;
+            AoiVisibleLast += other.AoiVisibleLast;
             if (other.SchedulerLagMs > SchedulerLagMs)
                 SchedulerLagMs = other.SchedulerLagMs;
+            if (LoopKind == "无数据" || string.IsNullOrEmpty(LoopKind))
+                LoopKind = other.LoopKind;
+            if (BotCount == 0)
+            {
+                SparsePatrol = other.SparsePatrol;
+                ClusterSize = other.ClusterSize;
+                ClusterSpacingMeters = other.ClusterSpacingMeters;
+                ClusterRadiusMeters = other.ClusterRadiusMeters;
+                TargetHz = other.TargetHz;
+                SegmentMinSec = other.SegmentMinSec;
+                SegmentMaxSec = other.SegmentMaxSec;
+                MoveDutyPct = other.MoveDutyPct;
+                BotCount = other.BotCount;
+                AoiBotBackoff = other.AoiBotBackoff;
+                AoiRadius = other.AoiRadius;
+                SafeRadius = other.SafeRadius;
+            }
+            var segStart = other._segSecCount == other._segSec.Length ? other._segSecCursor : 0;
+            for (var i = 0; i < other._segSecCount; i++)
+            {
+                var ix = (segStart + i) % other._segSec.Length;
+                NoteSegment(other._segSec[ix], other._segMeters[ix]);
+            }
             if (other.SampleEndedMs > other.SampleStartedMs)
             {
                 if (SampleEndedMs <= SampleStartedMs)
@@ -199,11 +466,46 @@ namespace GameMesh.LoadTest
         public string ToJson(string runId)
         {
             var inv = CultureInfo.InvariantCulture;
-            var sb = new StringBuilder(640);
+            var sb = new StringBuilder(1280);
             sb.Append("{\n");
             sb.Append("  \"run_id\": \"").Append(runId ?? "").Append("\",\n");
+            sb.Append("  \"loop_kind\": \"").Append(LoopKind ?? "无数据").Append("\",\n");
+            sb.Append("  \"sparse_patrol\": ").Append(SparsePatrol ? "true" : "false").Append(",\n");
+            sb.Append("  \"cluster_size\": ").Append(ClusterSize).Append(",\n");
+            sb.Append("  \"cluster_spacing_m\": ").Append(ClusterSpacingMeters.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"cluster_radius_m\": ").Append(ClusterRadiusMeters.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"target_hz\": ").Append(TargetHz).Append(",\n");
+            sb.Append("  \"segment_min_sec\": ").Append(SegmentMinSec.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"segment_max_sec\": ").Append(SegmentMaxSec.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"move_duty_pct\": ").Append(MoveDutyPct).Append(",\n");
+            sb.Append("  \"aoi_radius_m\": ").Append(AoiRadius.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"safe_radius_m\": ").Append(SafeRadius.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"bot_count\": ").Append(BotCount).Append(",\n");
+            sb.Append("  \"aoi_bot_backoff\": ").Append(AoiBotBackoff ? "true" : "false").Append(",\n");
+            sb.Append("  \"congestion_segment_scale\": ").Append(
+                BotCongestionGate.CurrentScale.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"move_planned\": ").Append(Planned).Append(",\n");
             sb.Append("  \"move_sent\": ").Append(Sent).Append(",\n");
+            sb.Append("  \"send_depart\": ").Append(SendDepart).Append(",\n");
+            sb.Append("  \"send_arrive\": ").Append(SendArrive).Append(",\n");
+            sb.Append("  \"send_resend\": ").Append(SendResend).Append(",\n");
+            sb.Append("  \"send_other\": ").Append(SendOther).Append(",\n");
+            sb.Append("  \"move_resend\": ").Append(ResendCount).Append(",\n");
+            sb.Append("  \"move_resend_abandon\": ").Append(ResendAbandonCount).Append(",\n");
+            sb.Append("  \"segment_samples\": ").Append(SegmentSampleCount).Append(",\n");
+            sb.Append("  \"segment_sec_p50\": ").Append(SegmentSecPercentile(50).ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"segment_sec_p95\": ").Append(SegmentSecPercentile(95).ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"segment_sec_max\": ").Append(SegmentSecMax().ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"segment_m_p50\": ").Append(SegmentMetersPercentile(50).ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"segment_m_p95\": ").Append(SegmentMetersPercentile(95).ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"segment_m_max\": ").Append(SegmentMetersMax().ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"bot_send_hz_samples\": ").Append(BotSendHzSamples).Append(",\n");
+            sb.Append("  \"bot_send_hz_p50\": ").Append(BotSendHzP50.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"bot_send_hz_p95\": ").Append(BotSendHzP95.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"bot_send_hz_max\": ").Append(BotSendHzMax.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"bot_moving_ratio_samples\": ").Append(BotMovingRatioSamples).Append(",\n");
+            sb.Append("  \"bot_moving_ratio_p50\": ").Append(BotMovingRatioP50.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"bot_moving_ratio_p95\": ").Append(BotMovingRatioP95.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"queue_accepted\": ").Append(QueueAccepted).Append(",\n");
             sb.Append("  \"write_completed\": ").Append(WriteCompleted).Append(",\n");
             sb.Append("  \"rsp_raw_received\": ").Append(RspRawReceived).Append(",\n");
@@ -230,20 +532,99 @@ namespace GameMesh.LoadTest
             sb.Append("  \"move_paused\": ").Append(Paused).Append(",\n");
             sb.Append("  \"path_rejected\": ").Append(PathRejected).Append(",\n");
             sb.Append("  \"corrections\": ").Append(Corrections).Append(",\n");
+            sb.Append("  \"heartbeat_ok\": ").Append(HeartbeatOk).Append(",\n");
+            sb.Append("  \"heartbeat_fail\": ").Append(HeartbeatFail).Append(",\n");
             sb.Append("  \"actual_send_hz\": ").Append(ActualSendHz.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"uplink_move_per_sec\": ").Append(UplinkMovePerSec.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"turns\": ").Append(Turns).Append(",\n");
             sb.Append("  \"moving_ms\": ").Append(MovingMs).Append(",\n");
             sb.Append("  \"dwelling_ms\": ").Append(DwellingMs).Append(",\n");
             sb.Append("  \"duty\": ").Append(DutyRatio.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"moving_time_ratio\": ").Append(MovingTimeRatio.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"actual_success_hz\": ").Append(ActualSuccessHz.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"rpc_latency_p50\": ").Append(LatencyPercentile(50)).Append(",\n");
             sb.Append("  \"rpc_latency_p95\": ").Append(LatencyPercentile(95)).Append(",\n");
             sb.Append("  \"rpc_latency_p99\": ").Append(LatencyPercentile(99)).Append(",\n");
             sb.Append("  \"scheduler_lag_ms\": ").Append(SchedulerLagMs).Append(",\n");
-            sb.Append("  \"note\": \"live stages are not filled by this export\"\n");
+            sb.Append("  \"aoi_enter_events\": ").Append(AoiEnterEvents).Append(",\n");
+            sb.Append("  \"aoi_leave_events\": ").Append(AoiLeaveEvents).Append(",\n");
+            sb.Append("  \"aoi_move_events\": ").Append(AoiMoveEvents).Append(",\n");
+            sb.Append("  \"aoi_move_per_sec\": ").Append(AoiMovePerSec.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"aoi_unknown_move\": ").Append(AoiUnknownMove).Append(",\n");
+            sb.Append("  \"aoi_leave_then_move\": ").Append(AoiLeaveThenMove).Append(",\n");
+            sb.Append("  \"aoi_move_with_start_ms\": ").Append(AoiMoveWithStartMs).Append(",\n");
+            sb.Append("  \"aoi_move_start_ms_nonzero_ratio\": ").Append(
+                MoveStartMsNonZeroRatio.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"aoi_gap_skipped\": ").Append(AoiGapSkipped).Append(",\n");
+            sb.Append("  \"aoi_bare_frames\": ").Append(AoiBareFrames).Append(",\n");
+            sb.Append("  \"aoi_visible_peak\": ").Append(AoiVisiblePeak).Append(",\n");
+            sb.Append("  \"aoi_visible_last_sum\": ").Append(AoiVisibleLast).Append(",\n");
+            sb.Append("  \"aoi_visible_samples\": ").Append(AoiVisibleSamples).Append(",\n");
+            sb.Append("  \"aoi_visible_p50\": ").Append(AoiVisibleP50.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"aoi_visible_p95\": ").Append(AoiVisibleP95.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"aoi_visible_max\": ").Append(AoiVisibleMax.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"note\": \"missing fields are 0 or 无数据; live stages are not filled by this export\"\n");
             sb.Append("}\n");
             return sb.ToString();
+        }
+
+        public string CsvHeader()
+        {
+            return "loop_kind,sparse_patrol,cluster_size,cluster_spacing_m,cluster_radius_m,target_hz," +
+                   "segment_min_sec,segment_max_sec,move_duty_pct,aoi_radius_m,safe_radius_m,bot_count,aoi_bot_backoff," +
+                   "move_planned,move_sent,send_depart,send_arrive,send_resend,send_other,move_resend," +
+                   "move_resend_abandon,move_ack_ok,move_rejected,move_timeout,unknown_after_write,heartbeat_ok," +
+                   "actual_send_hz,actual_success_hz,duty,moving_time_ratio,moving_ms,dwelling_ms,p50,p95,p99," +
+                   "segment_samples,segment_sec_p50,segment_sec_p95,segment_sec_max,segment_m_p50,segment_m_p95,segment_m_max," +
+                   "bot_send_hz_p50,bot_send_hz_p95,bot_send_hz_max," +
+                   "aoi_enter,aoi_leave,aoi_move_events,aoi_unknown_move,aoi_leave_then_move,aoi_gap_skipped," +
+                   "aoi_visible_peak,aoi_visible_p50,aoi_visible_p95,aoi_visible_max";
+        }
+
+        public string ToCsvRow()
+        {
+            var inv = CultureInfo.InvariantCulture;
+            return (LoopKind ?? "无数据") + "," +
+                   (SparsePatrol ? "1" : "0") + "," +
+                   ClusterSize + "," +
+                   ClusterSpacingMeters.ToString("0.###", inv) + "," +
+                   ClusterRadiusMeters.ToString("0.###", inv) + "," +
+                   TargetHz + "," +
+                   SegmentMinSec.ToString("0.###", inv) + "," +
+                   SegmentMaxSec.ToString("0.###", inv) + "," +
+                   MoveDutyPct + "," +
+                   AoiRadius.ToString("0.###", inv) + "," +
+                   SafeRadius.ToString("0.###", inv) + "," +
+                   BotCount + "," +
+                   (AoiBotBackoff ? "1" : "0") + "," +
+                   Planned + "," + Sent + "," +
+                   SendDepart + "," + SendArrive + "," + SendResend + "," + SendOther + "," +
+                   ResendCount + "," + ResendAbandonCount + "," +
+                   AckOk + "," + Rejected + "," + Timeout + "," + UnknownOutcome + "," +
+                   HeartbeatOk + "," +
+                   ActualSendHz.ToString("0.###", inv) + "," +
+                   ActualSuccessHz.ToString("0.###", inv) + "," +
+                   DutyRatio.ToString("0.###", inv) + "," +
+                   MovingTimeRatio.ToString("0.###", inv) + "," +
+                   MovingMs + "," + DwellingMs + "," +
+                   LatencyPercentile(50) + "," + LatencyPercentile(95) + "," +
+                   LatencyPercentile(99) + "," +
+                   SegmentSampleCount + "," +
+                   SegmentSecPercentile(50).ToString("0.###", inv) + "," +
+                   SegmentSecPercentile(95).ToString("0.###", inv) + "," +
+                   SegmentSecMax().ToString("0.###", inv) + "," +
+                   SegmentMetersPercentile(50).ToString("0.###", inv) + "," +
+                   SegmentMetersPercentile(95).ToString("0.###", inv) + "," +
+                   SegmentMetersMax().ToString("0.###", inv) + "," +
+                   BotSendHzP50.ToString("0.###", inv) + "," +
+                   BotSendHzP95.ToString("0.###", inv) + "," +
+                   BotSendHzMax.ToString("0.###", inv) + "," +
+                   AoiEnterEvents + "," + AoiLeaveEvents + "," + AoiMoveEvents + "," +
+                   AoiUnknownMove + "," + AoiLeaveThenMove + "," + AoiGapSkipped + "," +
+                   AoiVisiblePeak + "," +
+                   AoiVisibleP50.ToString("0.###", inv) + "," +
+                   AoiVisibleP95.ToString("0.###", inv) + "," +
+                   AoiVisibleMax.ToString("0.###", inv);
         }
     }
 }

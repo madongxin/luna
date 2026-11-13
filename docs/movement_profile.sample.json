@@ -16,5 +16,16 @@
   "aoi_radius_m": 32,
   "aoi_cell_m": 32,
   "safe_radius_m": 24,
-  "sync_wave": false
+  "sync_wave": false,
+  "sparse_patrol": true,
+  "segment_min_sec": 10,
+  "segment_max_sec": 30,
+  "move_duty_pct": 100,
+  "cluster_size": 60,
+  "cluster_spacing_m": 96,
+  "cluster_radius_m": 12,
+  "aoi_bot_backoff": false,
+  "aoi_bot_backoff_max_same_target_resends": 3,
+  "aoi_bot_backoff_cap_sec": 30,
+  "aoi_bot_backoff_timeout_ratio": 0.3
 }

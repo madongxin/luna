@@ -496,6 +496,14 @@ namespace GameMesh.UI
             _loadSeed = Field("移动种子", _loadSeed);
             _loadProfile = Field("单一策略(空=混合)", _loadProfile);
             _loadWeights = Field("比例 停/逛/穿/聚/巡", _loadWeights);
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("稀疏巡逻", _label, GUILayout.Width(150));
+            runner.Movement.SparsePatrol = GUILayout.Toggle(runner.Movement.SparsePatrol, "SparsePatrol（默认开）", GUILayout.Height(40));
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+            GUILayout.Label("拥塞退避", _label, GUILayout.Width(150));
+            runner.Movement.AoiBotBackoff = GUILayout.Toggle(runner.Movement.AoiBotBackoff, "aoi_bot_backoff（默认关）", GUILayout.Height(40));
+            GUILayout.EndHorizontal();
             _loadPortA = Field("Gateway A", _loadPortA);
             _loadPortB = Field("Gateway B", _loadPortB);
             GUILayout.BeginHorizontal();

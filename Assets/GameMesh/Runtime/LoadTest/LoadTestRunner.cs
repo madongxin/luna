@@ -212,11 +212,14 @@ namespace GameMesh.LoadTest
             var authorityOldestMs = 0;
             var clientQueued = 0;
             long clientQueueOldestMs = 0;
+            var loopKind = "无数据";
             for (var i = 0; i < _bots.Count; i++)
             {
                 var bot = _bots[i];
                 if (bot == null)
                     continue;
+                if (loopKind == "无数据" && !string.IsNullOrEmpty(bot.LoopKind) && bot.LoopKind != "无数据")
+                    loopKind = bot.LoopKind;
                 if (bot.AwaitingMoveAuthority)
                 {
                     authorityWaiting++;
@@ -231,7 +234,14 @@ namespace GameMesh.LoadTest
                     clientQueueOldestMs = queueAge;
             }
 
-            return "当前待权威 " + authorityWaiting + "  最长 " + authorityOldestMs +
+            if (loopKind == "无数据")
+                loopKind = Movement.SparsePatrol ? "Sparse(配置)" : "Dense(配置)";
+
+            return "循环 " + loopKind +
+                   "  SparsePatrol=" + (Movement.SparsePatrol ? "开" : "关") +
+                   "  backoff=" + (Movement.AoiBotBackoff ? "开" : "关") +
+                   "  段倍率 " + BotCongestionGate.CurrentScale.ToString("0.#") +
+                   "    当前待权威 " + authorityWaiting + "  最长 " + authorityOldestMs +
                    "ms    客户端发送队列 " + clientQueued + "  最老 " +
                    clientQueueOldestMs + "ms";
         }
@@ -385,6 +395,9 @@ namespace GameMesh.LoadTest
                 // The local playable client still uses GameMeshMainThreadDispatcher.
                 var dispatcher = new ImmediateDispatcher();
                 Movement.BotCount = count;
+                BotCongestionGate.Enabled = Movement.AoiBotBackoff;
+                BotCongestionGate.TimeoutRatioThreshold = Movement.AoiBotBackoffTimeoutRatio;
+                BotCongestionGate.Reset();
                 BotHomeLayout.BeginWave();
                 var stamp = DateTime.Now.ToString("HHmmssfff");
                 // Fixed 16 in-flight logins. One EnterMap (or timeout) frees a slot for the next.
@@ -882,12 +895,23 @@ namespace GameMesh.LoadTest
             var sum = new BotMovementMetrics();
             for (var i = 0; i < _bots.Count; i++)
             {
-                var metrics = _bots[i] != null ? _bots[i].Metrics : null;
+                var bot = _bots[i];
+                if (bot == null)
+                    continue;
+                SyncBotObserverMetrics(bot);
+                var metrics = bot.Metrics;
                 if (metrics != null)
                     sum.Add(metrics);
             }
 
             return sum;
+        }
+
+        static void SyncBotObserverMetrics(LoadTestBot bot)
+        {
+            if (bot == null || bot.Metrics == null || bot.PushTracker == null)
+                return;
+            bot.PushTracker.CopyInto(bot.Metrics);
         }
 
         void SampleGatewayRates()
@@ -1055,29 +1079,123 @@ namespace GameMesh.LoadTest
                 Directory.CreateDirectory(dir);
                 var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
                 var sum = SumMovement();
+                if (sum.BotCount == 0)
+                    sum.BotCount = TargetCount > 0 ? TargetCount : _bots.Count;
+                if (sum.TargetHz == 0)
+                {
+                    sum.CaptureProfile(Movement,
+                        Movement.SparsePatrol ? "Sparse" : "Dense");
+                }
+
+                FillAggregateDistributions(sum);
+                if (sum.Sent <= 0)
+                {
+                    var err = "导出失败: move_sent=0（请在停止机器人之前导出；空包不保存）";
+                    GameMeshLog.Warn(err);
+                    MovementExport = err;
+                    return err;
+                }
+
                 var jsonPath = Path.Combine(dir, "movement-metrics-" + stamp + ".json");
                 File.WriteAllText(jsonPath, sum.ToJson("client-" + stamp));
                 var csvPath = Path.Combine(dir, "movement-metrics-" + stamp + ".csv");
-                File.WriteAllText(csvPath,
-                    "move_planned,move_sent,move_ack_ok,move_rejected,move_timeout,move_skipped_busy,move_skipped_not_ready,move_skipped_pose_uncertain,move_skipped_session_not_ready,move_skipped_recovery_hold,move_paused,path_rejected,corrections,actual_send_hz,actual_success_hz,p50,p95,p99,scheduler_lag_ms,reject_too_fast,reject_bounds,reject_unwalkable,reject_other\n" +
-                    sum.Planned + "," + sum.Sent + "," + sum.AckOk + "," + sum.Rejected + "," +
-                    sum.Timeout + "," + sum.SkippedBusy + "," + sum.SkippedNotReady + "," +
-                    sum.SkippedPoseUncertain + "," + sum.SkippedSessionNotReady + "," +
-                    sum.SkippedRecoveryHold + "," +
-                    sum.Paused + "," + sum.PathRejected + "," + sum.Corrections + "," +
-                    sum.ActualSendHz.ToString("0.###") + "," + sum.ActualSuccessHz.ToString("0.###") + "," +
-                    sum.LatencyPercentile(50) + "," + sum.LatencyPercentile(95) + "," +
-                    sum.LatencyPercentile(99) + "," + sum.SchedulerLagMs + "," +
-                    sum.RejectTooFast + "," + sum.RejectBounds + "," + sum.RejectUnwalkable + "," +
-                    sum.RejectOther + "\n");
-                MovementExport = jsonPath;
-                return jsonPath;
+                File.WriteAllText(csvPath, sum.CsvHeader() + "\n" + sum.ToCsvRow() + "\n");
+
+                var botCsv = Path.Combine(dir, "movement-bots-" + stamp + ".csv");
+                var botSb = new System.Text.StringBuilder(4096);
+                botSb.AppendLine(
+                    "bot_index,player_id,loop_kind," + sum.CsvHeader());
+                var visibleSb = new System.Text.StringBuilder(4096);
+                visibleSb.Append("{\n  \"run_id\": \"client-").Append(stamp).Append("\",\n");
+                visibleSb.Append("  \"note\": \"observer player_id → visible entity ids from BotPushTracker\",\n");
+                visibleSb.Append("  \"observers\": [\n");
+                var visIds = new List<ulong>(64);
+                var observerWritten = 0;
+                for (var i = 0; i < _bots.Count; i++)
+                {
+                    var bot = _bots[i];
+                    if (bot == null)
+                        continue;
+                    SyncBotObserverMetrics(bot);
+                    var m = bot.Metrics;
+                    if (m == null)
+                        continue;
+                    botSb.Append(bot.Index).Append(',').Append(bot.PlayerId).Append(',')
+                        .Append(bot.LoopKind ?? "无数据").Append(',')
+                        .Append(m.ToCsvRow()).Append('\n');
+
+                    if (bot.PushTracker == null)
+                        continue;
+                    bot.PushTracker.CopyVisibleIds(visIds);
+                    if (observerWritten > 0)
+                        visibleSb.Append(",\n");
+                    visibleSb.Append("    {\"observer_player_id\": ").Append(bot.PlayerId)
+                        .Append(", \"entity_ids\": [");
+                    for (var e = 0; e < visIds.Count; e++)
+                    {
+                        if (e > 0)
+                            visibleSb.Append(',');
+                        visibleSb.Append(visIds[e]);
+                    }
+
+                    visibleSb.Append("], \"enter\": ").Append(bot.PushTracker.AoiEnterEvents)
+                        .Append(", \"leave\": ").Append(bot.PushTracker.AoiLeaveEvents)
+                        .Append(", \"move\": ").Append(bot.PushTracker.AoiMoveEvents)
+                        .Append(", \"unknown_move\": ").Append(bot.PushTracker.UnknownMoveCount)
+                        .Append(", \"leave_then_move\": ").Append(bot.PushTracker.LeaveThenMoveCount)
+                        .Append(", \"visible\": ").Append(bot.PushTracker.VisibleCount)
+                        .Append(", \"visible_peak\": ").Append(bot.PushTracker.VisiblePeak)
+                        .Append("}");
+                    observerWritten++;
+                }
+
+                visibleSb.Append("\n  ]\n}\n");
+                File.WriteAllText(botCsv, botSb.ToString());
+                var visiblePath = Path.Combine(dir, "aoi-visible-" + stamp + ".json");
+                File.WriteAllText(visiblePath, visibleSb.ToString());
+                MovementExport = jsonPath + " | " + csvPath + " | " + botCsv + " | " + visiblePath;
+                return MovementExport;
             }
             catch (Exception ex)
             {
                 GameMeshLog.Warn("movement export failed " + ex.Message);
                 return "";
             }
+        }
+
+        void FillAggregateDistributions(BotMovementMetrics sum)
+        {
+            if (sum == null)
+                return;
+            var sendHz = new List<float>(_bots.Count);
+            var movingRatio = new List<float>(_bots.Count);
+            var visible = new List<float>(_bots.Count);
+            for (var i = 0; i < _bots.Count; i++)
+            {
+                var bot = _bots[i];
+                if (bot == null)
+                    continue;
+                SyncBotObserverMetrics(bot);
+                var m = bot.Metrics;
+                if (m == null)
+                    continue;
+                sendHz.Add((float)m.ActualSendHz);
+                movingRatio.Add((float)m.MovingTimeRatio);
+                if (bot.PushTracker != null)
+                    visible.Add(bot.PushTracker.VisibleCount);
+            }
+
+            sum.BotSendHzSamples = sendHz.Count;
+            sum.BotSendHzP50 = BotMovementMetrics.PercentileOf(sendHz, 50);
+            sum.BotSendHzP95 = BotMovementMetrics.PercentileOf(sendHz, 95);
+            sum.BotSendHzMax = BotMovementMetrics.MaxOf(sendHz);
+            sum.BotMovingRatioSamples = movingRatio.Count;
+            sum.BotMovingRatioP50 = BotMovementMetrics.PercentileOf(movingRatio, 50);
+            sum.BotMovingRatioP95 = BotMovementMetrics.PercentileOf(movingRatio, 95);
+            sum.AoiVisibleSamples = visible.Count;
+            sum.AoiVisibleP50 = BotMovementMetrics.PercentileOf(visible, 50);
+            sum.AoiVisibleP95 = BotMovementMetrics.PercentileOf(visible, 95);
+            sum.AoiVisibleMax = BotMovementMetrics.MaxOf(visible);
         }
 
         public string DumpFailureReport(string tag)

@@ -1,5 +1,7 @@
+using GameMesh.Aoi;
 using GameMesh.LoadTest;
 using GameMesh.Map;
+using GameMesh.Protocol;
 using NUnit.Framework;
 using UnityEngine;
 
@@ -688,6 +690,192 @@ namespace GameMesh.Tests.EditMode
             finally
             {
                 BotHomeLayout.Clear();
+            }
+        }
+
+        [Test]
+        public void E1_ReplyDelayOverTwoSeconds_TriggersSameTargetResend()
+        {
+            // Evidence: with aoi_bot_backoff off, a 3s reply miss arms the latch and the
+            // next poll resends the same point (current production behavior).
+            var policy = new BotResendPolicy { BackoffEnabled = false };
+            const float fromX = 10f, fromZ = 20f;
+            const float targetX = 40f, targetZ = 20f;
+            Assert.IsTrue(MoveRecovery.ShouldResendSamePoint(fromX, fromZ, targetX, targetZ, true));
+
+            policy.Arm(new Vector3(targetX, 0f, targetZ), nowMs: 0);
+            Assert.IsTrue(policy.Armed);
+            Assert.IsTrue(policy.TryTakeResend(2000, fromX, fromZ, out var first, out var abandon));
+            Assert.IsFalse(abandon);
+            Assert.AreEqual(targetX, first.x, 0.001f);
+            Assert.AreEqual(1, policy.ResendCount);
+
+            // Another 3s miss → immediate resend again (storm path).
+            policy.Arm(new Vector3(targetX, 0f, targetZ), nowMs: 5000);
+            Assert.IsTrue(policy.TryTakeResend(5000, fromX, fromZ, out _, out abandon));
+            Assert.IsFalse(abandon);
+            Assert.AreEqual(2, policy.ResendCount);
+
+            var metrics = new BotMovementMetrics();
+            metrics.CaptureProfile(new BotMovementSettings(), "Sparse");
+            metrics.ResendCount = policy.ResendCount;
+            metrics.Timeout = 2;
+            metrics.Sent = 4;
+            metrics.SampleStartedMs = 0;
+            metrics.SampleEndedMs = 10000;
+            var json = metrics.ToJson("e1");
+            StringAssert.Contains("\"loop_kind\": \"Sparse\"", json);
+            StringAssert.Contains("\"move_resend\": 2", json);
+            StringAssert.Contains("\"actual_send_hz\":", json);
+            StringAssert.Contains("loop_kind", metrics.CsvHeader());
+        }
+
+        [Test]
+        public void E2_Backoff_CutsResendsBelowOneFifthOfImmediateStorm()
+        {
+            const float fromX = 0f, fromZ = 0f;
+            const float targetX = 50f, targetZ = 0f;
+            // Long enough that the no-backoff path storms; backoff abandons after N.
+            const int windowMs = 60000;
+
+            var baseline = new BotResendPolicy { BackoffEnabled = false };
+            SimulateCongestedResends(baseline, fromX, fromZ, targetX, targetZ, windowMs,
+                rttMs: 3000, stopAfterAbandon: false);
+            Assert.GreaterOrEqual(baseline.ResendCount, 15, "E1 path must storm under 3s RTT");
+
+            var backed = new BotResendPolicy
+            {
+                BackoffEnabled = true,
+                MaxSameTargetResends = 3,
+                BackoffCapSec = 30
+            };
+            SimulateCongestedResends(backed, fromX, fromZ, targetX, targetZ, windowMs,
+                rttMs: 3000, stopAfterAbandon: true);
+            Assert.LessOrEqual(backed.ResendCount, baseline.ResendCount / 5,
+                "backoff resends must be ≤ 1/5 of the E1 storm count");
+            Assert.AreEqual(3, backed.ResendCount);
+            Assert.AreEqual(1, backed.AbandonCount);
+
+            backed.Clear();
+            Assert.IsFalse(backed.Armed);
+            Assert.AreEqual(0, backed.SameTargetResends);
+        }
+
+        [Test]
+        public void E2_CongestionGate_ScalesSegmentsThenRecovers()
+        {
+            BotCongestionGate.Reset();
+            BotCongestionGate.Enabled = true;
+            BotCongestionGate.TimeoutRatioThreshold = 0.30f;
+            long t = 1000;
+            for (var i = 0; i < 20; i++)
+            {
+                BotCongestionGate.NoteSend(t);
+                BotCongestionGate.NoteTimeout(t);
+                t += 100;
+            }
+
+            Assert.GreaterOrEqual(BotCongestionGate.CurrentScale, 2f);
+            Assert.LessOrEqual(BotCongestionGate.CurrentScale, 4f);
+
+            // Healthy window: many sends, few timeouts → scale back to 1.
+            t = 20000;
+            for (var i = 0; i < 40; i++)
+            {
+                BotCongestionGate.NoteSend(t);
+                t += 50;
+            }
+
+            Assert.AreEqual(1f, BotCongestionGate.SegmentScale(t), 0.001f);
+            BotCongestionGate.Enabled = false;
+            BotCongestionGate.Reset();
+        }
+
+        [Test]
+        public void E1_ObserverStats_LeaveThenMoveAndStartMs()
+        {
+            var push = new BotPushTracker();
+            push.BindInstance(9, 1);
+            var enter = new GameResponse
+            {
+                AoiDelta = new AoiDelta { MapInstanceId = 9 }
+            };
+            enter.AoiDelta.Events.Add(new AoiEvent
+            {
+                Op = (int)AoiOp.Enter,
+                Entity = new EntitySnapshot { PlayerId = 100 }
+            });
+            Assert.IsTrue(push.ObserveServerPush(
+                new ServerPushEnvelope { Reliable = true, ServerSeq = 1 }, enter));
+
+            var leave = new GameResponse
+            {
+                AoiDelta = new AoiDelta { MapInstanceId = 9 }
+            };
+            leave.AoiDelta.Events.Add(new AoiEvent
+            {
+                Op = (int)AoiOp.Leave,
+                Entity = new EntitySnapshot { PlayerId = 100 }
+            });
+            Assert.IsTrue(push.ObserveServerPush(
+                new ServerPushEnvelope { Reliable = true, ServerSeq = 2 }, leave));
+
+            var move = new GameResponse
+            {
+                AoiDelta = new AoiDelta { MapInstanceId = 9 }
+            };
+            move.AoiDelta.Events.Add(new AoiEvent
+            {
+                Op = (int)AoiOp.Move,
+                Entity = new EntitySnapshot { PlayerId = 100, MoveStartMs = 12345 }
+            });
+            Assert.IsTrue(push.ObserveServerPush(
+                new ServerPushEnvelope { Reliable = true, ServerSeq = 3 }, move));
+
+            Assert.AreEqual(1, push.AoiMoveEvents);
+            Assert.AreEqual(1, push.UnknownMoveCount);
+            Assert.AreEqual(1, push.LeaveThenMoveCount);
+            Assert.AreEqual(1, push.MoveWithStartMsCount);
+
+            var metrics = new BotMovementMetrics();
+            push.CopyInto(metrics);
+            Assert.AreEqual(1.0, metrics.MoveStartMsNonZeroRatio, 0.001);
+        }
+
+        static void SimulateCongestedResends(BotResendPolicy policy,
+            float fromX, float fromZ, float targetX, float targetZ, int windowMs, int rttMs,
+            bool stopAfterAbandon)
+        {
+            long now = 0;
+            var target = new Vector3(targetX, 0f, targetZ);
+            while (now < windowMs)
+            {
+                policy.Arm(target, now);
+                var deadline = now + rttMs + policy.BackoffCapSec * 1000L;
+                var took = false;
+                while (now < deadline && now < windowMs)
+                {
+                    if (policy.TryTakeResend(now, fromX, fromZ, out _, out var abandon))
+                    {
+                        took = true;
+                        now += rttMs;
+                        break;
+                    }
+
+                    if (abandon)
+                    {
+                        if (stopAfterAbandon)
+                            return;
+                        now += 50;
+                        break;
+                    }
+
+                    var wait = policy.WaitMsUntilResend(now);
+                    now += wait > 0 ? System.Math.Min(wait, 1000) : 50;
+                }
+
+                if (!took && !stopAfterAbandon)
+                    now += rttMs;
             }
         }
 

@@ -52,6 +52,12 @@ namespace GameMesh.LoadTest
         public float ClusterSpacingMeters = 96f;
         public float ClusterRadiusMeters = 12f;
 
+        /// <summary>aoi_bot_backoff. Default off. Only load-test bots.</summary>
+        public bool AoiBotBackoff;
+        public int AoiBotBackoffMaxSameTargetResends = BotResendPolicy.DefaultMaxSameTargetResends;
+        public int AoiBotBackoffCapSec = BotResendPolicy.DefaultBackoffCapSec;
+        public float AoiBotBackoffTimeoutRatio = BotCongestionGate.DefaultTimeoutRatio;
+
         public BotMovementSettings Clone()
         {
             return new BotMovementSettings
@@ -85,7 +91,11 @@ namespace GameMesh.LoadTest
                 MoveDutyPct = MoveDutyPct,
                 ClusterSize = ClusterSize,
                 ClusterSpacingMeters = ClusterSpacingMeters,
-                ClusterRadiusMeters = ClusterRadiusMeters
+                ClusterRadiusMeters = ClusterRadiusMeters,
+                AoiBotBackoff = AoiBotBackoff,
+                AoiBotBackoffMaxSameTargetResends = AoiBotBackoffMaxSameTargetResends,
+                AoiBotBackoffCapSec = AoiBotBackoffCapSec,
+                AoiBotBackoffTimeoutRatio = AoiBotBackoffTimeoutRatio
             };
         }
 
@@ -135,6 +145,12 @@ namespace GameMesh.LoadTest
                 return "cluster_size must be 0 or 40..80";
             if (ClusterSpacingMeters < 1f || ClusterRadiusMeters < 1f)
                 return "cluster spacing and radius must be positive";
+            if (AoiBotBackoffMaxSameTargetResends < 1 || AoiBotBackoffMaxSameTargetResends > 20)
+                return "aoi_bot_backoff max same-target resends must be 1..20";
+            if (AoiBotBackoffCapSec < 2 || AoiBotBackoffCapSec > 120)
+                return "aoi_bot_backoff cap must be 2..120 seconds";
+            if (AoiBotBackoffTimeoutRatio < 0.05f || AoiBotBackoffTimeoutRatio > 0.9f)
+                return "aoi_bot_backoff timeout ratio must be 0.05..0.9";
             return null;
         }
 
