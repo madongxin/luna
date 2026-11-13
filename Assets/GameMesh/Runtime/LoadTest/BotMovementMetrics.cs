@@ -72,6 +72,16 @@ namespace GameMesh.LoadTest
         public int ResendAbandonCount;
         public int HeartbeatOk;
         public int HeartbeatFail;
+        public int HeartbeatFailTimeout;
+        public int HeartbeatFailDisconnect;
+        public int HeartbeatFailReject;
+        public int HeartbeatFailOther;
+        public int HeartbeatReconnects;
+        // Rolling per-minute ok/fail (up to 60 minutes of samples).
+        readonly int[] _hbOkPerMin = new int[60];
+        readonly int[] _hbFailPerMin = new int[60];
+        int _hbMinSlots;
+        long _hbMinAnchorMs = -1;
 
         // E1 observer (AOI push) counters — usually filled on the same bot metrics.
         public int AoiEnterEvents;
@@ -195,6 +205,59 @@ namespace GameMesh.LoadTest
             _latencyCursor = (_latencyCursor + 1) % _latency.Length;
             if (_latencyCount < _latency.Length)
                 _latencyCount++;
+        }
+
+        public void NoteHeartbeat(bool ok, string reason, long nowMs)
+        {
+            if (ok)
+                HeartbeatOk++;
+            else
+            {
+                HeartbeatFail++;
+                if (reason == "timeout")
+                    HeartbeatFailTimeout++;
+                else if (reason == "disconnect")
+                    HeartbeatFailDisconnect++;
+                else if (reason == "reject")
+                    HeartbeatFailReject++;
+                else
+                    HeartbeatFailOther++;
+            }
+
+            if (nowMs <= 0)
+                return;
+            if (_hbMinAnchorMs < 0)
+                _hbMinAnchorMs = nowMs;
+            var minute = (int)((nowMs - _hbMinAnchorMs) / 60000L);
+            if (minute < 0)
+                minute = 0;
+            if (minute >= _hbOkPerMin.Length)
+                minute = _hbOkPerMin.Length - 1;
+            if (minute + 1 > _hbMinSlots)
+                _hbMinSlots = minute + 1;
+            if (ok)
+                _hbOkPerMin[minute]++;
+            else
+                _hbFailPerMin[minute]++;
+        }
+
+        public string HeartbeatMinutesJson()
+        {
+            if (_hbMinSlots <= 0)
+                return "[]";
+            var sb = new StringBuilder(_hbMinSlots * 24);
+            sb.Append('[');
+            for (var i = 0; i < _hbMinSlots; i++)
+            {
+                if (i > 0)
+                    sb.Append(',');
+                sb.Append("{\"m\":").Append(i)
+                    .Append(",\"ok\":").Append(_hbOkPerMin[i])
+                    .Append(",\"fail\":").Append(_hbFailPerMin[i]).Append('}');
+            }
+
+            sb.Append(']');
+            return sb.ToString();
         }
 
         public float SegmentSecPercentile(int pct)
@@ -411,6 +474,18 @@ namespace GameMesh.LoadTest
             ResendAbandonCount += other.ResendAbandonCount;
             HeartbeatOk += other.HeartbeatOk;
             HeartbeatFail += other.HeartbeatFail;
+            HeartbeatFailTimeout += other.HeartbeatFailTimeout;
+            HeartbeatFailDisconnect += other.HeartbeatFailDisconnect;
+            HeartbeatFailReject += other.HeartbeatFailReject;
+            HeartbeatFailOther += other.HeartbeatFailOther;
+            HeartbeatReconnects += other.HeartbeatReconnects;
+            for (var i = 0; i < other._hbMinSlots && i < _hbOkPerMin.Length; i++)
+            {
+                _hbOkPerMin[i] += other._hbOkPerMin[i];
+                _hbFailPerMin[i] += other._hbFailPerMin[i];
+            }
+            if (other._hbMinSlots > _hbMinSlots)
+                _hbMinSlots = other._hbMinSlots;
             AoiEnterEvents += other.AoiEnterEvents;
             AoiLeaveEvents += other.AoiLeaveEvents;
             AoiMoveEvents += other.AoiMoveEvents;
@@ -546,6 +621,12 @@ namespace GameMesh.LoadTest
             sb.Append("  \"corrections\": ").Append(Corrections).Append(",\n");
             sb.Append("  \"heartbeat_ok\": ").Append(HeartbeatOk).Append(",\n");
             sb.Append("  \"heartbeat_fail\": ").Append(HeartbeatFail).Append(",\n");
+            sb.Append("  \"heartbeat_fail_timeout\": ").Append(HeartbeatFailTimeout).Append(",\n");
+            sb.Append("  \"heartbeat_fail_disconnect\": ").Append(HeartbeatFailDisconnect).Append(",\n");
+            sb.Append("  \"heartbeat_fail_reject\": ").Append(HeartbeatFailReject).Append(",\n");
+            sb.Append("  \"heartbeat_fail_other\": ").Append(HeartbeatFailOther).Append(",\n");
+            sb.Append("  \"heartbeat_reconnects\": ").Append(HeartbeatReconnects).Append(",\n");
+            sb.Append("  \"heartbeat_per_minute\": ").Append(HeartbeatMinutesJson()).Append(",\n");
             sb.Append("  \"actual_send_hz\": ").Append(ActualSendHz.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"uplink_move_per_sec\": ").Append(UplinkMovePerSec.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"turns\": ").Append(Turns).Append(",\n");

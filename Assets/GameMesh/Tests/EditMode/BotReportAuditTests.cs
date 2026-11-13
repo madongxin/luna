@@ -394,6 +394,22 @@ namespace GameMesh.Tests.EditMode
             return metrics.SendArrive + metrics.SendResend;
         }
 
+        [Test]
+        public void Q4_HeartbeatReasons_AreClassified()
+        {
+            var m = new BotMovementMetrics();
+            m.NoteHeartbeat(true, null, 0);
+            m.NoteHeartbeat(false, "timeout", 60_000);
+            m.NoteHeartbeat(false, "disconnect", 60_000);
+            m.NoteHeartbeat(false, "reject", 120_000);
+            Assert.AreEqual(1, m.HeartbeatOk);
+            Assert.AreEqual(3, m.HeartbeatFail);
+            Assert.AreEqual(1, m.HeartbeatFailTimeout);
+            Assert.AreEqual(1, m.HeartbeatFailDisconnect);
+            Assert.AreEqual(1, m.HeartbeatFailReject);
+            StringAssert.Contains("\"fail\":1", m.HeartbeatMinutesJson());
+        }
+
         static GameResponse Delta(ulong mapInstanceId, AoiOp op, ulong playerId)
         {
             var rsp = new GameResponse

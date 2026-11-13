@@ -1067,7 +1067,8 @@ namespace GameMesh.LoadTest
                     }, RpcBudget(12000), ct).ConfigureAwait(false);
                     _heartbeatMisses = 0;
                     if (_clock != null && _clock.Metrics != null)
-                        Interlocked.Increment(ref _clock.Metrics.HeartbeatOk);
+                        _clock.Metrics.NoteHeartbeat(true, null,
+                            DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
                 }
                 catch (TaskCanceledException)
                 {
@@ -1078,9 +1079,16 @@ namespace GameMesh.LoadTest
                     if (_stopMoves || ct.IsCancellationRequested || gen != _loopGen)
                         return;
                     LoadTestLog.Timeout("heartbeat", "bot#" + _index + " " + GameMeshLog.Redact(ex.Message));
+                    var nowHb = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                     // A slow HeartbeatRsp is not a dead session. Only a dropped TCP reconnects immediately.
                     if (IsLinkDown() || IsTransportDead(ex))
                     {
+                        if (_clock != null && _clock.Metrics != null)
+                        {
+                            _clock.Metrics.NoteHeartbeat(false, "disconnect", nowHb);
+                            Interlocked.Increment(ref _clock.Metrics.HeartbeatReconnects);
+                        }
+
                         _heartbeatMisses = 0;
                         Status = "链路断开，重连";
                         await TryResumeAsync(ct).ConfigureAwait(false);
@@ -1088,8 +1096,15 @@ namespace GameMesh.LoadTest
                     }
 
                     _heartbeatMisses++;
+                    var reason = "other";
+                    var mesh = ex as GameMeshException;
+                    if (mesh != null && mesh.ErrorCode == GameMeshErrorCode.ClientTimeout)
+                        reason = "timeout";
+                    else if (mesh != null && !string.IsNullOrEmpty(mesh.ErrorCode) &&
+                             mesh.ErrorCode.StartsWith("ERR_", StringComparison.Ordinal))
+                        reason = "reject";
                     if (_clock != null && _clock.Metrics != null)
-                        Interlocked.Increment(ref _clock.Metrics.HeartbeatFail);
+                        _clock.Metrics.NoteHeartbeat(false, reason, nowHb);
                     // A late HeartbeatRsp is not permission to stop Move. Keep the move loop
                     // running; only back off this heartbeat task briefly while TCP is open.
                     Status = "心跳慢 :" + GatewayPort + " x" + _heartbeatMisses;

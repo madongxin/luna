@@ -30,8 +30,17 @@
 
 **Q1 修复（只改统计）**：缺口/不可靠帧仍 `ApplyDelta` 计数，不推进可靠游标；裸 `AoiDelta` 走 `ObserveBareAoiDelta`。导出增加 enter/leave/move/visible 分位数；`move_sent=0` 的空包拒绝保存。
 
+## 后续任务状态
+
+| 任务 | 提交 | 默认 |
+|---|---|---|
+| Q2 `sparse_duty_pct` | 已合入 | 100（连续） |
+| Q3 `sparse_arrive_wait` + 稀疏退避 | 已合入 | arrive 门控关；`aoi_bot_backoff` 关 |
+| Q4 心跳分原因 | 见 `client_bot_heartbeat_audit.md` | 只统计 |
+
 ## 未验证
 
 - 真机再跑一轮后 `send_depart/arrive/resend` 精确占比
 - 缺口统计修复后 `aoi_visible_*` 是否非零（需新压测）
-- 真实玩家占空比与压测 60% 目标的差距（Q2）
+- 真实玩家占空比与压测 60% 目标的差距
+- 机器人放慢后是否仍覆盖足够多观察者
