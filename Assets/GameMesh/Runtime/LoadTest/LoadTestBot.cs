@@ -72,6 +72,7 @@ namespace GameMesh.LoadTest
         BotMovementClock _clock;
         readonly BotPushTracker _push = new BotPushTracker();
         string _loopKind = "无数据";
+        SparsePatrolController _sparse;
 
         public BotMovementSettings Movement { get; set; } = new BotMovementSettings();
         public BotMovementProfile Profile { get; private set; }
@@ -1232,82 +1233,87 @@ namespace GameMesh.LoadTest
 
         async Task SparseMoveLoopAsync(BotMovementSettings settings, CancellationToken ct, Vector3 entered)
         {
-            var sparse = new SparsePatrolController(_index, settings);
-            sparse.KeepInside(entered, settings.AoiRadius);
+            _sparse = new SparsePatrolController(_index, settings);
+            _sparse.KeepInside(entered, settings.AoiRadius);
+            var sparse = _sparse;
             var metrics = _clock.Metrics;
             var now0 = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
             metrics.SampleStartedMs = now0;
             sparse.Arm(now0);
             var gen = _loopGen;
-            while (!_stopMoves && !ct.IsCancellationRequested && gen == _loopGen)
+            try
             {
-                var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-                var queueBlocked = _conn.MoveBackpressured;
-                var sessionReady = InWorld && Volatile.Read(ref _resumeBusy) == 0 &&
-                                   _conn.State == ConnectionState.InWorld && _mapInstanceId != 0;
-                var holdReady = nowMs >= Interlocked.Read(ref _moveHoldUntilMs);
-                metrics.SampleEndedMs = nowMs;
-                if (!sessionReady || !holdReady || queueBlocked || AwaitingMoveAuthority)
+                while (!_stopMoves && !ct.IsCancellationRequested && gen == _loopGen)
                 {
-                    // Sparse waits are long by design; do not treat every 50ms poll as a skip tick.
-                    try { await Task.Delay(50, ct).ConfigureAwait(false); }
-                    catch (TaskCanceledException) { return; }
-                    continue;
-                }
+                    var nowMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    var queueBlocked = _conn.MoveBackpressured;
+                    var sessionReady = InWorld && Volatile.Read(ref _resumeBusy) == 0 &&
+                                       _conn.State == ConnectionState.InWorld && _mapInstanceId != 0;
+                    var holdReady = nowMs >= Interlocked.Read(ref _moveHoldUntilMs);
+                    metrics.SampleEndedMs = nowMs;
+                    if (!sessionReady || !holdReady || queueBlocked || AwaitingMoveAuthority)
+                    {
+                        // Sparse waits are long by design; do not treat every 50ms poll as a skip tick.
+                        try { await Task.Delay(50, ct).ConfigureAwait(false); }
+                        catch (TaskCanceledException) { return; }
+                        continue;
+                    }
 
-                // 2s MoveRsp miss: only resend the same target on this TCP. Do not NoteSent again.
-                var tookResend = TryTakeResendTarget(nowMs, out var resend, out var abandon);
-                if (abandon)
-                    sparse.AbandonTarget();
-                else if (tookResend)
-                {
-                    metrics.NoteSendReason("resend");
-                    FireMove(resend, nowMs, sparse.NoteRejected, ct);
-                    try { await Task.Delay(50, ct).ConfigureAwait(false); }
-                    catch (TaskCanceledException) { return; }
-                    continue;
-                }
-                else if (_resend.Armed)
-                {
-                    var backoffWait = _resend.WaitMsUntilResend(nowMs);
+                    // 2s MoveRsp miss: aoi_bot_backoff covers this sparse path via BotResendPolicy.
+                    var tookResend = TryTakeResendTarget(nowMs, out var resend, out var abandon);
+                    if (abandon)
+                        sparse.AbandonTarget();
+                    else if (tookResend)
+                    {
+                        metrics.NoteSendReason("resend");
+                        FireMove(resend, nowMs, sparse.NoteRejected, ct);
+                        try { await Task.Delay(50, ct).ConfigureAwait(false); }
+                        catch (TaskCanceledException) { return; }
+                        continue;
+                    }
+                    else if (_resend.Armed)
+                    {
+                        var backoffWait = _resend.WaitMsUntilResend(nowMs);
+                        try
+                        {
+                            await Task.Delay(Math.Max(20, Math.Min(backoffWait > 0 ? backoffWait : 50, 1000)), ct)
+                                .ConfigureAwait(false);
+                        }
+                        catch (TaskCanceledException) { return; }
+                        continue;
+                    }
+
+                    var plan = sparse.Poll(_pos, nowMs, metrics, out var waitMs);
+                    if (!plan.Send)
+                    {
+                        if (plan.Reason == "path_rejected")
+                            metrics.PathRejected++;
+                        try { await Task.Delay(waitMs > 0 ? waitMs : 50, ct).ConfigureAwait(false); }
+                        catch (TaskCanceledException) { return; }
+                        continue;
+                    }
+
+                    _yaw = plan.Yaw;
                     try
                     {
-                        await Task.Delay(Math.Max(20, Math.Min(backoffWait > 0 ? backoffWait : 50, 1000)), ct)
-                            .ConfigureAwait(false);
+                        var requestTask = StartMoveRequest(plan.Position, nowMs, ct, out var requestSeq);
+                        _lastClientTimeMs = nowMs;
+                        sparse.NoteSent(plan.Yaw, nowMs, plan.Reason, metrics);
+                        _ = FinishMoveStepAsync(requestTask, requestSeq, plan.Position,
+                            sparse.NoteRejected, _clock, ct);
                     }
-                    catch (TaskCanceledException) { return; }
-                    continue;
-                }
+                    catch (Exception ex)
+                    {
+                        NoteMoveSendFailed(ex, sparse.NoteRejected, _clock);
+                    }
 
-                var plan = sparse.Poll(_pos, nowMs, metrics, out var waitMs);
-                if (!plan.Send)
-                {
-                    if (plan.Reason == "path_rejected")
-                        metrics.PathRejected++;
                     try { await Task.Delay(waitMs > 0 ? waitMs : 50, ct).ConfigureAwait(false); }
                     catch (TaskCanceledException) { return; }
-                    continue;
                 }
-
-                // Absolute client_time_ms on the wire. The first request uses the server's
-                // SegmentMinSec allowance; later requests use the full gap. Never chop Δt to 1s.
-                // Full segment goal is sent; server may shorten; arrive finishes. No velocity fields.
-                _yaw = plan.Yaw;
-                try
-                {
-                    var requestTask = StartMoveRequest(plan.Position, nowMs, ct, out var requestSeq);
-                    _lastClientTimeMs = nowMs;
-                    sparse.NoteSent(plan.Yaw, nowMs, plan.Reason, metrics);
-                    _ = FinishMoveStepAsync(requestTask, requestSeq, plan.Position,
-                        sparse.NoteRejected, _clock, ct);
-                }
-                catch (Exception ex)
-                {
-                    NoteMoveSendFailed(ex, sparse.NoteRejected, _clock);
-                }
-
-                try { await Task.Delay(waitMs > 0 ? waitMs : 50, ct).ConfigureAwait(false); }
-                catch (TaskCanceledException) { return; }
+            }
+            finally
+            {
+                _sparse = null;
             }
         }
 
@@ -1562,6 +1568,7 @@ namespace GameMesh.LoadTest
             Interlocked.Exchange(ref _uncertainRequestSeq, 0);
             _resend.Clear();
             BotCongestionGate.NoteSuccess(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            _sparse?.NoteAuthorityOk();
             Volatile.Write(ref _poseUncertain, 0);
             _unknownStreak = 0;
         }

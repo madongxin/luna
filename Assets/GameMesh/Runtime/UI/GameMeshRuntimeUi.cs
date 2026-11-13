@@ -505,6 +505,10 @@ namespace GameMesh.UI
             if (int.TryParse(_loadSparseDuty, out var sparseDuty) && sparseDuty >= 1 && sparseDuty <= 100)
                 runner.Movement.SparseDutyPct = sparseDuty;
             GUILayout.BeginHorizontal();
+            GUILayout.Label("arrive门控", _label, GUILayout.Width(150));
+            runner.Movement.SparseArriveWait = GUILayout.Toggle(runner.Movement.SparseArriveWait, "sparse_arrive_wait（默认关）", GUILayout.Height(40));
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
             GUILayout.Label("拥塞退避", _label, GUILayout.Width(150));
             runner.Movement.AoiBotBackoff = GUILayout.Toggle(runner.Movement.AoiBotBackoff, "aoi_bot_backoff（默认关）", GUILayout.Height(40));
             GUILayout.EndHorizontal();

@@ -51,6 +51,8 @@ namespace GameMesh.LoadTest
         public int SparseDutyPct = 100;
         public float SparseDwellMinSec = 2f;
         public float SparseDwellMaxSec = 20f;
+        /// <summary>sparse_arrive_wait. Default off = existing arrive-on-clock behavior.</summary>
+        public bool SparseArriveWait;
         // 0 = legacy BotHomeLayout.Pick. Otherwise pack bots into clusters of this size.
         public int ClusterSize = 60;
         public float ClusterSpacingMeters = 96f;
@@ -96,6 +98,7 @@ namespace GameMesh.LoadTest
                 SparseDutyPct = SparseDutyPct,
                 SparseDwellMinSec = SparseDwellMinSec,
                 SparseDwellMaxSec = SparseDwellMaxSec,
+                SparseArriveWait = SparseArriveWait,
                 ClusterSize = ClusterSize,
                 ClusterSpacingMeters = ClusterSpacingMeters,
                 ClusterRadiusMeters = ClusterRadiusMeters,

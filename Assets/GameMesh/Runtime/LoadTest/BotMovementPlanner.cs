@@ -1,3 +1,4 @@
+using System;
 using UnityEngine;
 
 namespace GameMesh.LoadTest
@@ -426,7 +427,12 @@ namespace GameMesh.LoadTest
         float _lastSegmentMeters;
         long _dwellUntilMs;
         long _startReadyMs;
+        bool _departAcked;
+        bool _arriveSentThisSegment;
+        long _departSentAtMs;
         public long StartReadyMs => _startReadyMs;
+        public bool DepartAcked => _departAcked;
+        public bool ArriveSentThisSegment => _arriveSentThisSegment;
 
         public float LastSegmentSec => _lastSegmentSec;
         public float LastSegmentMeters => _lastSegmentMeters;
@@ -526,6 +532,10 @@ namespace GameMesh.LoadTest
             {
                 if (Flat(confirmed, _goal) <= ArriveEpsilon)
                     CompleteSegment(nowMs, metrics);
+                else if (_settings.SparseArriveWait && _arriveSentThisSegment)
+                    CompleteSegment(nowMs, metrics);
+                else if (_settings.SparseArriveWait && !MaySendArrive(nowMs, metrics, out waitMs))
+                    return MovePlan.None("arrive_wait", 0);
                 else
                     return BuildSend(confirmed, "arrive", metrics, out waitMs);
             }
@@ -560,13 +570,42 @@ namespace GameMesh.LoadTest
             {
                 _phase = Phase.Traveling;
                 _segmentEndMs = nowMs + (long)(_segmentSec * 1000f);
+                _departSentAtMs = nowMs;
+                _departAcked = false;
+                _arriveSentThisSegment = false;
                 if (metrics != null)
                     metrics.NoteSegment(_lastSegmentSec, _lastSegmentMeters);
             }
             else if (reason == "arrive")
             {
+                _arriveSentThisSegment = true;
                 CompleteSegment(nowMs, metrics);
             }
+        }
+
+        public void NoteAuthorityOk()
+        {
+            _departAcked = true;
+        }
+
+        public static int ArriveWaitMs(int rttP95Ms)
+        {
+            var triple = rttP95Ms > 0 ? rttP95Ms * 3 : 0;
+            return Math.Max(3000, triple);
+        }
+
+        bool MaySendArrive(long nowMs, BotMovementMetrics metrics, out int waitMs)
+        {
+            waitMs = 50;
+            if (_departAcked)
+                return true;
+            var p95 = metrics != null ? metrics.LatencyPercentile(95) : 0;
+            var need = ArriveWaitMs(p95);
+            var elapsed = nowMs - _departSentAtMs;
+            if (elapsed >= need)
+                return true;
+            waitMs = ClampWait(need - elapsed);
+            return false;
         }
 
         void CompleteSegment(long nowMs, BotMovementMetrics metrics)

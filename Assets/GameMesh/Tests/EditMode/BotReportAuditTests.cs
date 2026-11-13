@@ -317,6 +317,83 @@ namespace GameMesh.Tests.EditMode
             Assert.IsTrue(on.TryTakeResend(100 + 2000, 0, 0, out _, out _));
         }
 
+        [Test]
+        public void Q3_ArriveWait_AndBackoff_CutArrivePlusResendBelowOneThirdOfBaseline()
+        {
+            var baseline = CountArriveAndResend(arriveWait: false, backoff: false);
+            var gated = CountArriveAndResend(arriveWait: true, backoff: true);
+            Assert.Greater(baseline, 0);
+            Assert.LessOrEqual(gated, baseline / 3,
+                "Q3: arrive_wait+backoff must cut arrive+resend to ≤1/3 of Q1 baseline");
+            Assert.AreEqual(3000, SparsePatrolController.ArriveWaitMs(0));
+            Assert.AreEqual(4500, SparsePatrolController.ArriveWaitMs(1500));
+        }
+
+        [Test]
+        public void Q3_AbandonTarget_PicksNewGoal()
+        {
+            var settings = SparseSettings();
+            settings.AoiBotBackoff = true;
+            var sparse = new SparsePatrolController(8, settings);
+            sparse.KeepInside(new Vector3(0, 0, 0), 32f);
+            sparse.Arm(0);
+            var metrics = new BotMovementMetrics();
+            var first = sparse.Poll(Vector3.zero, 0, metrics, out _);
+            Assert.IsTrue(first.Send);
+            sparse.NoteSent(first.Yaw, 0, "depart", metrics);
+            sparse.AbandonTarget();
+            var next = sparse.Poll(Vector3.zero, 100, metrics, out _);
+            Assert.IsTrue(next.Send);
+            Assert.AreEqual("depart", next.Reason);
+            Assert.AreNotEqual(first.Position, next.Position);
+        }
+
+        static int CountArriveAndResend(bool arriveWait, bool backoff)
+        {
+            var settings = SparseSettings();
+            settings.SparseArriveWait = arriveWait;
+            settings.AoiBotBackoff = backoff;
+            settings.SparseDutyPct = 100;
+            var sparse = new SparsePatrolController(3, settings);
+            sparse.KeepInside(new Vector3(100f, -18f, 200f), 32f);
+            sparse.Arm(0);
+            var metrics = new BotMovementMetrics();
+            var policy = new BotResendPolicy
+            {
+                BackoffEnabled = backoff,
+                MaxSameTargetResends = 3,
+                BackoffCapSec = 30
+            };
+            var home = new Vector3(100f, -18f, 200f);
+            long now = 0;
+            const long end = 60000;
+            while (now < end)
+            {
+                if (policy.Armed)
+                {
+                    if (policy.TryTakeResend(now, home.x, home.z, out _, out var abandon))
+                        metrics.NoteSendReason("resend");
+                    else if (abandon)
+                        sparse.AbandonTarget();
+                    now += 50;
+                    continue;
+                }
+
+                var plan = sparse.Poll(home, now, metrics, out var wait);
+                if (plan.Send)
+                {
+                    sparse.NoteSent(plan.Yaw, now, plan.Reason, metrics);
+                    // Simulate 3s delayed authority: never ack, arm resend after 2s budget.
+                    if (plan.Reason == "depart")
+                        policy.Arm(plan.Position, now + 2000);
+                }
+
+                now += wait > 0 ? wait : 50;
+            }
+
+            return metrics.SendArrive + metrics.SendResend;
+        }
+
         static GameResponse Delta(ulong mapInstanceId, AoiOp op, ulong playerId)
         {
             var rsp = new GameResponse

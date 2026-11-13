@@ -27,6 +27,7 @@
   "sparse_duty_pct": 100,
   "sparse_dwell_min_sec": 2,
   "sparse_dwell_max_sec": 20,
+  "sparse_arrive_wait": false,
   "aoi_bot_backoff": false,
   "aoi_bot_backoff_max_same_target_resends": 3,
   "aoi_bot_backoff_cap_sec": 30,
