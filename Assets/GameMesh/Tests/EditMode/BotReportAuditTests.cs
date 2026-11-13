@@ -194,6 +194,117 @@ namespace GameMesh.Tests.EditMode
         }
 
         [Test]
+        public void Q2_SparseDuty60_ActualDutyWithin55to65_OverTenMinutes()
+        {
+            var settings = SparseSettings();
+            settings.SparseDutyPct = 60;
+            settings.SparseDwellMinSec = 2f;
+            settings.SparseDwellMaxSec = 20f;
+            settings.SyncWave = false;
+            var sparse = new SparsePatrolController(11, settings);
+            sparse.KeepInside(new Vector3(160f, -18f, 658f), 32f);
+            sparse.Arm(0);
+            var metrics = new BotMovementMetrics { SampleStartedMs = 0 };
+            var confirmed = new Vector3(160f, -18f, 658f);
+            const long endMs = 10 * 60 * 1000L;
+            long now = 0;
+            while (now < endMs)
+            {
+                var plan = sparse.Poll(confirmed, now, metrics, out var wait);
+                if (plan.Send)
+                {
+                    sparse.NoteSent(plan.Yaw, now, plan.Reason, metrics);
+                    if (plan.Reason == "depart" || plan.Reason == "arrive")
+                        confirmed = plan.Position;
+                }
+
+                now += wait > 0 ? wait : 50;
+            }
+
+            metrics.SampleEndedMs = now;
+            Assert.Greater(metrics.DwellingMs, 0);
+            Assert.GreaterOrEqual(metrics.DutyRatio, 0.55, metrics.DutyRatio.ToString("0.###"));
+            Assert.LessOrEqual(metrics.DutyRatio, 0.65, metrics.DutyRatio.ToString("0.###"));
+        }
+
+        [Test]
+        public void Q2_StartPhase_IsSpreadWhenDutyBelow100()
+        {
+            var settings = SparseSettings();
+            settings.SparseDutyPct = 60;
+            settings.SyncWave = false;
+            settings.SegmentMaxSec = 20f;
+            var starts = new List<long>();
+            for (var i = 0; i < 200; i++)
+            {
+                var sparse = new SparsePatrolController(i, settings);
+                sparse.Arm(0);
+                starts.Add(sparse.StartReadyMs);
+            }
+
+            starts.Sort();
+            Assert.Greater(starts[starts.Count - 1], 0);
+            // No single second should contain more than ~15% of bots.
+            var worstBucket = 0;
+            for (var i = 0; i < starts.Count; )
+            {
+                var sec = starts[i] / 1000L;
+                var j = i;
+                while (j < starts.Count && starts[j] / 1000L == sec)
+                    j++;
+                var n = j - i;
+                if (n > worstBucket)
+                    worstBucket = n;
+                i = j;
+            }
+
+            Assert.Less(worstBucket, starts.Count * 0.15 + 1);
+        }
+
+        [Test]
+        public void Q2_Duty100_DepartSequenceMatchesContinuousSparse()
+        {
+            // Default SparseDutyPct=100 must keep the previous continuous depart stream.
+            Vector3[] Run(int duty)
+            {
+                var settings = SparseSettings();
+                settings.SparseDutyPct = duty;
+                settings.SyncWave = false;
+                var sparse = new SparsePatrolController(5, settings);
+                sparse.KeepInside(new Vector3(100f, -18f, 200f), 32f);
+                sparse.Arm(0);
+                var metrics = new BotMovementMetrics();
+                var confirmed = new Vector3(100f, -18f, 200f);
+                long now = 0;
+                var goals = new List<Vector3>();
+                for (var n = 0; n < 8; )
+                {
+                    var plan = sparse.Poll(confirmed, now, metrics, out var wait);
+                    if (plan.Send && plan.Reason == "depart")
+                    {
+                        goals.Add(plan.Position);
+                        sparse.NoteSent(plan.Yaw, now, plan.Reason, metrics);
+                        confirmed = plan.Position;
+                        now += (long)(sparse.LastSegmentSec * 1000f) + 1;
+                        n++;
+                    }
+                    else
+                        now += wait > 0 ? wait : 50;
+                }
+
+                return goals.ToArray();
+            }
+
+            var a = Run(100);
+            var b = Run(100);
+            Assert.AreEqual(a.Length, b.Length);
+            for (var i = 0; i < a.Length; i++)
+                Assert.AreEqual(a[i], b[i]);
+            Assert.AreEqual(0f, SparsePatrolController.ComputeDwellSec(4f, 100, 2f, 20f));
+            Assert.AreEqual(8f / 3f, SparsePatrolController.ComputeDwellSec(4f, 60, 2f, 20f), 0.01f);
+        }
+
+        [Test]
         public void Q1_I4_SparseBackoffPolicy_ArmsWhenEnabled()
         {
             // aoi_bot_backoff must be usable on the same policy the sparse loop calls.

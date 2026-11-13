@@ -45,8 +45,12 @@ namespace GameMesh.LoadTest
         public bool SparsePatrol = true;
         public float SegmentMinSec = 10f;
         public float SegmentMaxSec = 30f;
-        // Sparse patrol is continuous: a completed segment immediately starts the next one.
+        // Legacy weight field for dense profiles. Sparse uses SparseDutyPct instead.
         public int MoveDutyPct = 100;
+        /// <summary>sparse_duty_pct. 100 = continuous (existing). &lt;100 adds dwell after each leg.</summary>
+        public int SparseDutyPct = 100;
+        public float SparseDwellMinSec = 2f;
+        public float SparseDwellMaxSec = 20f;
         // 0 = legacy BotHomeLayout.Pick. Otherwise pack bots into clusters of this size.
         public int ClusterSize = 60;
         public float ClusterSpacingMeters = 96f;
@@ -89,6 +93,9 @@ namespace GameMesh.LoadTest
                 SegmentMinSec = SegmentMinSec,
                 SegmentMaxSec = SegmentMaxSec,
                 MoveDutyPct = MoveDutyPct,
+                SparseDutyPct = SparseDutyPct,
+                SparseDwellMinSec = SparseDwellMinSec,
+                SparseDwellMaxSec = SparseDwellMaxSec,
                 ClusterSize = ClusterSize,
                 ClusterSpacingMeters = ClusterSpacingMeters,
                 ClusterRadiusMeters = ClusterRadiusMeters,
@@ -141,6 +148,10 @@ namespace GameMesh.LoadTest
                 return "segment duration must be 1..120 seconds with min <= max";
             if (MoveDutyPct < 1 || MoveDutyPct > 100)
                 return "move_duty_pct must be 1..100";
+            if (SparseDutyPct < 1 || SparseDutyPct > 100)
+                return "sparse_duty_pct must be 1..100";
+            if (SparseDwellMinSec < 0f || SparseDwellMaxSec < SparseDwellMinSec || SparseDwellMaxSec > 120f)
+                return "sparse dwell must be 0..120 seconds with min <= max";
             if (ClusterSize != 0 && (ClusterSize < 40 || ClusterSize > 80))
                 return "cluster_size must be 0 or 40..80";
             if (ClusterSpacingMeters < 1f || ClusterRadiusMeters < 1f)

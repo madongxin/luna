@@ -34,6 +34,7 @@ namespace GameMesh.UI
         string _loadSeed = "20261021";
         string _loadProfile = "";
         string _loadWeights = "10,35,20,20,15";
+        string _loadSparseDuty = "100";
         string _loadMoveError = "";
         Vector2 _friendScroll;
         Vector2 _panelScroll;
@@ -500,6 +501,9 @@ namespace GameMesh.UI
             GUILayout.Label("稀疏巡逻", _label, GUILayout.Width(150));
             runner.Movement.SparsePatrol = GUILayout.Toggle(runner.Movement.SparsePatrol, "SparsePatrol（默认开）", GUILayout.Height(40));
             GUILayout.EndHorizontal();
+            _loadSparseDuty = Field("sparse_duty_pct 1-100", _loadSparseDuty);
+            if (int.TryParse(_loadSparseDuty, out var sparseDuty) && sparseDuty >= 1 && sparseDuty <= 100)
+                runner.Movement.SparseDutyPct = sparseDuty;
             GUILayout.BeginHorizontal();
             GUILayout.Label("拥塞退避", _label, GUILayout.Width(150));
             runner.Movement.AoiBotBackoff = GUILayout.Toggle(runner.Movement.AoiBotBackoff, "aoi_bot_backoff（默认关）", GUILayout.Height(40));

@@ -53,10 +53,13 @@ namespace GameMesh.LoadTest
         public float SegmentMinSec;
         public float SegmentMaxSec;
         public int MoveDutyPct;
+        public int SparseDutyPct = 100;
         public int BotCount;
         public bool AoiBotBackoff;
         public float AoiRadius;
         public float SafeRadius;
+        public float SparseDwellMinSec;
+        public float SparseDwellMaxSec;
 
         // Send reason counters (Q1).
         public int SendDepart;
@@ -147,6 +150,9 @@ namespace GameMesh.LoadTest
             SegmentMinSec = settings.SegmentMinSec;
             SegmentMaxSec = settings.SegmentMaxSec;
             MoveDutyPct = settings.MoveDutyPct;
+            SparseDutyPct = settings.SparseDutyPct;
+            SparseDwellMinSec = settings.SparseDwellMinSec;
+            SparseDwellMaxSec = settings.SparseDwellMaxSec;
             BotCount = settings.BotCount;
             AoiBotBackoff = settings.AoiBotBackoff;
             AoiRadius = settings.AoiRadius;
@@ -430,6 +436,9 @@ namespace GameMesh.LoadTest
                 SegmentMinSec = other.SegmentMinSec;
                 SegmentMaxSec = other.SegmentMaxSec;
                 MoveDutyPct = other.MoveDutyPct;
+                SparseDutyPct = other.SparseDutyPct;
+                SparseDwellMinSec = other.SparseDwellMinSec;
+                SparseDwellMaxSec = other.SparseDwellMaxSec;
                 BotCount = other.BotCount;
                 AoiBotBackoff = other.AoiBotBackoff;
                 AoiRadius = other.AoiRadius;
@@ -478,6 +487,9 @@ namespace GameMesh.LoadTest
             sb.Append("  \"segment_min_sec\": ").Append(SegmentMinSec.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"segment_max_sec\": ").Append(SegmentMaxSec.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"move_duty_pct\": ").Append(MoveDutyPct).Append(",\n");
+            sb.Append("  \"sparse_duty_pct\": ").Append(SparseDutyPct).Append(",\n");
+            sb.Append("  \"sparse_dwell_min_sec\": ").Append(SparseDwellMinSec.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"sparse_dwell_max_sec\": ").Append(SparseDwellMaxSec.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"aoi_radius_m\": ").Append(AoiRadius.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"safe_radius_m\": ").Append(SafeRadius.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"bot_count\": ").Append(BotCount).Append(",\n");

@@ -400,11 +400,14 @@ namespace GameMesh.LoadTest
         {
             NeedDepart = 0,
             Traveling = 1,
-            NeedArrive = 2
+            NeedArrive = 2,
+            Dwelling = 3,
+            StartWait = 4
         }
 
         readonly BotMovementSettings _settings;
         readonly System.Random _rng;
+        readonly int _botIndex;
         Phase _phase = Phase.NeedDepart;
         long _segmentEndMs;
         float _segmentSec;
@@ -421,12 +424,16 @@ namespace GameMesh.LoadTest
         bool _keepInside;
         float _lastSegmentSec;
         float _lastSegmentMeters;
+        long _dwellUntilMs;
+        long _startReadyMs;
+        public long StartReadyMs => _startReadyMs;
 
         public float LastSegmentSec => _lastSegmentSec;
         public float LastSegmentMeters => _lastSegmentMeters;
 
         public SparsePatrolController(int botIndex, BotMovementSettings settings)
         {
+            _botIndex = botIndex;
             _settings = settings ?? new BotMovementSettings();
             _rng = new System.Random(
                 BotMovementSettings.StablePercent(_settings.Seed, botIndex) + botIndex * 31);
@@ -434,9 +441,23 @@ namespace GameMesh.LoadTest
 
         public void Arm(long nowMs)
         {
-            _phase = Phase.NeedDepart;
             _hasGoal = false;
             _lastAccountMs = nowMs;
+            _dwellUntilMs = 0;
+            // sparse_duty_pct&lt;100 and SyncWave off: stagger first depart across one segment length.
+            // Duty 100 keeps the previous immediate start (default behavior).
+            if (!_settings.SyncWave && _settings.SparseDutyPct < 100)
+            {
+                var maxWaitMs = (long)(Mathf.Max(1f, _settings.SegmentMaxSec) * 1000f);
+                var wait = (long)(_rng.NextDouble() * maxWaitMs);
+                _startReadyMs = nowMs + wait;
+                _phase = wait > 0 ? Phase.StartWait : Phase.NeedDepart;
+            }
+            else
+            {
+                _startReadyMs = nowMs;
+                _phase = Phase.NeedDepart;
+            }
         }
 
         /// <summary>
@@ -464,6 +485,28 @@ namespace GameMesh.LoadTest
         {
             AccountTime(nowMs, metrics);
             waitMs = 50;
+            if (_phase == Phase.StartWait)
+            {
+                if (nowMs < _startReadyMs)
+                {
+                    waitMs = ClampWait(_startReadyMs - nowMs);
+                    return MovePlan.None("start_wait", 0);
+                }
+
+                _phase = Phase.NeedDepart;
+            }
+
+            if (_phase == Phase.Dwelling)
+            {
+                if (nowMs < _dwellUntilMs)
+                {
+                    waitMs = ClampWait(_dwellUntilMs - nowMs);
+                    return MovePlan.None("dwell", 0);
+                }
+
+                _phase = Phase.NeedDepart;
+            }
+
             if (_phase == Phase.Traveling)
             {
                 // The server can reach the goal before this segment's clock ends. Standing
@@ -487,8 +530,14 @@ namespace GameMesh.LoadTest
                     return BuildSend(confirmed, "arrive", metrics, out waitMs);
             }
 
-            // NeedDepart. Completion falls through here so the next segment is sent in
-            // the same poll instead of introducing a dwell tick.
+            if (_phase == Phase.Dwelling)
+            {
+                waitMs = ClampWait(_dwellUntilMs - nowMs);
+                return MovePlan.None("dwell", 0);
+            }
+
+            // NeedDepart. With SparseDutyPct=100, completion falls through to the next depart
+            // in the same poll (existing continuous behavior).
             if (_rejected || !_hasGoal)
             {
                 _rejected = false;
@@ -522,10 +571,47 @@ namespace GameMesh.LoadTest
 
         void CompleteSegment(long nowMs, BotMovementMetrics metrics)
         {
-            // Flush travel time before immediately making the next segment eligible.
+            // Flush travel time before dwell or the next depart.
             AccountTime(nowMs, metrics);
-            _phase = Phase.NeedDepart;
             _hasGoal = false;
+            var duty = _settings.SparseDutyPct;
+            if (duty < 100 && _lastSegmentSec > 0.01f)
+            {
+                var dwell = ComputeDwellSec(_lastSegmentSec, duty,
+                    _settings.SparseDwellMinSec, _settings.SparseDwellMaxSec);
+                if (_settings.AoiBotBackoff)
+                {
+                    var scale = BotCongestionGate.SegmentScale(nowMs);
+                    if (scale > 1f)
+                        dwell *= scale;
+                }
+
+                if (dwell > 0.01f)
+                {
+                    _dwellUntilMs = nowMs + (long)(dwell * 1000f);
+                    _phase = Phase.Dwelling;
+                    return;
+                }
+            }
+
+            _phase = Phase.NeedDepart;
+        }
+
+        /// <summary>
+        /// Choose dwell so moving/(moving+dwell) ≈ dutyPct/100, clamped to [min,max].
+        /// </summary>
+        public static float ComputeDwellSec(float movingSec, int dutyPct, float minSec, float maxSec)
+        {
+            if (dutyPct >= 100 || movingSec <= 0f)
+                return 0f;
+            if (dutyPct < 1)
+                dutyPct = 1;
+            var dwell = movingSec * (100 - dutyPct) / (float)dutyPct;
+            if (dwell < minSec)
+                dwell = minSec;
+            if (dwell > maxSec)
+                dwell = maxSec;
+            return dwell;
         }
 
         /// <summary>Drop the current goal so the next Poll picks a new waypoint.</summary>
@@ -650,6 +736,8 @@ namespace GameMesh.LoadTest
             _lastAccountMs = nowMs;
             if (_phase == Phase.Traveling || _phase == Phase.NeedArrive)
                 metrics.MovingMs += dt;
+            else if (_phase == Phase.Dwelling || _phase == Phase.StartWait)
+                metrics.DwellingMs += dt;
             metrics.SampleEndedMs = nowMs;
         }
 
