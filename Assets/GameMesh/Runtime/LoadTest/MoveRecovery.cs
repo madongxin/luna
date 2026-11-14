@@ -23,6 +23,16 @@ namespace GameMesh.LoadTest
         }
 
         /// <summary>
+        /// A late MoveRsp OK still carries this bot's server pose even when state_seq did not
+        /// advance (unchanged / duplicate_target). Adopting that pose unsticks sparse patrol;
+        /// refusing it leaves _pos short of the waypoint and arms a 2s same-target resend loop.
+        /// </summary>
+        public static bool ShouldAdoptLatePose(bool ok, bool hasPosition)
+        {
+            return ok && hasPosition;
+        }
+
+        /// <summary>
         /// An OK for this request, or any newer one, ends the "resend that exact target" latch.
         /// uncertainRequestSeq 0 means nothing is pinned.
         /// </summary>

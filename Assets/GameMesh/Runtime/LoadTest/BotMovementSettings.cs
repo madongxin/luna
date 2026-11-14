@@ -27,11 +27,12 @@ namespace GameMesh.LoadTest
         public int PatrolPct = 15;
         public float WalkSpeed = 5.5f;
         public float ServerMoveSpeed = 10f;
-        public float AoiRadius = 32f;
+        // Sparse KeepInside disk around EnterMap spawn. Was 32→64; enlarge again for longer legs.
+        public float AoiRadius = 96f;
         public float CellSize = 32f;
         // Spawn neighborhood that the live 1002 grid treats as walkable.
         // Do not wander out to the map AABB.
-        public float SafeRadius = 24f;
+        public float SafeRadius = 72f;
         public float OutboundMeters = 50f;
         public float HomeRadiusMeters = 100f;
         public int BotCount;

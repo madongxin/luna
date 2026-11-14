@@ -430,6 +430,8 @@ namespace GameMesh.LoadTest
         bool _departAcked;
         bool _arriveSentThisSegment;
         long _departSentAtMs;
+        long _lastDepartSentAtMs = -1;
+        bool _pendingRejectNote;
         public long StartReadyMs => _startReadyMs;
         public bool DepartAcked => _departAcked;
         public bool ArriveSentThisSegment => _arriveSentThisSegment;
@@ -482,6 +484,7 @@ namespace GameMesh.LoadTest
             _rejected = true;
             _hasGoal = false;
             _phase = Phase.NeedDepart;
+            _pendingRejectNote = true;
         }
 
         /// <summary>
@@ -490,6 +493,12 @@ namespace GameMesh.LoadTest
         public MovePlan Poll(Vector3 confirmed, long nowMs, BotMovementMetrics metrics, out int waitMs)
         {
             AccountTime(nowMs, metrics);
+            if (_pendingRejectNote && metrics != null)
+            {
+                metrics.NoteSegmentComplete(BotMovementMetrics.CompleteRejected);
+                _pendingRejectNote = false;
+            }
+
             waitMs = 50;
             if (_phase == Phase.StartWait)
             {
@@ -517,8 +526,10 @@ namespace GameMesh.LoadTest
             {
                 // The server can reach the goal before this segment's clock ends. Standing
                 // there until the clock expires looks like the bot stopped.
+                // J1: KeepInside legs ≥8m often get authority snapped to the goal on accept,
+                // so Flat(confirmed,_goal)≤ArriveEpsilon fires as soon as the MoveRsp lands.
                 if (Flat(confirmed, _goal) <= ArriveEpsilon)
-                    CompleteSegment(nowMs, metrics);
+                    CompleteSegment(nowMs, metrics, BotMovementMetrics.CompleteArrivedByConfirm);
                 else if (nowMs < _segmentEndMs)
                 {
                     waitMs = ClampWait(_segmentEndMs - nowMs);
@@ -531,9 +542,9 @@ namespace GameMesh.LoadTest
             if (_phase == Phase.NeedArrive)
             {
                 if (Flat(confirmed, _goal) <= ArriveEpsilon)
-                    CompleteSegment(nowMs, metrics);
+                    CompleteSegment(nowMs, metrics, BotMovementMetrics.CompleteArrivedByConfirm);
                 else if (_settings.SparseArriveWait && _arriveSentThisSegment)
-                    CompleteSegment(nowMs, metrics);
+                    CompleteSegment(nowMs, metrics, BotMovementMetrics.CompleteOther);
                 else if (_settings.SparseArriveWait && !MaySendArrive(nowMs, metrics, out waitMs))
                     return MovePlan.None("arrive_wait", 0);
                 else
@@ -574,12 +585,24 @@ namespace GameMesh.LoadTest
                 _departAcked = false;
                 _arriveSentThisSegment = false;
                 if (metrics != null)
+                {
+                    // Planned duration (PickSegment), not wall time between departs.
                     metrics.NoteSegment(_lastSegmentSec, _lastSegmentMeters);
+                    if (_lastDepartSentAtMs >= 0)
+                        metrics.NoteActualDepartIntervalMs(nowMs - _lastDepartSentAtMs);
+                    _lastDepartSentAtMs = nowMs;
+                }
+                else
+                    _lastDepartSentAtMs = nowMs;
             }
             else if (reason == "arrive")
             {
                 _arriveSentThisSegment = true;
-                CompleteSegment(nowMs, metrics);
+                // Arrive after the segment clock → timer path; otherwise other.
+                var why = nowMs >= _segmentEndMs
+                    ? BotMovementMetrics.CompleteTimerExpired
+                    : BotMovementMetrics.CompleteOther;
+                CompleteSegment(nowMs, metrics, why);
             }
         }
 
@@ -608,10 +631,12 @@ namespace GameMesh.LoadTest
             return false;
         }
 
-        void CompleteSegment(long nowMs, BotMovementMetrics metrics)
+        void CompleteSegment(long nowMs, BotMovementMetrics metrics, string reason)
         {
             // Flush travel time before dwell or the next depart.
             AccountTime(nowMs, metrics);
+            if (metrics != null)
+                metrics.NoteSegmentComplete(reason);
             _hasGoal = false;
             var duty = _settings.SparseDutyPct;
             if (duty < 100 && _lastSegmentSec > 0.01f)

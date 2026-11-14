@@ -62,6 +62,8 @@ namespace GameMesh.Network
         /// NetworkStream.WriteAsync completed. This is not a server acknowledgement.
         /// </summary>
         public event Action<ulong, string, long> FrameWriteCompleted;
+        /// <summary>Fired on the receive thread when an RPC is matched, before the Task completes.</summary>
+        public event Action<ulong, long> FrameResponseMatched;
         long _queueHeadMs;
 
         public int SendQueueDepth => Volatile.Read(ref _queued);
@@ -507,6 +509,15 @@ namespace GameMesh.Network
             }
 
             var call = slot.Tag as PendingCall;
+            try
+            {
+                FrameResponseMatched?.Invoke(response.Seq, MonoMs());
+            }
+            catch (Exception ex)
+            {
+                GameMeshLog.Warn("response match observer failed " + Redact(ex.Message));
+            }
+
             // The completion source runs continuations asynchronously, so the
             // receive thread can finish the RPC without waiting for Unity Update.
             call?.TrySetResult(response);

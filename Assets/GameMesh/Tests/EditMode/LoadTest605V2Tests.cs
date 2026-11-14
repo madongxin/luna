@@ -393,6 +393,29 @@ namespace GameMesh.Tests.EditMode
                 "an older reply must not clear a newer pinned target");
         }
 
+        [Test]
+        public void LateUnchangedMove_SameStateSeq_StillAdoptsPose_SoResendClears()
+        {
+            // Bot230 / duplicate_target: server already at waypoint, late MoveRsp OK keeps
+            // state_seq unchanged. Pose must still be adopted or the bot 2s-resends forever.
+            const ulong seq = 10;
+            Assert.IsFalse(MoveRecovery.TryAdoptLate(seq, seq, 1, 1, 9, 9),
+                "unchanged target does not bump state_seq");
+            Assert.IsTrue(MoveRecovery.ShouldAdoptLatePose(true, true));
+            Assert.IsFalse(MoveRecovery.ShouldAdoptLatePose(false, true));
+            Assert.IsFalse(MoveRecovery.ShouldAdoptLatePose(true, false));
+
+            const float atX = 132f;
+            const float atZ = 612f;
+            const float staleX = 123.6f;
+            const float staleZ = 631.2f;
+            Assert.IsTrue(MoveRecovery.ShouldResendSamePoint(staleX, staleZ, atX, atZ, true),
+                "stale client pose still looks short of the target");
+            // After adopting the late unchanged pose onto the waypoint:
+            Assert.IsFalse(MoveRecovery.ShouldResendSamePoint(atX, atZ, atX, atZ, true),
+                "once late pose is adopted, same-target resend must stop");
+        }
+
         static GameResponse Delta(ulong mapInstanceId, AoiOp op, ulong playerId)
         {
             var rsp = new GameResponse

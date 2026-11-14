@@ -108,6 +108,35 @@ namespace GameMesh.LoadTest
         public float AoiVisibleMax;
         public int AoiVisibleSamples;
 
+        // R1: segment completion reasons + actual depart→depart intervals.
+        public const string CompleteArrivedByConfirm = "arrived_by_confirm";
+        public const string CompleteTimerExpired = "timer_expired";
+        public const string CompleteRejected = "rejected";
+        public const string CompleteOther = "other";
+        public int SegmentCompleteArrivedByConfirm;
+        public int SegmentCompleteTimerExpired;
+        public int SegmentCompleteRejected;
+        public int SegmentCompleteOther;
+
+        // R3: client-side move path timings (ms). Missing → 0 / 无数据 in JSON note.
+        public int MoveStartToWriteSampleCount;
+        public int MoveRecvToCallbackSampleCount;
+        public float HostCpuPctAvg = -1f;
+        public float HostCpuPctPeak = -1f;
+        public int HostStallMsMax;
+        public int HostPoolQueueMsMax;
+        public int HostFrameMsMax;
+        public int HostFrameMsP50;
+        public int HostGcGen0;
+        public int HostGcGen1;
+        public int HostGcGen2;
+        public string BuildSha = "无数据";
+        public string StartedAt = "无数据";
+        public string EndedAt = "无数据";
+        public string HostCpuNote = "无数据";
+
+        double _movingTimeRatioOverride = -1;
+
         readonly int[] _latency = new int[256];
         int _latencyCount;
         int _latencyCursor;
@@ -117,6 +146,15 @@ namespace GameMesh.LoadTest
         readonly float[] _segMeters = new float[512];
         int _segMetersCount;
         int _segMetersCursor;
+        readonly float[] _departIntervalMs = new float[512];
+        int _departIntervalCount;
+        int _departIntervalCursor;
+        readonly int[] _startToWriteMs = new int[256];
+        int _startToWriteCount;
+        int _startToWriteCursor;
+        readonly int[] _recvToCallbackMs = new int[256];
+        int _recvToCallbackCount;
+        int _recvToCallbackCursor;
 
         public static bool IsBusy(string code)
         {
@@ -197,6 +235,61 @@ namespace GameMesh.LoadTest
                 _segMetersCount++;
         }
 
+        public void NoteActualDepartIntervalMs(long ms)
+        {
+            if (ms < 0)
+                ms = 0;
+            if (ms > int.MaxValue)
+                ms = int.MaxValue;
+            _departIntervalMs[_departIntervalCursor] = ms;
+            _departIntervalCursor = (_departIntervalCursor + 1) % _departIntervalMs.Length;
+            if (_departIntervalCount < _departIntervalMs.Length)
+                _departIntervalCount++;
+        }
+
+        public void NoteSegmentComplete(string reason)
+        {
+            if (reason == CompleteArrivedByConfirm)
+                SegmentCompleteArrivedByConfirm++;
+            else if (reason == CompleteTimerExpired)
+                SegmentCompleteTimerExpired++;
+            else if (reason == CompleteRejected)
+                SegmentCompleteRejected++;
+            else
+                SegmentCompleteOther++;
+        }
+
+        public void NoteMoveStartToWriteMs(int ms)
+        {
+            if (ms < 0)
+                ms = 0;
+            _startToWriteMs[_startToWriteCursor] = ms;
+            _startToWriteCursor = (_startToWriteCursor + 1) % _startToWriteMs.Length;
+            if (_startToWriteCount < _startToWriteMs.Length)
+                _startToWriteCount++;
+            MoveStartToWriteSampleCount = _startToWriteCount;
+        }
+
+        public void NoteMoveRecvToCallbackMs(int ms)
+        {
+            if (ms < 0)
+                ms = 0;
+            _recvToCallbackMs[_recvToCallbackCursor] = ms;
+            _recvToCallbackCursor = (_recvToCallbackCursor + 1) % _recvToCallbackMs.Length;
+            if (_recvToCallbackCount < _recvToCallbackMs.Length)
+                _recvToCallbackCount++;
+            MoveRecvToCallbackSampleCount = _recvToCallbackCount;
+        }
+
+        public void SetMovingTimeRatioExport(double ratio)
+        {
+            if (ratio < 0)
+                ratio = 0;
+            if (ratio > 1)
+                ratio = 1;
+            _movingTimeRatioOverride = ratio;
+        }
+
         public void NoteLatency(int ms)
         {
             if (ms < 0)
@@ -271,6 +364,7 @@ namespace GameMesh.LoadTest
         }
 
         public int SegmentSampleCount => _segSecCount;
+        public int ActualDepartIntervalSampleCount => _departIntervalCount;
 
         public float SegmentSecMax()
         {
@@ -280,6 +374,43 @@ namespace GameMesh.LoadTest
         public float SegmentMetersMax()
         {
             return FloatMax(_segMeters, _segMetersCount, _segMetersCursor);
+        }
+
+        public float ActualDepartIntervalPercentile(int pct)
+        {
+            return FloatPercentile(_departIntervalMs, _departIntervalCount, _departIntervalCursor, pct);
+        }
+
+        public float ActualDepartIntervalMax()
+        {
+            return FloatMax(_departIntervalMs, _departIntervalCount, _departIntervalCursor);
+        }
+
+        public int MoveStartToWritePercentile(int pct)
+        {
+            return IntPercentile(_startToWriteMs, _startToWriteCount, _startToWriteCursor, pct);
+        }
+
+        public int MoveRecvToCallbackPercentile(int pct)
+        {
+            return IntPercentile(_recvToCallbackMs, _recvToCallbackCount, _recvToCallbackCursor, pct);
+        }
+
+        static int IntPercentile(int[] ring, int count, int cursor, int pct)
+        {
+            if (count <= 0)
+                return 0;
+            var copy = new int[count];
+            var start = count == ring.Length ? cursor : 0;
+            for (var i = 0; i < count; i++)
+                copy[i] = ring[(start + i) % ring.Length];
+            Array.Sort(copy);
+            var index = (int)Math.Ceiling(pct / 100.0 * count) - 1;
+            if (index < 0)
+                index = 0;
+            if (index >= copy.Length)
+                index = copy.Length - 1;
+            return copy[index];
         }
 
         static float FloatPercentile(float[] ring, int count, int cursor, int pct)
@@ -381,15 +512,26 @@ namespace GameMesh.LoadTest
             }
         }
 
-        /// <summary>Moving time over wall sample; missing sample → 0.</summary>
+        /// <summary>
+        /// MovingMs ÷ wall sample duration, clamped to [0,1].
+        /// Aggregate export should SetMovingTimeRatioExport(mean of per-bot ratios) —
+        /// summing MovingMs across bots made this &gt;1 (F6 / 130208 → 454).
+        /// </summary>
         public double MovingTimeRatio
         {
             get
             {
+                if (_movingTimeRatioOverride >= 0)
+                    return _movingTimeRatioOverride;
                 var sec = ElapsedSec;
                 if (sec <= 0.001)
                     return 0;
-                return MovingMs / 1000.0 / sec;
+                var ratio = MovingMs / 1000.0 / sec;
+                if (ratio < 0)
+                    return 0;
+                if (ratio > 1)
+                    return 1;
+                return ratio;
             }
         }
 
@@ -499,6 +641,37 @@ namespace GameMesh.LoadTest
             AoiVisibleLast += other.AoiVisibleLast;
             if (other.SchedulerLagMs > SchedulerLagMs)
                 SchedulerLagMs = other.SchedulerLagMs;
+            SegmentCompleteArrivedByConfirm += other.SegmentCompleteArrivedByConfirm;
+            SegmentCompleteTimerExpired += other.SegmentCompleteTimerExpired;
+            SegmentCompleteRejected += other.SegmentCompleteRejected;
+            SegmentCompleteOther += other.SegmentCompleteOther;
+            var depStart = other._departIntervalCount == other._departIntervalMs.Length
+                ? other._departIntervalCursor
+                : 0;
+            for (var i = 0; i < other._departIntervalCount; i++)
+            {
+                var ix = (depStart + i) % other._departIntervalMs.Length;
+                NoteActualDepartIntervalMs((long)other._departIntervalMs[ix]);
+            }
+
+            var stwStart = other._startToWriteCount == other._startToWriteMs.Length
+                ? other._startToWriteCursor
+                : 0;
+            for (var i = 0; i < other._startToWriteCount; i++)
+            {
+                var ix = (stwStart + i) % other._startToWriteMs.Length;
+                NoteMoveStartToWriteMs(other._startToWriteMs[ix]);
+            }
+
+            var rtcStart = other._recvToCallbackCount == other._recvToCallbackMs.Length
+                ? other._recvToCallbackCursor
+                : 0;
+            for (var i = 0; i < other._recvToCallbackCount; i++)
+            {
+                var ix = (rtcStart + i) % other._recvToCallbackMs.Length;
+                NoteMoveRecvToCallbackMs(other._recvToCallbackMs[ix]);
+            }
+
             if (LoopKind == "无数据" || string.IsNullOrEmpty(LoopKind))
                 LoopKind = other.LoopKind;
             if (BotCount == 0)
@@ -579,10 +752,30 @@ namespace GameMesh.LoadTest
             sb.Append("  \"send_other\": ").Append(SendOther).Append(",\n");
             sb.Append("  \"move_resend\": ").Append(ResendCount).Append(",\n");
             sb.Append("  \"move_resend_abandon\": ").Append(ResendAbandonCount).Append(",\n");
+            sb.Append("  \"build_sha\": \"").Append(BuildSha ?? "无数据").Append("\",\n");
+            sb.Append("  \"started_at\": \"").Append(StartedAt ?? "无数据").Append("\",\n");
+            sb.Append("  \"ended_at\": \"").Append(EndedAt ?? "无数据").Append("\",\n");
+            sb.Append("  \"sample_started_ms\": ").Append(SampleStartedMs).Append(",\n");
+            sb.Append("  \"sample_ended_ms\": ").Append(SampleEndedMs).Append(",\n");
             sb.Append("  \"segment_samples\": ").Append(SegmentSampleCount).Append(",\n");
             sb.Append("  \"segment_sec_p50\": ").Append(SegmentSecPercentile(50).ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"segment_sec_p95\": ").Append(SegmentSecPercentile(95).ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"segment_sec_max\": ").Append(SegmentSecMax().ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"planned_segment_sec_p50\": ").Append(SegmentSecPercentile(50).ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"planned_segment_sec_p95\": ").Append(SegmentSecPercentile(95).ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"planned_segment_sec_max\": ").Append(SegmentSecMax().ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"actual_depart_interval_samples\": ").Append(ActualDepartIntervalSampleCount).Append(",\n");
+            sb.Append("  \"actual_depart_interval_ms_p50\": ").Append(
+                ActualDepartIntervalPercentile(50).ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"actual_depart_interval_ms_p95\": ").Append(
+                ActualDepartIntervalPercentile(95).ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"actual_depart_interval_ms_max\": ").Append(
+                ActualDepartIntervalMax().ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"segment_complete_arrived_by_confirm\": ").Append(SegmentCompleteArrivedByConfirm)
+                .Append(",\n");
+            sb.Append("  \"segment_complete_timer_expired\": ").Append(SegmentCompleteTimerExpired).Append(",\n");
+            sb.Append("  \"segment_complete_rejected\": ").Append(SegmentCompleteRejected).Append(",\n");
+            sb.Append("  \"segment_complete_other\": ").Append(SegmentCompleteOther).Append(",\n");
             sb.Append("  \"segment_m_p50\": ").Append(SegmentMetersPercentile(50).ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"segment_m_p95\": ").Append(SegmentMetersPercentile(95).ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"segment_m_max\": ").Append(SegmentMetersMax().ToString("0.###", inv)).Append(",\n");
@@ -639,6 +832,24 @@ namespace GameMesh.LoadTest
             sb.Append("  \"rpc_latency_p95\": ").Append(LatencyPercentile(95)).Append(",\n");
             sb.Append("  \"rpc_latency_p99\": ").Append(LatencyPercentile(99)).Append(",\n");
             sb.Append("  \"scheduler_lag_ms\": ").Append(SchedulerLagMs).Append(",\n");
+            sb.Append("  \"move_start_to_write_samples\": ").Append(MoveStartToWriteSampleCount).Append(",\n");
+            sb.Append("  \"move_start_to_write_ms_p50\": ").Append(MoveStartToWritePercentile(50)).Append(",\n");
+            sb.Append("  \"move_start_to_write_ms_p95\": ").Append(MoveStartToWritePercentile(95)).Append(",\n");
+            sb.Append("  \"move_recv_to_callback_samples\": ").Append(MoveRecvToCallbackSampleCount).Append(",\n");
+            sb.Append("  \"move_recv_to_callback_ms_p50\": ").Append(MoveRecvToCallbackPercentile(50)).Append(",\n");
+            sb.Append("  \"move_recv_to_callback_ms_p95\": ").Append(MoveRecvToCallbackPercentile(95)).Append(",\n");
+            sb.Append("  \"host_cpu_pct_avg\": ").Append(
+                HostCpuPctAvg < 0 ? "\"无数据\"" : HostCpuPctAvg.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"host_cpu_pct_peak\": ").Append(
+                HostCpuPctPeak < 0 ? "\"无数据\"" : HostCpuPctPeak.ToString("0.###", inv)).Append(",\n");
+            sb.Append("  \"host_cpu_note\": \"").Append(HostCpuNote ?? "无数据").Append("\",\n");
+            sb.Append("  \"host_stall_ms_max\": ").Append(HostStallMsMax).Append(",\n");
+            sb.Append("  \"host_pool_queue_ms_max\": ").Append(HostPoolQueueMsMax).Append(",\n");
+            sb.Append("  \"host_frame_ms_max\": ").Append(HostFrameMsMax).Append(",\n");
+            sb.Append("  \"host_frame_ms_p50\": ").Append(HostFrameMsP50).Append(",\n");
+            sb.Append("  \"host_gc_gen0\": ").Append(HostGcGen0).Append(",\n");
+            sb.Append("  \"host_gc_gen1\": ").Append(HostGcGen1).Append(",\n");
+            sb.Append("  \"host_gc_gen2\": ").Append(HostGcGen2).Append(",\n");
             sb.Append("  \"aoi_enter_events\": ").Append(AoiEnterEvents).Append(",\n");
             sb.Append("  \"aoi_leave_events\": ").Append(AoiLeaveEvents).Append(",\n");
             sb.Append("  \"aoi_move_events\": ").Append(AoiMoveEvents).Append(",\n");
@@ -656,7 +867,11 @@ namespace GameMesh.LoadTest
             sb.Append("  \"aoi_visible_p50\": ").Append(AoiVisibleP50.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"aoi_visible_p95\": ").Append(AoiVisibleP95.ToString("0.###", inv)).Append(",\n");
             sb.Append("  \"aoi_visible_max\": ").Append(AoiVisibleMax.ToString("0.###", inv)).Append(",\n");
-            sb.Append("  \"note\": \"missing fields are 0 or 无数据; live stages are not filled by this export\"\n");
+            sb.Append("  \"note\": \"missing fields are 0 or 无数据; planned_segment_sec=*segment_sec*; ")
+                .Append("actual_depart_interval is depart→depart wall ms; ")
+                .Append("rpc_latency is write_completed→MoveRsp; move_start_to_write is RequestAsync→write; ")
+                .Append("move_recv_to_callback is matched-on-receive-thread→await continuation; ")
+                .Append("exact GC pause ms unavailable — use host_stall_ms_max + gen counts\"\n");
             sb.Append("}\n");
             return sb.ToString();
         }
@@ -668,8 +883,16 @@ namespace GameMesh.LoadTest
                    "move_planned,move_sent,send_depart,send_arrive,send_resend,send_other,move_resend," +
                    "move_resend_abandon,move_ack_ok,move_rejected,move_timeout,unknown_after_write,heartbeat_ok," +
                    "actual_send_hz,actual_success_hz,duty,moving_time_ratio,moving_ms,dwelling_ms,p50,p95,p99," +
-                   "segment_samples,segment_sec_p50,segment_sec_p95,segment_sec_max,segment_m_p50,segment_m_p95,segment_m_max," +
+                   "segment_samples,segment_sec_p50,segment_sec_p95,segment_sec_max," +
+                   "planned_segment_sec_p50,planned_segment_sec_p95,planned_segment_sec_max," +
+                   "actual_depart_interval_samples,actual_depart_interval_ms_p50,actual_depart_interval_ms_p95," +
+                   "actual_depart_interval_ms_max," +
+                   "segment_complete_arrived_by_confirm,segment_complete_timer_expired," +
+                   "segment_complete_rejected,segment_complete_other," +
+                   "segment_m_p50,segment_m_p95,segment_m_max," +
                    "bot_send_hz_p50,bot_send_hz_p95,bot_send_hz_max," +
+                   "move_start_to_write_ms_p50,move_start_to_write_ms_p95," +
+                   "move_recv_to_callback_ms_p50,move_recv_to_callback_ms_p95," +
                    "aoi_enter,aoi_leave,aoi_move_events,aoi_unknown_move,aoi_leave_then_move,aoi_gap_skipped," +
                    "aoi_visible_peak,aoi_visible_p50,aoi_visible_p95,aoi_visible_max";
         }
@@ -706,12 +929,23 @@ namespace GameMesh.LoadTest
                    SegmentSecPercentile(50).ToString("0.###", inv) + "," +
                    SegmentSecPercentile(95).ToString("0.###", inv) + "," +
                    SegmentSecMax().ToString("0.###", inv) + "," +
+                   SegmentSecPercentile(50).ToString("0.###", inv) + "," +
+                   SegmentSecPercentile(95).ToString("0.###", inv) + "," +
+                   SegmentSecMax().ToString("0.###", inv) + "," +
+                   ActualDepartIntervalSampleCount + "," +
+                   ActualDepartIntervalPercentile(50).ToString("0.###", inv) + "," +
+                   ActualDepartIntervalPercentile(95).ToString("0.###", inv) + "," +
+                   ActualDepartIntervalMax().ToString("0.###", inv) + "," +
+                   SegmentCompleteArrivedByConfirm + "," + SegmentCompleteTimerExpired + "," +
+                   SegmentCompleteRejected + "," + SegmentCompleteOther + "," +
                    SegmentMetersPercentile(50).ToString("0.###", inv) + "," +
                    SegmentMetersPercentile(95).ToString("0.###", inv) + "," +
                    SegmentMetersMax().ToString("0.###", inv) + "," +
                    BotSendHzP50.ToString("0.###", inv) + "," +
                    BotSendHzP95.ToString("0.###", inv) + "," +
                    BotSendHzMax.ToString("0.###", inv) + "," +
+                   MoveStartToWritePercentile(50) + "," + MoveStartToWritePercentile(95) + "," +
+                   MoveRecvToCallbackPercentile(50) + "," + MoveRecvToCallbackPercentile(95) + "," +
                    AoiEnterEvents + "," + AoiLeaveEvents + "," + AoiMoveEvents + "," +
                    AoiUnknownMove + "," + AoiLeaveThenMove + "," + AoiGapSkipped + "," +
                    AoiVisiblePeak + "," +

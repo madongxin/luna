@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -152,6 +153,51 @@ namespace GameMesh.LoadTest
         {
             Instance = this;
             ProcessStallProbe.EnsureStarted();
+            _buildSha = TryResolveBuildSha();
+        }
+
+        static string TryResolveBuildSha()
+        {
+            try
+            {
+                var root = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+                var psi = new ProcessStartInfo
+                {
+                    FileName = "git",
+                    Arguments = "rev-parse --short HEAD",
+                    WorkingDirectory = root,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false,
+                    CreateNoWindow = true
+                };
+                using (var p = Process.Start(psi))
+                {
+                    if (p == null)
+                        return "无数据";
+                    var o = p.StandardOutput.ReadToEnd().Trim();
+                    p.WaitForExit(2000);
+                    if (p.ExitCode == 0 && !string.IsNullOrEmpty(o))
+                        return o;
+                }
+            }
+            catch
+            {
+                /* ignore */
+            }
+
+            try
+            {
+                var guid = Application.buildGUID;
+                if (!string.IsNullOrEmpty(guid))
+                    return guid;
+            }
+            catch
+            {
+                /* ignore */
+            }
+
+            return "无数据";
         }
 
         void AbortSweep()
@@ -192,6 +238,16 @@ namespace GameMesh.LoadTest
         public int MaxFrameMs { get; private set; }
         public int MaxDispatcherBacklog { get; private set; }
         public int MaxReadLoopLagMs { get; private set; }
+        readonly int[] _frameMsRing = new int[128];
+        int _frameMsCount;
+        int _frameMsCursor;
+        float _hostCpuPctAvg = -1f;
+        float _hostCpuPctPeak = -1f;
+        string _hostCpuNote = "无数据";
+        TimeSpan _lastCpuTotal;
+        DateTime _lastCpuWall = DateTime.MinValue;
+        string _buildSha = "无数据";
+        string _waveStartedAt = "无数据";
 
         public long PipeWriteCompleted()
         {
@@ -260,6 +316,11 @@ namespace GameMesh.LoadTest
             var frameMs = (int)(Time.unscaledDeltaTime * 1000f);
             if (frameMs > MaxFrameMs)
                 MaxFrameMs = frameMs;
+            _frameMsRing[_frameMsCursor] = frameMs;
+            _frameMsCursor = (_frameMsCursor + 1) % _frameMsRing.Length;
+            if (_frameMsCount < _frameMsRing.Length)
+                _frameMsCount++;
+            SampleHostCpu();
             var live = GameMeshClient.Instance;
             var dispatcher = live != null ? live.GetComponent<GameMeshMainThreadDispatcher>() : null;
             if (dispatcher != null && dispatcher.Backlog > MaxDispatcherBacklog)
@@ -449,6 +510,7 @@ namespace GameMesh.LoadTest
                 _holdUntil = _durationSec > 0f
                     ? Time.unscaledTime + _durationSec
                     : float.PositiveInfinity;
+                _waveStartedAt = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss");
                 _phase = _durationSec > 0f ? "在线压测" : "在线（手动下线）";
                 var live = GameMeshClient.Instance;
                 if (live != null && live.Connection != null &&
@@ -1103,8 +1165,7 @@ namespace GameMesh.LoadTest
 
                 var botCsv = Path.Combine(dir, "movement-bots-" + stamp + ".csv");
                 var botSb = new System.Text.StringBuilder(4096);
-                botSb.AppendLine(
-                    "bot_index,player_id,loop_kind," + sum.CsvHeader());
+                botSb.AppendLine("bot_index,player_id," + sum.CsvHeader());
                 var visibleSb = new System.Text.StringBuilder(4096);
                 visibleSb.Append("{\n  \"run_id\": \"client-").Append(stamp).Append("\",\n");
                 visibleSb.Append("  \"note\": \"observer player_id → visible entity ids from BotPushTracker\",\n");
@@ -1121,7 +1182,6 @@ namespace GameMesh.LoadTest
                     if (m == null)
                         continue;
                     botSb.Append(bot.Index).Append(',').Append(bot.PlayerId).Append(',')
-                        .Append(bot.LoopKind ?? "无数据").Append(',')
                         .Append(m.ToCsvRow()).Append('\n');
 
                     if (bot.PushTracker == null)
@@ -1170,6 +1230,7 @@ namespace GameMesh.LoadTest
             var sendHz = new List<float>(_bots.Count);
             var movingRatio = new List<float>(_bots.Count);
             var visible = new List<float>(_bots.Count);
+            double movingSum = 0;
             for (var i = 0; i < _bots.Count; i++)
             {
                 var bot = _bots[i];
@@ -1180,7 +1241,9 @@ namespace GameMesh.LoadTest
                 if (m == null)
                     continue;
                 sendHz.Add((float)m.ActualSendHz);
-                movingRatio.Add((float)m.MovingTimeRatio);
+                var ratio = (float)m.MovingTimeRatio;
+                movingRatio.Add(ratio);
+                movingSum += ratio;
                 if (bot.PushTracker != null)
                     visible.Add(bot.PushTracker.VisibleCount);
             }
@@ -1196,6 +1259,77 @@ namespace GameMesh.LoadTest
             sum.AoiVisibleP50 = BotMovementMetrics.PercentileOf(visible, 50);
             sum.AoiVisibleP95 = BotMovementMetrics.PercentileOf(visible, 95);
             sum.AoiVisibleMax = BotMovementMetrics.MaxOf(visible);
+            if (movingRatio.Count > 0)
+                sum.SetMovingTimeRatioExport(movingSum / movingRatio.Count);
+            sum.BuildSha = string.IsNullOrEmpty(_buildSha) ? "无数据" : _buildSha;
+            sum.StartedAt = string.IsNullOrEmpty(_waveStartedAt) ? "无数据" : _waveStartedAt;
+            sum.EndedAt = DateTime.Now.ToString("yyyy-MM-ddTHH:mm:ss");
+            sum.HostCpuPctAvg = _hostCpuPctAvg;
+            sum.HostCpuPctPeak = _hostCpuPctPeak;
+            sum.HostCpuNote = _hostCpuNote ?? "无数据";
+            sum.HostStallMsMax = MaxStallMs;
+            sum.HostPoolQueueMsMax = MaxPoolDelayMs;
+            sum.HostFrameMsMax = MaxFrameMs;
+            sum.HostFrameMsP50 = FrameMsPercentile(50);
+            sum.HostGcGen0 = GC.CollectionCount(0);
+            sum.HostGcGen1 = GC.CollectionCount(1);
+            sum.HostGcGen2 = GC.CollectionCount(2);
+        }
+
+        int FrameMsPercentile(int pct)
+        {
+            if (_frameMsCount <= 0)
+                return 0;
+            var copy = new int[_frameMsCount];
+            var start = _frameMsCount == _frameMsRing.Length ? _frameMsCursor : 0;
+            for (var i = 0; i < _frameMsCount; i++)
+                copy[i] = _frameMsRing[(start + i) % _frameMsRing.Length];
+            Array.Sort(copy);
+            var index = (int)Math.Ceiling(pct / 100.0 * _frameMsCount) - 1;
+            if (index < 0)
+                index = 0;
+            if (index >= copy.Length)
+                index = copy.Length - 1;
+            return copy[index];
+        }
+
+        void SampleHostCpu()
+        {
+            try
+            {
+                var proc = Process.GetCurrentProcess();
+                var total = proc.TotalProcessorTime;
+                var wall = DateTime.UtcNow;
+                if (_lastCpuWall != DateTime.MinValue)
+                {
+                    var wallSec = (wall - _lastCpuWall).TotalSeconds;
+                    var cpuSec = (total - _lastCpuTotal).TotalSeconds;
+                    if (wallSec > 0.05)
+                    {
+                        var cores = Math.Max(1, Environment.ProcessorCount);
+                        var pct = (float)(cpuSec / wallSec / cores * 100.0);
+                        if (pct < 0f)
+                            pct = 0f;
+                        if (_hostCpuPctAvg < 0f)
+                            _hostCpuPctAvg = pct;
+                        else
+                            _hostCpuPctAvg = _hostCpuPctAvg * 0.9f + pct * 0.1f;
+                        if (pct > _hostCpuPctPeak)
+                            _hostCpuPctPeak = pct;
+                        _hostCpuNote =
+                            "Process.TotalProcessorTime / wall / ProcessorCount (Unity process only)";
+                    }
+                }
+
+                _lastCpuTotal = total;
+                _lastCpuWall = wall;
+            }
+            catch (Exception ex)
+            {
+                _hostCpuNote = "CPU 采集失败: " + ex.GetType().Name;
+                _hostCpuPctAvg = -1f;
+                _hostCpuPctPeak = -1f;
+            }
         }
 
         public string DumpFailureReport(string tag)

@@ -35,6 +35,7 @@ namespace GameMesh.UI
         string _loadProfile = "";
         string _loadWeights = "10,35,20,20,15";
         string _loadSparseDuty = "100";
+        string _loadAoiRadius = "96";
         string _loadMoveError = "";
         Vector2 _friendScroll;
         Vector2 _panelScroll;
@@ -504,6 +505,15 @@ namespace GameMesh.UI
             _loadSparseDuty = Field("sparse_duty_pct 1-100", _loadSparseDuty);
             if (int.TryParse(_loadSparseDuty, out var sparseDuty) && sparseDuty >= 1 && sparseDuty <= 100)
                 runner.Movement.SparseDutyPct = sparseDuty;
+            _loadAoiRadius = Field("巡逻半径m (KeepInside)", _loadAoiRadius);
+            if (float.TryParse(_loadAoiRadius, out var aoiR) && aoiR >= 8f && aoiR <= 200f)
+            {
+                runner.Movement.AoiRadius = aoiR;
+                if (runner.Movement.SafeRadius > aoiR)
+                    runner.Movement.SafeRadius = aoiR;
+                else if (runner.Movement.SafeRadius < aoiR * 0.5f)
+                    runner.Movement.SafeRadius = Mathf.Max(8f, aoiR * 0.75f);
+            }
             GUILayout.BeginHorizontal();
             GUILayout.Label("arrive门控", _label, GUILayout.Width(150));
             runner.Movement.SparseArriveWait = GUILayout.Toggle(runner.Movement.SparseArriveWait, "sparse_arrive_wait（默认关）", GUILayout.Height(40));

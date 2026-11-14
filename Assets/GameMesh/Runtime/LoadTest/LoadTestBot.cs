@@ -58,6 +58,10 @@ namespace GameMesh.LoadTest
         readonly BotResendPolicy _resend = new BotResendPolicy();
         readonly ConcurrentDictionary<ulong, long> _moveWrittenAtMs =
             new ConcurrentDictionary<ulong, long>();
+        readonly ConcurrentDictionary<ulong, long> _moveStartedAtMs =
+            new ConcurrentDictionary<ulong, long>();
+        readonly ConcurrentDictionary<ulong, long> _moveRecvMatchedAtMs =
+            new ConcurrentDictionary<ulong, long>();
         readonly ConcurrentDictionary<ulong, Vector3> _moveSentPos =
             new ConcurrentDictionary<ulong, Vector3>();
         readonly ConcurrentDictionary<ulong, Vector3> _timedOutBeforeWriteCompleted =
@@ -142,6 +146,7 @@ namespace GameMesh.LoadTest
             _conn.PushReceived += OnPush;
             _conn.LateResponse += OnLateMove;
             _conn.FrameWriteCompleted += OnFrameWriteCompleted;
+            _conn.FrameResponseMatched += OnFrameResponseMatched;
             CacheUnityInfoOnMainThread();
         }
 
@@ -1385,6 +1390,7 @@ namespace GameMesh.LoadTest
             var task = _conn.RequestAsync(request, TimeSpan.FromSeconds(2), ct);
             requestSeq = request.Seq;
             _moveSentPos[requestSeq] = next;
+            _moveStartedAtMs[requestSeq] = MonotonicMs();
             if (metrics != null)
                 Interlocked.Increment(ref metrics.QueueAccepted);
             return task;
@@ -1397,6 +1403,14 @@ namespace GameMesh.LoadTest
             try
             {
                 var rsp = await requestTask.ConfigureAwait(false);
+                if (metrics != null &&
+                    _moveRecvMatchedAtMs.TryRemove(requestSeq, out var matchedAt))
+                {
+                    var cb = MonotonicMs() - matchedAt;
+                    if (cb >= 0 && cb < 60000)
+                        metrics.NoteMoveRecvToCallbackMs((int)cb);
+                }
+
                 NoteMoveResponse(requestSeq, rsp != null && rsp.Ok, metrics);
                 var move = rsp != null ? rsp.Move : null;
                 var adopted = false;
@@ -1518,6 +1532,11 @@ namespace GameMesh.LoadTest
             }
         }
 
+        void OnFrameResponseMatched(ulong requestSeq, long matchedAtMs)
+        {
+            _moveRecvMatchedAtMs[requestSeq] = matchedAtMs;
+        }
+
         void OnFrameWriteCompleted(ulong requestSeq, string type, long writtenAtMs)
         {
             if (!string.Equals(type, GameRequest.BodyOneofCase.Move.ToString(),
@@ -1529,7 +1548,15 @@ namespace GameMesh.LoadTest
             {
                 Interlocked.Increment(ref metrics.Sent);
                 Interlocked.Increment(ref metrics.WriteCompleted);
+                if (_moveStartedAtMs.TryRemove(requestSeq, out var startedAt))
+                {
+                    var toWrite = writtenAtMs - startedAt;
+                    if (toWrite >= 0 && toWrite < 60000)
+                        metrics.NoteMoveStartToWriteMs((int)toWrite);
+                }
             }
+            else
+                _moveStartedAtMs.TryRemove(requestSeq, out _);
             BotCongestionGate.NoteSend(DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
 
             // Never resurrect a wait that a very fast receive already confirmed.
@@ -1591,6 +1618,8 @@ namespace GameMesh.LoadTest
         void ForgetMoveRequest(ulong requestSeq)
         {
             _moveWrittenAtMs.TryRemove(requestSeq, out _);
+            _moveStartedAtMs.TryRemove(requestSeq, out _);
+            _moveRecvMatchedAtMs.TryRemove(requestSeq, out _);
             _moveSentPos.TryRemove(requestSeq, out _);
             _timedOutBeforeWriteCompleted.TryRemove(requestSeq, out _);
             if (Interlocked.Read(ref _currentAuthorityRequestSeq) != (long)requestSeq)
@@ -1802,13 +1831,18 @@ namespace GameMesh.LoadTest
             var move = rsp != null ? rsp.Move : null;
             if (move == null || !rsp.Ok || move.Position == null)
                 return;
+            // Clear the 2s resend latch even when state_seq did not move (unchanged target).
             NoteMoveResponse(rsp.Seq, true, _clock != null ? _clock.Metrics : null, false);
-            if (!MoveRecovery.TryAdoptLate(_authorityStateSeq, move.StateSeq, _conn.Generation, _conn.Generation,
+            // Always take the late OK pose. TryAdoptLate alone rejects equal state_seq, which is
+            // exactly the duplicate_target / unchanged case that was pinning bots on one waypoint.
+            if (MoveRecovery.ShouldAdoptLatePose(rsp.Ok, move.Position != null))
+            {
+                _pos = ProtocolMapper.ToUnity(move.Position);
+                _yaw = move.Yaw;
+            }
+            if (MoveRecovery.TryAdoptLate(_authorityStateSeq, move.StateSeq, _conn.Generation, _conn.Generation,
                     _mapInstanceId, _mapInstanceId))
-                return;
-            _authorityStateSeq = move.StateSeq;
-            _pos = ProtocolMapper.ToUnity(move.Position);
-            _yaw = move.Yaw;
+                _authorityStateSeq = move.StateSeq;
             _unknownStreak = 0;
             _moveTimeoutStreak = 0;
             Volatile.Write(ref _poseUncertain, 0);

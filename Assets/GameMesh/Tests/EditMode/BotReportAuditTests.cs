@@ -410,6 +410,103 @@ namespace GameMesh.Tests.EditMode
             StringAssert.Contains("\"fail\":1", m.HeartbeatMinutesJson());
         }
 
+        /// <summary>
+        /// R1 / J1: server snaps authority to the goal on accept. Confirming that pose
+        /// completes the segment immediately, so depart→depart ≈ reply delay — not
+        /// SegmentMinSec. Asserting p50 ≈ SegmentMinSec here would fail (documented).
+        /// </summary>
+        [Test]
+        public void R1_J1_InstantConfirmToGoal_DepartIntervalTracksReplyDelay_NotSegmentMin(
+            [Values(50, 300, 1000)] int replyDelayMs)
+        {
+            var settings = SparseSettings();
+            settings.AoiRadius = 96f;
+            settings.SegmentMinSec = 10f;
+            settings.SegmentMaxSec = 30f;
+            settings.Seed = 20261114;
+            var home = new Vector3(100f, -18f, 200f);
+            var sparse = new SparsePatrolController(19, settings);
+            sparse.KeepInside(home, 96f);
+            sparse.Arm(0);
+            var metrics = new BotMovementMetrics { SampleStartedMs = 0 };
+            var confirmed = home;
+            long now = 0;
+            long lastDepartAt = -1;
+            var intervals = new List<float>(1000);
+            for (var n = 0; n < 1000; )
+            {
+                var plan = sparse.Poll(confirmed, now, metrics, out var wait);
+                if (!plan.Send)
+                {
+                    now += wait > 0 ? wait : 10;
+                    continue;
+                }
+
+                if (plan.Reason != "depart")
+                {
+                    sparse.NoteSent(plan.Yaw, now, plan.Reason, metrics);
+                    now += 10;
+                    continue;
+                }
+
+                if (lastDepartAt >= 0)
+                    intervals.Add(now - lastDepartAt);
+                lastDepartAt = now;
+                sparse.NoteSent(plan.Yaw, now, "depart", metrics);
+                // Server snaps authority to the requested goal and returns after replyDelayMs.
+                now += replyDelayMs;
+                confirmed = plan.Position;
+                n++;
+            }
+
+            metrics.SampleEndedMs = now;
+            intervals.Sort();
+            var p50 = intervals[intervals.Count / 2];
+            // Wrong expectation (would fail): p50 ≈ SegmentMinSec*1000 (10000).
+            // Correct J1 expectation: p50 tracks reply delay (+ one Poll quantum ≤50ms).
+            Assert.GreaterOrEqual(p50, replyDelayMs - 5f, "p50=" + p50);
+            Assert.LessOrEqual(p50, replyDelayMs + 60f, "p50=" + p50);
+            Assert.Less(p50, settings.SegmentMinSec * 1000f * 0.5f,
+                "J1: depart interval must not follow SegmentMinSec");
+            Assert.Greater(metrics.SegmentCompleteArrivedByConfirm, 900);
+            Assert.GreaterOrEqual(metrics.ActualDepartIntervalSampleCount, 900);
+            Assert.LessOrEqual(
+                Mathf.Abs(metrics.ActualDepartIntervalPercentile(50) - p50), 1f);
+        }
+
+        [Test]
+        public void R1_MovingTimeRatio_IsClampedToUnitInterval()
+        {
+            var m = new BotMovementMetrics
+            {
+                SampleStartedMs = 0,
+                SampleEndedMs = 1000,
+                MovingMs = 500_000 // bogus multi-bot sum style
+            };
+            Assert.LessOrEqual(m.MovingTimeRatio, 1.0);
+            Assert.GreaterOrEqual(m.MovingTimeRatio, 0.0);
+            m.SetMovingTimeRatioExport(0.42);
+            Assert.AreEqual(0.42, m.MovingTimeRatio, 0.001);
+        }
+
+        [Test]
+        public void R1_CsvHeader_HasSingleLoopKind()
+        {
+            var header = "bot_index,player_id," + new BotMovementMetrics().CsvHeader();
+            var parts = header.Split(',');
+            var n = 0;
+            foreach (var p in parts)
+            {
+                if (p == "loop_kind")
+                    n++;
+            }
+
+            Assert.AreEqual(1, n, header);
+            StringAssert.Contains("actual_depart_interval_ms_p50", header);
+            StringAssert.Contains("planned_segment_sec_p50", header);
+            StringAssert.Contains("segment_complete_arrived_by_confirm", header);
+        }
+
         static GameResponse Delta(ulong mapInstanceId, AoiOp op, ulong playerId)
         {
             var rsp = new GameResponse
